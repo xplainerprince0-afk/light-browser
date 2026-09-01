@@ -23,6 +23,15 @@
             android:padding="16dp"
             android:gravity="center">
 
+            <ImageView
+                android:id="@+id/imgArt"
+                android:layout_width="96dp"
+                android:layout_height="96dp"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_url_bar"
+                android:scaleType="centerCrop"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvTitle"
                 android:layout_width="match_parent"
@@ -138,6 +147,17 @@
             android:textColor="@color/white"
             android:textSize="14sp"
             android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAddFolder"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="Add Folder"
+            android:textSize="11sp"
+            style="@style/Widget.Material3.Button.TonalButton"
+            app:cornerRadius="12dp" />
+
+        <View android:layout_width="8dp" android:layout_height="0dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnScan"

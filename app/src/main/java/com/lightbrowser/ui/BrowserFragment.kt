@@ -255,11 +255,14 @@ class BrowserFragment : Fragment() {
             false
         }
 
-        // Fluid keyboard: let WebView handle insets, toolbar stays pinned
+        // Phase 1: Fix status bar overlap + fluid keyboard (toolbar stays below status bar, WebView handles IME)
         try {
             androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+                val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
                 val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
-                // only pad WebView bottom by keyboard height, not whole UI
+                // toolbar gets status bar top padding (fixes overlap under battery/time)
+                try { binding.toolbarCard.setPadding(0, statusBars.top, 0, 0) } catch (_: Exception) {}
+                // WebView gets IME bottom padding (fluid, not crushing)
                 v.setPadding(0, 0, 0, 0)
                 binding.webView.setPadding(0, 0, 0, ime.bottom)
                 insets
@@ -574,8 +577,22 @@ class BrowserFragment : Fragment() {
     private fun showMoreMenu(anchor: View) {
         try {
             val ctx = requireContext()
-            val popup = android.widget.PopupMenu(ctx, anchor)
-            // Core browser features (relocated from top bar)
+            val wrapped = android.view.ContextThemeWrapper(ctx, R.style.ThemeOverlay_LightBrowser_Popup)
+            val popup = android.widget.PopupMenu(wrapped, anchor)
+            // Force opaque background (Material3 surface) – fixes transparent over web page
+            try {
+                val field = popup.javaClass.getDeclaredField("mPopup")
+                field.isAccessible = true
+                val menuPopupHelper = field.get(popup)
+                val popupClass = menuPopupHelper.javaClass
+                try {
+                    val bgField = popupClass.getDeclaredField("mPopup")
+                    bgField.isAccessible = true
+                    val popupWindow = bgField.get(menuPopupHelper) as? android.widget.PopupWindow
+                    popupWindow?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(androidx.core.content.ContextCompat.getColor(ctx, R.color.surface)))
+                } catch (_: Exception) {}
+            } catch (_: Exception) {}
+            // Phase 2: Relocated core features into dropdown (clean toolbar)
             popup.menu.add(0, 10, 0, "↻ Refresh")
             popup.menu.add(0, 11, 0, "⭐ Bookmark this page")
             popup.menu.add(0, 12, 0, "🧪 Tester")
@@ -584,10 +601,6 @@ class BrowserFragment : Fragment() {
             popup.menu.add(0, 3, 0, "⚙️ Settings")
             popup.menu.add(0, 4, 0, "🕘 History")
             popup.menu.add(0, 5, 0, "⭐ Bookmarks")
-            // Workspace suite (new freed space)
-            popup.menu.add(0, 20, 0, "📁 File Manager")
-            popup.menu.add(0, 21, 0, "💻 Terminal")
-            popup.menu.add(0, 22, 0, "🎵 Music Player")
             popup.menu.add(0, 6, 0, if (Prefs.desktopMode) "🖥️ Desktop: ON" else "🖥️ Desktop: OFF")
             popup.menu.add(0, 7, 0, "🧹 Clear cache")
             popup.setOnMenuItemClickListener { item ->
@@ -595,14 +608,11 @@ class BrowserFragment : Fragment() {
                     10 -> binding.webView.reload()
                     11 -> toggleBookmark()
                     12 -> showTestDialog()
-                    1 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_scripts)
-                    2 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_downloads)
-                    3 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_settings)
+                    1 -> showScriptsDialog()
+                    2 -> showDownloadsDialog()
+                    3 -> showSettingsDialog()
                     4 -> showHistoryDialog()
                     5 -> showBookmarksDialog()
-                    20 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_filemanager)
-                    21 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_terminal)
-                    22 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_music)
                     6 -> {
                         Prefs.desktopMode = !Prefs.desktopMode
                         Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
@@ -621,6 +631,20 @@ class BrowserFragment : Fragment() {
             }
             popup.show()
         } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
+    }
+
+    private fun showScriptsDialog() {
+        try { (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_scripts) } catch (_: Exception) {
+            Toast.makeText(requireContext(), "Scripts", Toast.LENGTH_SHORT).show()
+        }
+    }
+    private fun showDownloadsDialog() {
+        try { (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_downloads) } catch (_: Exception) {
+            Toast.makeText(requireContext(), "Downloads", Toast.LENGTH_SHORT).show()
+        }
+    }
+    private fun showSettingsDialog() {
+        try { (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_settings) } catch (_: Exception) {}
     }
 
     // Public for MainActivity to load url without recreation (cache retain)

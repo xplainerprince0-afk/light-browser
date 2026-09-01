@@ -2,48 +2,55 @@ package com.lightbrowser
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.databinding.ActivityMainBinding
 import com.lightbrowser.ui.BrowserFragment
-import com.lightbrowser.ui.DownloadsFragment
 import com.lightbrowser.ui.FileManagerFragment
 import com.lightbrowser.ui.MusicPlayerFragment
-import com.lightbrowser.ui.ScriptsFragment
-import com.lightbrowser.ui.SettingsFragment
 import com.lightbrowser.ui.TerminalFragment
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var currentId: Int = R.id.nav_browser
 
-    // Keep fragments alive to preserve WebView state and workspace cache
     private val fragments = mutableMapOf<Int, Fragment>()
 
     private fun getFrag(id: Int): Fragment = fragments.getOrPut(id) {
         when (id) {
             R.id.nav_browser -> BrowserFragment()
-            R.id.nav_scripts -> ScriptsFragment()
-            R.id.nav_downloads -> DownloadsFragment()
-            R.id.nav_settings -> SettingsFragment()
             R.id.nav_filemanager -> FileManagerFragment()
             R.id.nav_terminal -> TerminalFragment()
             R.id.nav_music -> MusicPlayerFragment()
+            R.id.nav_scripts -> ScriptsFragment()
+            R.id.nav_downloads -> DownloadsFragment()
+            R.id.nav_settings -> SettingsFragment()
             else -> BrowserFragment()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Fluid keyboard: edge-to-edge, not crushing workspace
+        // Phase 1: edge-to-edge with proper insets – status bar not overlapped, nav bar handled
         WindowCompat.setDecorFitsSystemWindows(window, false)
         AppCtx.init(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Handle window insets for keyboard – let WebView/workspaces handle it naturally
-        // Root will be padded by system bars via fitsSystemWindows false + insets listener in fragments
+        // Phase 1: Apply WindowInsets to prevent overlap
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            // container gets status bar top padding is handled in BrowserFragment toolbar, nav bar bottom padding for bottom_nav
+            binding.container.updatePadding(bottom = if (ime.bottom > 0) 0 else navBars.bottom)
+            binding.bottomNav.updatePadding(bottom = navBars.bottom)
+            insets
+        }
 
         if (savedInstanceState == null) {
             switchTab(R.id.nav_browser)
@@ -51,9 +58,6 @@ class MainActivity : AppCompatActivity() {
             supportFragmentManager.fragments.forEach { f ->
                 val id = when (f) {
                     is BrowserFragment -> R.id.nav_browser
-                    is ScriptsFragment -> R.id.nav_scripts
-                    is DownloadsFragment -> R.id.nav_downloads
-                    is SettingsFragment -> R.id.nav_settings
                     is FileManagerFragment -> R.id.nav_filemanager
                     is TerminalFragment -> R.id.nav_terminal
                     is MusicPlayerFragment -> R.id.nav_music
@@ -61,8 +65,14 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (id != null) fragments[id] = f
             }
-            // find visible
             fragments.entries.find { it.value.isVisible }?.let { currentId = it.key }
+            // ensure bottom nav reflects current
+            try { binding.bottomNav.selectedItemId = currentId } catch (_: Exception) {}
+        }
+
+        binding.bottomNav.setOnItemSelectedListener { item ->
+            switchTab(item.itemId)
+            true
         }
 
         intent?.data?.toString()?.let { url ->
@@ -81,6 +91,7 @@ class MainActivity : AppCompatActivity() {
         if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString())
         tx.commit()
         currentId = id
+        try { binding.bottomNav.selectedItemId = id } catch (_: Exception) {}
     }
 
     fun switchToTab(id: Int) = switchTab(id)

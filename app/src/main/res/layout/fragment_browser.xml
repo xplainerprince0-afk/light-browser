@@ -7,8 +7,9 @@
     android:background="@color/bg_dark"
     android:fitsSystemWindows="false">
 
-    <!-- Material 3 pill toolbar – clean, not crushing -->
+    <!-- Material 3 pill toolbar – with WindowInsets statusBarsPadding -->
     <com.google.android.material.card.MaterialCardView
+        android:id="@+id/toolbarCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_margin="10dp"

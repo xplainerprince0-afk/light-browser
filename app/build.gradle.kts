@@ -11,8 +11,8 @@ android {
         applicationId = "com.lightbrowser"
         minSdk = 21
         targetSdk = 34
-        versionCode = 10
-        versionName = "2.0-workspace"
+        versionCode = 11
+        versionName = "2.1-workspace-tabs"
         // keep dex small
         multiDexEnabled = false
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }

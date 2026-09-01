@@ -10,11 +10,18 @@ import com.lightbrowser.R
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.ScriptStorage
 import com.lightbrowser.databinding.FragmentTerminalBinding
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
 class TerminalFragment : Fragment() {
     private var _b: FragmentTerminalBinding? = null
     private val b get() = _b!!
     private val logs = mutableListOf<String>()
+    private val scope = CoroutineScope(Dispatchers.Main)
 
     override fun onCreateView(inflater: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
         _b = FragmentTerminalBinding.inflate(inflater, c, false)
@@ -32,26 +39,9 @@ class TerminalFragment : Fragment() {
         }
         b.btnScripts.setOnClickListener { execCmd("scripts") }
 
-        // show initial help
-        append("> help – available: help, clear, scripts, history, js <code>, ua, cache")
-        // hook to browser logs if available (poll)
-        b.tvLogs.postDelayed({ syncBrowserLogs() }, 800)
-    }
-
-    private fun syncBrowserLogs() {
-        try {
-            val frag = parentFragmentManager.findFragmentByTag(R.id.nav_browser.toString()) as? BrowserFragment
-                ?: activity?.supportFragmentManager?.findFragmentByTag(R.id.nav_browser.toString()) as? BrowserFragment
-            // fallback: try to find via activity fragments
-            val browser = (activity as? com.lightbrowser.MainActivity)?.let {
-                // use reflection to get fragment
-                try {
-                    val f = it.supportFragmentManager.findFragmentByTag(R.id.nav_browser.toString())
-                    f as? BrowserFragment
-                } catch (_: Exception) { null }
-            }
-            // If we can't get BrowserFragment, just show own logs
-        } catch (_: Exception) {}
+        append("LightBrowser Terminal v2 – shell + JS")
+        append("Type 'help' for commands. Python via Chaquopy not included (30MB) – use 'python --help' for stub.")
+        append("Tip: 'js document.title' runs JS in WebView, 'ls /data/data/...' is blocked (sandbox).")
     }
 
     private fun exec() {
@@ -71,40 +61,64 @@ class TerminalFragment : Fragment() {
                 append("""
                     help – commands:
                     • help – this
-                    • clear – clear console
+                    • clear – clear
                     • scripts – list userscripts
                     • history – recent URLs
-                    • js <code> – run JS in WebView (e.g., js document.title)
-                    • ua – show user agent
-                    • cache – show cache size
+                    • js <code> – run JS in WebView
+                    • sh <cmd> – shell (e.g., sh ls -l)
+                    • ping <host> – ping (e.g., ping 8.8.8.8)
+                    • curl <url> – fetch via shell curl or Java
+                    • ls [path] – list files (sandbox/Downloads)
+                    • cat <file> – cat file
                     • echo <text> – print
+                    • python – stub (Chaquopy not bundled for size)
+                    • ua – user agent
+                    • cache – cache size
                 """.trimIndent())
+                append("Note: Chaquopy Python SDK evaluated but NOT included to keep APK ~1.9MB. Use 'sh python' stub or integrate Chaquopy manually if needed (adds ~30MB).")
             }
             "clear" -> { logs.clear(); b.tvLogs.text = "" }
             "scripts" -> {
                 val list = try { ScriptStorage.all(requireContext()) } catch (_: Exception) { emptyList() }
-                if (list.isEmpty()) append("No scripts. Add via Scripts menu.")
-                else list.forEach { append("• ${it.name} [${if (it.enabled) "ON" else "OFF"}] ${it.matches.joinToString(",")} @${it.runAt}") }
+                if (list.isEmpty()) append("No scripts.") else list.forEach { append("• ${it.name} [${if (it.enabled) "ON" else "OFF"}] ${it.matches.joinToString(",")} @${it.runAt}") }
             }
             "history" -> {
                 val list = try { HistoryStorage.all(requireContext()) } catch (_: Exception) { emptyList() }
-                if (list.isEmpty()) append("No history")
-                else list.take(10).forEach { append("• ${it.title} – ${it.url}") }
+                if (list.isEmpty()) append("No history") else list.take(10).forEach { append("• ${it.title} – ${it.url}") }
             }
             "js" -> {
                 if (arg.isBlank()) { append("Usage: js <code>"); return }
                 append("→ js: $arg")
-                // try to run in browser WebView
-                val browser = findBrowser()
-                if (browser != null) {
-                    browser.runJs(arg) { res -> append("← $res"); scrollBottom() }
-                } else append("No browser WebView found (open a page first)")
+                findBrowser()?.runJs(arg) { res -> append("← $res"); scrollBottom() } ?: append("No WebView")
+            }
+            "sh", "shell", "exec" -> {
+                if (arg.isBlank()) { append("Usage: sh <cmd>"); return }
+                runShell(arg)
+            }
+            "ping" -> {
+                val host = arg.ifBlank { "8.8.8.8" }
+                runShell("ping -c 3 $host")
+            }
+            "curl" -> {
+                if (arg.isBlank()) { append("Usage: curl <url>"); return }
+                // try shell curl first, fallback to Java
+                runShell("curl -I $arg")
+            }
+            "ls" -> {
+                val path = arg.ifBlank { requireContext().filesDir.absolutePath + "/sandbox" }
+                runShell("ls -l \"$path\"")
+            }
+            "cat" -> {
+                if (arg.isBlank()) { append("Usage: cat <file>"); return }
+                runShell("cat \"$arg\"")
+            }
+            "python", "py" -> {
+                append("Python: Chaquopy not bundled (keeps APK small).")
+                append("To add Python, integrate Chaquopy SDK: https://chaquo.com/chaquopy – adds ~30MB, not recommended for scraper memory.")
+                append("Use 'js' for WebView JS or 'sh' for shell. For file tasks use 'ls/cat'.")
             }
             "ua" -> {
-                val browser = findBrowser()
-                if (browser != null) {
-                    browser.runJs("navigator.userAgent") { res -> append("UA: $res") }
-                } else append("UA: unknown")
+                findBrowser()?.runJs("navigator.userAgent") { res -> append("UA: $res") } ?: append("UA: unknown")
             }
             "cache" -> {
                 try {
@@ -114,17 +128,52 @@ class TerminalFragment : Fragment() {
                 } catch (e: Exception) { append("cache error: ${e.message}") }
             }
             "echo" -> append(arg)
-            else -> append("Unknown: $cmd – type help")
+            else -> {
+                // treat as shell by default for convenience
+                append("Unknown: $cmd – trying as shell: $raw")
+                runShell(raw)
+            }
         }
         scrollBottom()
     }
 
+    private fun runShell(cmd: String) {
+        append("→ sh: $cmd")
+        scope.launch(Dispatchers.IO) {
+            try {
+                // Use sh -c for complex commands
+                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+                val reader = BufferedReader(InputStreamReader(process.inputStream))
+                val errReader = BufferedReader(InputStreamReader(process.errorStream))
+                val output = StringBuilder()
+                var line: String?
+                // timeout 5s for safety
+                val start = System.currentTimeMillis()
+                while (reader.readLine().also { line = it } != null) {
+                    output.appendLine(line)
+                    if (System.currentTimeMillis() - start > 5000) break
+                }
+                while (errReader.readLine().also { line = it } != null) {
+                    output.appendLine(line)
+                }
+                process.waitFor()
+                val result = output.toString().ifBlank { "(no output, exit ${process.exitValue()})" }
+                withContext(Dispatchers.Main) {
+                    // limit output to 2000 chars to avoid UI freeze
+                    val trimmed = if (result.length > 2000) result.take(2000) + "\n…truncated" else result
+                    append(trimmed)
+                    scrollBottom()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { append("sh error: ${e.message}") }
+            }
+        }
+    }
+
     private fun findBrowser(): BrowserFragment? {
         return try {
-            // MainActivity keeps fragments map, we can find via tag
             val act = activity as? com.lightbrowser.MainActivity
             val fm = act?.supportFragmentManager ?: parentFragmentManager
-            // try to find by tag or by id
             fm.fragments.find { it is BrowserFragment } as? BrowserFragment
                 ?: fm.findFragmentByTag(R.id.nav_browser.toString()) as? BrowserFragment
         } catch (_: Exception) { null }
@@ -132,7 +181,7 @@ class TerminalFragment : Fragment() {
 
     private fun append(line: String) {
         logs.add(line)
-        if (logs.size > 400) logs.removeAt(0)
+        if (logs.size > 600) logs.removeAt(0)
         b.tvLogs.text = logs.joinToString("\n")
         scrollBottom()
     }

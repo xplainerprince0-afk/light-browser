@@ -1,14 +1,17 @@
 package com.lightbrowser.ui
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -16,6 +19,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentFilemanagerBinding
 import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -24,6 +28,17 @@ class FileManagerFragment : Fragment() {
     private var _b: FragmentFilemanagerBinding? = null
     private val b get() = _b!!
     private var currentDir: File = File("/")
+    private lateinit var sandboxDir: File
+    private lateinit var downloadsDir: File
+
+    // SAF launchers
+    private val importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) importFile(uri)
+    }
+    private var exportFile: File? = null
+    private val exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri: Uri? ->
+        if (uri != null && exportFile != null) exportFileToUri(exportFile!!, uri)
+    }
 
     override fun onCreateView(inflater: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
         _b = FragmentFilemanagerBinding.inflate(inflater, c, false)
@@ -31,40 +46,83 @@ class FileManagerFragment : Fragment() {
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
+        sandboxDir = File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() }
+        downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         b.recycler.layoutManager = LinearLayoutManager(requireContext())
         b.btnUp.setOnClickListener { navigateUp() }
-        b.btnAppFiles.setOnClickListener { openDir(requireContext().filesDir) }
-        b.btnDownloads.setOnClickListener { openDir(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)) }
-        b.btnCache.setOnClickListener { openDir(requireContext().cacheDir) }
+        b.btnAppFiles.setOnClickListener { openDir(sandboxDir) }
+        b.btnDownloads.setOnClickListener { openDir(downloadsDir) }
+        b.btnCache.setOnClickListener { openDir(sandboxDir) }
+        // Replace Cache button with Import/Export in sandboxed mode – keep for now but repurpose
+        b.btnCache.text = "Import"
+        b.btnCache.setOnClickListener { importLauncher.launch(arrayOf("*/*")) }
 
-        // start at app files
-        openDir(requireContext().filesDir)
+        // Add 3-dot menu for Import/Export
+        b.tvPath.setOnClickListener { showFileManagerMenu() }
+        // Long press path for export
+        b.tvPath.setOnLongClickListener { showFileManagerMenu(); true }
+
+        // Initially show sandbox
+        openDir(sandboxDir)
+    }
+
+    private fun showFileManagerMenu() {
+        val popup = android.widget.PopupMenu(requireContext(), b.tvPath)
+        popup.menu.add(0, 1, 0, "📥 Import File (SAF → Sandbox)")
+        popup.menu.add(0, 2, 0, "📤 Export File (Sandbox → Phone)")
+        popup.menu.add(0, 3, 0, "📁 Open Sandbox")
+        popup.menu.add(0, 4, 0, "📁 Open Downloads")
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> importLauncher.launch(arrayOf("*/*"))
+                2 -> {
+                    if (currentDir == sandboxDir || currentDir.absolutePath.startsWith(sandboxDir.absolutePath)) {
+                        Toast.makeText(requireContext(), "Long-press a file to Export", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(requireContext(), "Go to Sandbox first", Toast.LENGTH_SHORT).show()
+                        openDir(sandboxDir)
+                    }
+                }
+                3 -> openDir(sandboxDir)
+                4 -> openDir(downloadsDir)
+            }
+            true
+        }
+        popup.show()
     }
 
     private fun openDir(dir: File) {
-        val target = try { if (dir.exists()) dir else requireContext().filesDir } catch (_: Exception) { requireContext().filesDir }
+        // Sandboxed: only allow sandbox and Downloads
+        val allowed = dir.absolutePath.startsWith(sandboxDir.absolutePath) || dir.absolutePath.startsWith(downloadsDir.absolutePath) || dir == sandboxDir || dir == downloadsDir
+        val target = if (allowed && dir.exists()) dir else sandboxDir
         currentDir = target
         refresh()
     }
 
     private fun navigateUp() {
+        // Don't go above sandbox or Downloads root
+        if (currentDir == sandboxDir || currentDir == downloadsDir) {
+            Toast.makeText(requireContext(), "Already at root (Sandbox/Downloads only)", Toast.LENGTH_SHORT).show()
+            return
+        }
         val parent = currentDir.parentFile
-        if (parent != null && parent.exists()) openDir(parent)
-        else Toast.makeText(requireContext(), "Already at root", Toast.LENGTH_SHORT).show()
+        if (parent != null && (parent.absolutePath.startsWith(sandboxDir.absolutePath) || parent.absolutePath.startsWith(downloadsDir.absolutePath))) {
+            openDir(parent)
+        } else {
+            openDir(sandboxDir)
+        }
     }
 
     private fun refresh() {
         val ctx = requireContext()
-        b.tvPath.text = currentDir.absolutePath
+        b.tvPath.text = currentDir.absolutePath.replace(ctx.filesDir.absolutePath, "[Sandbox]").replace(downloadsDir.absolutePath, "[Downloads]")
         val files = try { currentDir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })) ?: emptyList() } catch (_: Exception) { emptyList() }
         b.tvCount.text = "${files.size} items"
         b.empty.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE
         b.recycler.visibility = if (files.isEmpty()) View.GONE else View.VISIBLE
         b.recycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-            override fun onCreateViewHolder(p: ViewGroup, t: Int): RecyclerView.ViewHolder {
-                val view = LayoutInflater.from(p.context).inflate(R.layout.item_download, p, false)
-                return object : RecyclerView.ViewHolder(view) {}
-            }
+            override fun onCreateViewHolder(p: ViewGroup, t: Int) =
+                object : RecyclerView.ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_download, p, false)) {}
             override fun onBindViewHolder(h: RecyclerView.ViewHolder, i: Int) {
                 val f = files[i]
                 val title = h.itemView.findViewById<TextView>(R.id.tvTitle)
@@ -73,10 +131,9 @@ class FileManagerFragment : Fragment() {
                 title.text = (if (isDir) "📁 " else "📄 ") + f.name
                 val size = if (isDir) "${f.listFiles()?.size ?: 0} items" else "${f.length()/1024} KB"
                 val date = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(f.lastModified()))
-                status.text = "$size • $date • ${if (f.canRead()) "r" else "-"}${if (f.canWrite()) "w" else "-"}"
+                status.text = "$size • $date"
                 h.itemView.setOnClickListener {
-                    if (isDir) openDir(f)
-                    else openFile(f)
+                    if (isDir) openDir(f) else openFile(f)
                 }
                 h.itemView.setOnLongClickListener {
                     showFileOptions(f)
@@ -102,18 +159,72 @@ class FileManagerFragment : Fragment() {
     }
 
     private fun showFileOptions(f: File) {
-        val opts = arrayOf("Share", "Delete", "Rename", "Details")
+        val opts = if (f.absolutePath.startsWith(sandboxDir.absolutePath)) {
+            arrayOf("Open", "Share", "Export (SAF)", "Rename", "Delete", "Details")
+        } else {
+            arrayOf("Open", "Share", "Copy to Sandbox", "Details")
+        }
         android.app.AlertDialog.Builder(requireContext())
             .setTitle(f.name)
             .setItems(opts) { _, which ->
-                when (which) {
-                    0 -> shareFile(f)
-                    1 -> deleteFile(f)
-                    2 -> renameFile(f)
-                    3 -> showDetails(f)
+                when (opts[which]) {
+                    "Open" -> openFile(f)
+                    "Share" -> shareFile(f)
+                    "Export (SAF)" -> {
+                        exportFile = f
+                        exportLauncher.launch(f.name)
+                    }
+                    "Copy to Sandbox" -> copyToSandbox(f)
+                    "Rename" -> renameFile(f)
+                    "Delete" -> deleteFile(f)
+                    "Details" -> showDetails(f)
                 }
             }
             .show()
+    }
+
+    private fun importFile(uri: Uri) {
+        try {
+            val input = requireContext().contentResolver.openInputStream(uri) ?: return
+            val name = getDisplayName(uri) ?: "import_${System.currentTimeMillis()}"
+            val outFile = File(sandboxDir, name)
+            FileOutputStream(outFile).use { out -> input.copyTo(out) }
+            input.close()
+            Toast.makeText(requireContext(), "Imported to Sandbox/$name", Toast.LENGTH_LONG).show()
+            openDir(sandboxDir)
+        } catch (e: Exception) {
+            Toast.makeText(requireContext(), "Import failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun getDisplayName(uri: Uri): String? {
+        return try {
+            requireContext().contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
+            }
+        } catch (_: Exception) { null }
+    }
+
+    private fun exportFileToUri(file: File, uri: Uri) {
+        try {
+            val input = file.inputStream()
+            val out = requireContext().contentResolver.openOutputStream(uri) ?: return
+            input.copyTo(out)
+            input.close()
+            out.close()
+            Toast.makeText(requireContext(), "Exported ${file.name}", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(requireContext(), "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun copyToSandbox(f: File) {
+        try {
+            val out = File(sandboxDir, f.name)
+            f.inputStream().use { input -> FileOutputStream(out).use { input.copyTo(it) } }
+            Toast.makeText(requireContext(), "Copied to Sandbox", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
     }
 
     private fun shareFile(f: File) {
@@ -131,7 +242,6 @@ class FileManagerFragment : Fragment() {
     private fun deleteFile(f: File) {
         android.app.AlertDialog.Builder(requireContext())
             .setTitle("Delete ${f.name}?")
-            .setMessage("This cannot be undone.")
             .setPositiveButton("Delete") { _, _ ->
                 val ok = try { if (f.isDirectory) f.deleteRecursively() else f.delete() } catch (_: Exception) { false }
                 Toast.makeText(requireContext(), if (ok) "Deleted" else "Failed", Toast.LENGTH_SHORT).show()
@@ -165,19 +275,12 @@ class FileManagerFragment : Fragment() {
             Path: ${f.absolutePath}
             Size: ${f.length()} bytes
             Dir: ${f.isDirectory}
-            Read: ${f.canRead()} Write: ${f.canWrite()} Exec: ${f.canExecute()}
             Modified: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(f.lastModified()))}
-            Files: ${if (f.isDirectory) f.listFiles()?.size ?: 0 else "-"}
         """.trimIndent()
         android.app.AlertDialog.Builder(requireContext())
             .setTitle("Details")
             .setMessage(info)
             .setPositiveButton("OK", null)
-            .setNeutralButton("Copy path") { _, _ ->
-                val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                cm.setPrimaryClip(android.content.ClipData.newPlainText("path", f.absolutePath))
-                Toast.makeText(requireContext(), "Copied", Toast.LENGTH_SHORT).show()
-            }
             .show()
     }
 
