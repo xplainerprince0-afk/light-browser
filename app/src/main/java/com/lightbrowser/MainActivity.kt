@@ -10,8 +10,11 @@ import androidx.fragment.app.Fragment
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.databinding.ActivityMainBinding
 import com.lightbrowser.ui.BrowserFragment
+import com.lightbrowser.ui.DownloadsFragment
 import com.lightbrowser.ui.FileManagerFragment
 import com.lightbrowser.ui.MusicPlayerFragment
+import com.lightbrowser.ui.ScriptsFragment
+import com.lightbrowser.ui.SettingsFragment
 import com.lightbrowser.ui.TerminalFragment
 
 class MainActivity : AppCompatActivity() {
@@ -91,7 +94,10 @@ class MainActivity : AppCompatActivity() {
         if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString())
         tx.commit()
         currentId = id
-        try { binding.bottomNav.selectedItemId = id } catch (_: Exception) {}
+        // only update bottom nav if id is in bottom nav menu (Browser/Files/Terminal/Music)
+        if (id == R.id.nav_browser || id == R.id.nav_filemanager || id == R.id.nav_terminal || id == R.id.nav_music) {
+            try { binding.bottomNav.selectedItemId = id } catch (_: Exception) {}
+        }
     }
 
     fun switchToTab(id: Int) = switchTab(id)
