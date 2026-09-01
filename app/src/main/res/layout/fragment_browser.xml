@@ -112,6 +112,16 @@
                 android:textColor="@color/white"
                 android:textSize="15sp"
                 android:background="?attr/selectableItemBackgroundBorderless"/>
+
+            <TextView
+                android:id="@+id/btnMore"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="⋮"
+                android:textColor="@color/white"
+                android:textSize="20sp"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 

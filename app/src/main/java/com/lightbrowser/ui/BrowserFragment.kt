@@ -58,8 +58,9 @@ class BrowserFragment : Fragment() {
         } catch (e: Exception) { Log.w(TAG, "ServiceWorker sw failed", e) }
 
         val wv = binding.webView
-        // === Wibgar fq1:390-394 + 498 hardware layer ===
-        wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        // Wibgar uses HARDWARE (2) but fixed panels (WTR) flicker on some GPUs – use SOFTWARE for wtr-lab, HARDWARE otherwise
+        // We'll set to SOFTWARE initially to avoid flicker, can toggle via settings if needed
+        wv.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
 
         val s = wv.settings
         // === Wibgar fq1:595-730 exact WebSettings ===
@@ -264,6 +265,7 @@ class BrowserFragment : Fragment() {
         binding.btnBookmark.setOnClickListener { toggleBookmark() }
         binding.btnHistory.setOnClickListener { showHistoryDialog() }
         binding.btnHistory.setOnLongClickListener { showBookmarksDialog(); true }
+        binding.btnMore.setOnClickListener { showMoreMenu(it) }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
@@ -305,39 +307,26 @@ class BrowserFragment : Fragment() {
 
     private fun injectDesktop(v: WebView?) {
         if (v == null) return
+        // Fix flicker: don't use MutationObserver that constantly resets viewport on wtr-lab (causes fixed panel reflow)
+        // Just set once, no observer
         val js = """
             (function() {
-                'use strict';
-                function forceDesktopView() {
+                try {
                     let viewport = document.querySelector('meta[name="viewport"]');
                     if (!viewport) {
                         viewport = document.createElement('meta');
                         viewport.name = 'viewport';
                         document.head.appendChild(viewport);
                     }
-                    viewport.content = 'width=1280, initial-scale=0.8, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
-                }
-                try {
+                    // keep original viewport but allow zoom, don't force 1280 which breaks WTR layout and causes flicker
+                    if (!viewport.content.includes('1280')) {
+                        viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
+                    }
                     const desktopAgent = "$DESKTOP_UA";
                     Object.defineProperty(navigator, 'userAgent', { get: () => desktopAgent, configurable: true });
                     Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
                     Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
-                } catch (e) { console.error("Could not override device platform info:", e); }
-                forceDesktopView();
-                const observer = new MutationObserver((mutations) => {
-                    mutations.forEach((mutation) => {
-                        if (mutation.type === 'childList') {
-                            forceDesktopView();
-                        }
-                    });
-                });
-                if (document.head) {
-                    observer.observe(document.head, { childList: true, subtree: true });
-                } else {
-                    window.addEventListener('DOMContentLoaded', () => {
-                        observer.observe(document.head, { childList: true, subtree: true });
-                    });
-                }
+                } catch (e) { console.error(e); }
             })();
         """.trimIndent()
         v.evaluateJavascript(js, null)
@@ -569,6 +558,44 @@ class BrowserFragment : Fragment() {
             Log.e(TAG, "showTestDialog crash", e)
             try { Toast.makeText(requireContext(), "Tester error: ${e.message}", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
         }
+    }
+
+    private fun showMoreMenu(anchor: View) {
+        try {
+            val ctx = requireContext()
+            val popup = android.widget.PopupMenu(ctx, anchor)
+            popup.menu.add(0, 1, 0, "📜 Scripts")
+            popup.menu.add(0, 2, 0, "⬇️ Downloads")
+            popup.menu.add(0, 3, 0, "⚙️ Settings")
+            popup.menu.add(0, 4, 0, "🕘 History")
+            popup.menu.add(0, 5, 0, "⭐ Bookmarks")
+            popup.menu.add(0, 6, 0, if (Prefs.desktopMode) "🖥️ Desktop: ON" else "🖥️ Desktop: OFF")
+            popup.menu.add(0, 7, 0, "🧹 Clear cache")
+            popup.setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_scripts)
+                    2 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_downloads)
+                    3 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_settings)
+                    4 -> showHistoryDialog()
+                    5 -> showBookmarksDialog()
+                    6 -> {
+                        Prefs.desktopMode = !Prefs.desktopMode
+                        Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
+                        binding.webView.reload()
+                    }
+                    7 -> {
+                        try {
+                            android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                            android.webkit.WebStorage.getInstance().deleteAllData()
+                            ctx.cacheDir.deleteRecursively()
+                            Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+                    }
+                }
+                true
+            }
+            popup.show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
     }
 
     // Public for MainActivity to load url without recreation (cache retain)

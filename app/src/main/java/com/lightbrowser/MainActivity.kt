@@ -63,7 +63,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun switchTab(id: Int) {
+    fun switchTab(id: Int) {
         if (currentId == id && fragments.containsKey(id)) return
         val tx = supportFragmentManager.beginTransaction()
         // hide current
@@ -73,6 +73,8 @@ class MainActivity : AppCompatActivity() {
         tx.commit()
         currentId = id
     }
+
+    fun switchToTab(id: Int) = switchTab(id)
 
     fun switchToBrowser(url: String? = null) {
         url?.let { BrowserFragment.pendingUrl = it }
