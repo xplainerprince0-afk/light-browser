@@ -23,6 +23,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            // FIX for "Package appears to be invalid": previous release was unsigned (app-release-unsigned.apk)
+            // Use debug signing for CI release so APK is v1/v2 signed and installable. Replace with your own keystore for store release.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

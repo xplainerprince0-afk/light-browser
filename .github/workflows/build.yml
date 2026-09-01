@@ -24,9 +24,19 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build Release APK (with logs)
-        run: ./gradlew assembleRelease --stacktrace --info
-        # logs visible in Actions tab
+      - name: Build APKs (signed with debug keystore)
+        run: ./gradlew assembleDebug assembleRelease --stacktrace --info
+        # release now uses debug signing (app/build.gradle.kts) so it's installable; logs visible in Actions tab
+
+      - name: Verify APK signature (debug keystore)
+        if: always()
+        run: |
+          ls -lh app/build/outputs/apk/release/ || true
+          echo "--- apksigner verify ---"
+          $ANDROID_HOME/build-tools/*/apksigner verify --verbose app/build/outputs/apk/release/*.apk || echo "verify failed (expected if unsigned before fix)"
+          echo "--- list apks ---"
+          ls -lh app/build/outputs/apk/release/*.apk || true
+          ls -lh app/build/outputs/apk/debug/*.apk || true
 
       - name: APK size report
         if: always()
@@ -35,13 +45,24 @@ jobs:
           du -h app/build/outputs/apk/release/*.apk || true
           echo "### APK size" >> $GITHUB_STEP_SUMMARY
           ls -lh app/build/outputs/apk/release/*.apk | tee -a $GITHUB_STEP_SUMMARY || true
+          echo "### Build outputs" >> $GITHUB_STEP_SUMMARY
+          find app/build/outputs -name "*.apk" -exec ls -lh {} \; | tee -a $GITHUB_STEP_SUMMARY || true
 
-      - name: Upload APK artifact
+      - name: Upload APK artifact (signed release)
         uses: actions/upload-artifact@v4
         with:
           name: LightBrowser-release-apk
           path: app/build/outputs/apk/release/*.apk
           retention-days: 14
+
+      - name: Upload Debug APK (fallback signed)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightBrowser-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Upload build logs
         if: always()
