@@ -3,15 +3,19 @@ package com.lightbrowser
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
+import com.lightbrowser.data.AppCtx
 import com.lightbrowser.databinding.ActivityMainBinding
 import com.lightbrowser.ui.BrowserFragment
-import com.lightbrowser.ui.PlaceholderFragment
+import com.lightbrowser.ui.DownloadsFragment
+import com.lightbrowser.ui.ScriptsFragment
+import com.lightbrowser.ui.SettingsFragment
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppCtx.init(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -22,7 +26,6 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
-        // handle VIEW intents
         intent?.data?.toString()?.let { url ->
             if (url.startsWith("http")) {
                 BrowserFragment.pendingUrl = url
@@ -34,15 +37,9 @@ class MainActivity : AppCompatActivity() {
     private fun switchTab(id: Int) {
         val frag: Fragment = when (id) {
             R.id.nav_browser -> BrowserFragment()
-            R.id.nav_scripts -> PlaceholderFragment.newInstance(
-                "Scripts", getString(R.string.desc_placeholder_scripts), "🧩"
-            )
-            R.id.nav_downloads -> PlaceholderFragment.newInstance(
-                "Downloads", getString(R.string.desc_placeholder_downloads), "⬇️"
-            )
-            R.id.nav_settings -> PlaceholderFragment.newInstance(
-                "Settings", getString(R.string.desc_placeholder_settings), "⚙️"
-            )
+            R.id.nav_scripts -> ScriptsFragment()
+            R.id.nav_downloads -> DownloadsFragment()
+            R.id.nav_settings -> SettingsFragment()
             else -> BrowserFragment()
         }
         supportFragmentManager.beginTransaction()

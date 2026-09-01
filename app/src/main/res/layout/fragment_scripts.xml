@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@color/bg_dark">
+
+    <LinearLayout android:layout_width="match_parent" android:layout_height="56dp"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:padding="12dp" android:background="@color/surface">
+
+        <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+            android:text="Userscripts" android:textColor="@color/white" android:textSize="18sp" android:textStyle="bold"/>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAdd" android:layout_width="wrap_content" android:layout_height="36dp"
+            android:text="+ Add" android:textSize="12sp"/>
+    </LinearLayout>
+
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:padding="12dp" android:textColor="#99FFFFFF" android:textSize="12sp"
+        android:text="Supports Violentmonkey format: // ==UserScript== @match @grant @run-at. Injected via evaluateJavascript on page finish (Wibgar-style) with URL matching. Toggle to enable/disable."/>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:clipToPadding="false" android:padding="8dp"/>
+
+    <TextView android:id="@+id/empty" android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1" android:gravity="center" android:text="No scripts yet.\nTap + Add to paste a Violentmonkey script."
+        android:textColor="#66FFFFFF" android:visibility="gone"/>
+</LinearLayout>

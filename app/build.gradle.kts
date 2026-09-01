@@ -11,8 +11,8 @@ android {
         applicationId = "com.lightbrowser"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         // keep dex small
         multiDexEnabled = false
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
@@ -58,4 +58,5 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.fragment:fragment-ktx:1.8.2")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
 }
