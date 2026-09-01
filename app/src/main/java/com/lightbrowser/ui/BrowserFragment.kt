@@ -3,6 +3,7 @@ package com.lightbrowser.ui
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.Message
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
@@ -11,6 +12,8 @@ import android.view.inputmethod.EditorInfo
 import android.webkit.*
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.webkit.ServiceWorkerController
+import androidx.webkit.ServiceWorkerClient
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.DownloadHelper
 import com.lightbrowser.data.Prefs
@@ -24,6 +27,7 @@ class BrowserFragment : Fragment() {
     companion object {
         var pendingUrl: String? = null
         private const val TAG = "LightBrowser"
+        private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -35,103 +39,171 @@ class BrowserFragment : Fragment() {
     @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         try { AppCtx.init(requireContext()) } catch (_: Exception) {}
+
+        // === Wibgar fq1:311 ServiceWorker pre-config (critical for Worker blob: + fetch) ===
+        try {
+            val sw = ServiceWorkerController.getInstance()
+            sw.setServiceWorkerClient(object : ServiceWorkerClient() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? = null
+            })
+            sw.serviceWorkerWebSettings.apply {
+                allowContentAccess = true
+                allowFileAccess = true
+                // blockNetworkLoads = false default
+            }
+        } catch (e: Exception) { Log.w(TAG, "ServiceWorker sw failed", e) }
+
         val wv = binding.webView
+        // === Wibgar fq1:390-394 + 498 hardware layer ===
+        wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
         val s = wv.settings
-        s.javaScriptEnabled = Prefs.jsEnabled
-        s.domStorageEnabled = true
-        s.databaseEnabled = true
-        // WTR script uses Worker via blob: + indexedDB + fetch → need file access
-        s.allowFileAccess = true
-        s.allowContentAccess = true
-        s.allowFileAccessFromFileURLs = true
-        s.allowUniversalAccessFromFileURLs = true
-        s.useWideViewPort = true
-        s.loadWithOverviewMode = true
-        s.builtInZoomControls = true
-        s.displayZoomControls = false
-        s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-        s.cacheMode = WebSettings.LOAD_DEFAULT
-        s.mediaPlaybackRequiresUserGesture = false
-        s.javaScriptCanOpenWindowsAutomatically = true
-        // important for IndexedDB / localStorage on some OEMs
-        try { s.setGeolocationEnabled(false) } catch (_: Exception) {}
-        if (Prefs.desktopMode) {
-            s.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        }
+        // === Wibgar fq1:595-730 exact WebSettings ===
+        try {
+            s.javaScriptEnabled = Prefs.jsEnabled
+            s.domStorageEnabled = true // localStorage for WTR
+            s.databaseEnabled = true // IndexedDB for WTR
+            s.allowFileAccess = true // !isIncognito – WTR Worker via blob needs true
+            s.allowContentAccess = true
+            try { s.databasePath = requireContext().getDir("databases", 0).path } catch (_: Exception) {}
+            // deprecated but Wibgar keeps it
+            @Suppress("DEPRECATION") s.renderPriority = WebSettings.RenderPriority.HIGH
+            s.setSupportZoom(true)
+            s.builtInZoomControls = true
+            s.displayZoomControls = false
+            s.useWideViewPort = true
+            s.loadWithOverviewMode = true
+            s.setSupportMultipleWindows(true) // target="_blank" + blob downloads
+            s.cacheMode = WebSettings.LOAD_DEFAULT
+            @Suppress("DEPRECATION") s.layoutAlgorithm = WebSettings.LayoutAlgorithm.NARROW_COLUMNS
+            s.javaScriptCanOpenWindowsAutomatically = true
+            s.mediaPlaybackRequiresUserGesture = false
+            s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW // 0 – WTR fetch http from https
+            s.setGeolocationEnabled(false)
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                try { s.safeBrowsingEnabled = true } catch (_: Exception) {}
+            }
+            if (Prefs.desktopMode) {
+                s.userAgentString = DESKTOP_UA
+            }
+        } catch (e: Exception) { Log.e(TAG, "WebSettings fail", e) }
 
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
 
+        // === Wibgar fq1:581 BlobDownloader bridge ===
+        wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "BlobDownloader")
+        // keep alias for old scripts
         wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "LightBlobBridge")
 
         wv.webViewClient = object : WebViewClient() {
             private val adHosts = setOf("doubleclick.net","googlesyndication.com","googletagmanager.com","facebook.net","adsystem","googletagservices.com")
-            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): android.webkit.WebResourceResponse? {
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                 if (Prefs.adBlock) {
                     val host = request?.url?.host ?: ""
                     if (adHosts.any { host.contains(it, ignoreCase = true) }) {
-                        return android.webkit.WebResourceResponse("text/plain","utf-8", java.io.ByteArrayInputStream("".toByteArray()))
+                        return WebResourceResponse("text/plain","utf-8", java.io.ByteArrayInputStream("".toByteArray()))
                     }
                 }
                 return super.shouldInterceptRequest(view, request)
             }
 
             override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(v, url, favicon)
                 binding.progress.visibility = View.VISIBLE
                 binding.progress.progress = 10
                 url?.let { binding.urlBar.setText(it) }
                 if (url != null) injectScripts(v, url, "document_start")
             }
+
             override fun onPageFinished(v: WebView?, url: String?) {
+                super.onPageFinished(v, url)
                 binding.progress.visibility = View.GONE
                 url?.let { binding.urlBar.setText(it) }
+
+                // Wibgar aw1:708 visibility override for youtube etc – keep for background fetch survival (WTR auto-scrape throttled if hidden)
+                injectVisibilityHack(v, url)
+
                 if (Prefs.desktopMode) injectDesktop(v)
-                // WTR needs DOM ready; small delay ensures document.body exists
+
+                // Wibgar aw1:792 delay inject: need DOM ready → postDelayed 350ms
                 v?.postDelayed({
                     if (url != null) injectScripts(v, url, "document_end")
                     if (url != null) injectScripts(v, url, "document_idle")
                     injectBlobHook(v)
-                }, 400)
+                }, 350)
             }
-            override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean { return false }
-            override fun onReceivedError(v: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
-                Log.e(TAG, "onReceivedError ${err?.description} url=${req?.url}")
+
+            override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                // keep inside
+                return false
             }
         }
+
         wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(v: WebView?, p: Int) {
                 if (p < 100) { binding.progress.visibility = View.VISIBLE; binding.progress.progress = p }
                 else binding.progress.visibility = View.GONE
             }
+
             override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
                 cm?.let {
                     Log.d(TAG, "JS ${it.messageLevel()} ${it.sourceId()}:${it.lineNumber()} ${it.message()}")
-                    // surface script errors to user for debugging WTR
-                    if (it.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                        // don't toast spam, just log; uncomment to debug:
-                        // Toast.makeText(requireContext(), "JS: ${it.message()}", Toast.LENGTH_SHORT).show()
-                    }
                 }
                 return super.onConsoleMessage(cm)
             }
+
+            // Wibgar zv1: handling target="_blank" for downloads/blobs
+            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
+                val href = view?.hitTestResult?.extra
+                if (href != null) {
+                    view.loadUrl(href)
+                    return true
+                }
+                // For WebViewTransport case (Wibgar zv1)
+                val newView = WebView(view!!.context)
+                newView.webViewClient = WebViewClient()
+                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                transport?.webView = newView
+                resultMsg?.sendToTarget()
+                return true
+            }
         }
-        wv.setDownloadListener { url, ua, cd, mime, _ ->
+
+        // === Wibgar gr1 DownloadListener with blob XHR bridge ===
+        wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
             if (url.startsWith("blob:")) {
-                Toast.makeText(requireContext(), "Blob download – capturing...", Toast.LENGTH_SHORT).show()
-                wv.evaluateJavascript("""
+                // Wibgar gr1:1402 XHR bridge → onBlobDownload
+                val js = """
                     (function(){
+                      var blobUrl="$url";
+                      var mime="$mimeType";
+                      var disp="$contentDisposition";
                       try{
-                        var url="$url";
-                        fetch(url).then(r=>r.blob()).then(b=>{
-                          var r=new FileReader();
-                          r.onload=function(){ LightBlobBridge.onBlobData(r.result, "download.bin", b.type); };
-                          r.readAsDataURL(b);
-                        }).catch(e=>{ console.log("blob fetch err",e)});
-                      }catch(e){ console.error(e)}
+                        var xhr=new XMLHttpRequest();
+                        xhr.open('GET', blobUrl, true);
+                        xhr.responseType='blob';
+                        xhr.onload=function(e){
+                          if(this.status==200){
+                            var blob=this.response;
+                            var reader=new FileReader();
+                            reader.readAsDataURL(blob);
+                            reader.onloadend=function(){
+                              var base64data=reader.result;
+                              try{ window.BlobDownloader.onBlobDownload(base64data, blob.type||mime, disp); }catch(e){ console.error('BlobDownloader fail',e)}
+                              try{ window.LightBlobBridge.onBlobData(base64data, 'download', blob.type||mime); }catch(e){}
+                            };
+                          } else { console.error('blob XHR status', this.status); }
+                        };
+                        xhr.onerror=function(e){ console.error('blob XHR error', e); };
+                        xhr.send();
+                      }catch(e){ console.error('blob hook error', e); }
                     })();
-                """.trimIndent(), null)
+                """.trimIndent()
+                wv.evaluateJavascript(js, null)
+                Toast.makeText(requireContext(), "Capturing blob...", Toast.LENGTH_SHORT).show()
             } else {
-                DownloadHelper.enqueue(requireContext(), url, ua, cd, mime)
+                DownloadHelper.enqueue(requireContext(), url, userAgent, contentDisposition, mimeType)
             }
         }
 
@@ -164,20 +236,78 @@ class BrowserFragment : Fragment() {
         binding.btnRefresh.setOnClickListener { wv.reload() }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
-        if (savedInstanceState == null) wv.loadUrl(start)
+        if (savedInstanceState == null) {
+            val headers = mapOf("X-Requested-With" to "")
+            wv.loadUrl(start, headers)
+        }
+    }
+
+    // Wibgar aw1:708
+    private fun injectVisibilityHack(v: WebView?, url: String?) {
+        if (v == null || url == null) return
+        val lower = url.lowercase()
+        if (!lower.contains("youtube.com") && !lower.contains("youtu.be") && !lower.contains("soundcloud.com") && !lower.contains("wtr-lab.com")) {
+            // still inject for WTR to prevent background throttle during long scrape
+            // WTR long fetch loop suspends if document.hidden -> inject anyway for wtr-lab
+            if (!lower.contains("wtr-lab.com")) return
+        }
+        val js = """
+            (function() {
+                if (window.__visibility_override_hooked) return;
+                window.__visibility_override_hooked = true;
+                try {
+                    Object.defineProperty(document, 'visibilityState', { value: 'visible', writable: false, configurable: true });
+                    Object.defineProperty(document, 'hidden', { value: false, writable: false, configurable: true });
+                    document.dispatchEvent(new Event('visibilitychange'));
+                    document.dispatchEvent(new Event('webkitvisibilitychange'));
+                    const originalAddEventListener = document.addEventListener;
+                    document.addEventListener = function(type, listener, options) {
+                        if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
+                            return;
+                        }
+                        return originalAddEventListener.apply(this, arguments);
+                    };
+                } catch(e) { console.error(e); }
+            })();
+        """.trimIndent()
+        v.evaluateJavascript(js, null)
     }
 
     private fun injectDesktop(v: WebView?) {
         if (v == null) return
         val js = """
-            (function(){
-              try{
-                let m=document.querySelector('meta[name="viewport"]');
-                if(!m){m=document.createElement('meta');m.name='viewport';document.head.appendChild(m);}
-                m.content='width=1280, initial-scale=0.8, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
-                Object.defineProperty(navigator,'userAgent',{get:()=>'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',configurable:true});
-                Object.defineProperty(navigator,'platform',{get:()=>'Win32',configurable:true});
-              }catch(e){console.error(e)}
+            (function() {
+                'use strict';
+                function forceDesktopView() {
+                    let viewport = document.querySelector('meta[name="viewport"]');
+                    if (!viewport) {
+                        viewport = document.createElement('meta');
+                        viewport.name = 'viewport';
+                        document.head.appendChild(viewport);
+                    }
+                    viewport.content = 'width=1280, initial-scale=0.8, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                }
+                try {
+                    const desktopAgent = "$DESKTOP_UA";
+                    Object.defineProperty(navigator, 'userAgent', { get: () => desktopAgent, configurable: true });
+                    Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
+                    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => 0, configurable: true });
+                } catch (e) { console.error("Could not override device platform info:", e); }
+                forceDesktopView();
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach((mutation) => {
+                        if (mutation.type === 'childList') {
+                            forceDesktopView();
+                        }
+                    });
+                });
+                if (document.head) {
+                    observer.observe(document.head, { childList: true, subtree: true });
+                } else {
+                    window.addEventListener('DOMContentLoaded', () => {
+                        observer.observe(document.head, { childList: true, subtree: true });
+                    });
+                }
             })();
         """.trimIndent()
         v.evaluateJavascript(js, null)
@@ -185,13 +315,7 @@ class BrowserFragment : Fragment() {
 
     private fun injectBlobHook(v: WebView?) {
         if (v == null) return
-        val js = """
-            (function(){
-              if(window.__lb_blobHook) return; window.__lb_blobHook=true;
-              console.log("LB: blob hook installed");
-            })();
-        """.trimIndent()
-        v.evaluateJavascript(js, null)
+        v.evaluateJavascript("(function(){ if(window.__lb_blobHook) return; window.__lb_blobHook=true; console.log('LB: blob hook installed'); })();", null)
     }
 
     private fun injectScripts(v: WebView?, url: String?, runAt: String) {
@@ -200,56 +324,42 @@ class BrowserFragment : Fragment() {
         if (all.isEmpty()) return
         val matched = all.filter { it.enabled && com.lightbrowser.data.UserScript.matchesUrl(it.matches, url) }
         if (matched.isEmpty()) {
-            Log.d(TAG, "No scripts match $url (have ${all.size} total, patterns=${all.map { it.matches }})")
+            Log.d(TAG, "No scripts match $url (have ${all.size})")
             return
         }
         val toInject = matched.filter { sc ->
             when (sc.runAt) {
                 "document_start" -> runAt == "document_start"
                 "document_end" -> runAt == "document_end" || runAt == "document_idle"
-                else -> runAt == "document_idle" || runAt == "document_end" // document_idle scripts run at idle/end
+                else -> runAt == "document_idle" || runAt == "document_end"
             }
         }
         if (toInject.isEmpty()) {
-            Log.d(TAG, "Matched ${matched.size} but none for runAt=$runAt url=$url")
+            Log.d(TAG, "Matched ${matched.size} but none for runAt=$runAt")
             return
         }
-        Log.d(TAG, "Injecting ${toInject.size} script(s) at $runAt for $url: ${toInject.map { it.name }}")
+        Log.d(TAG, "Injecting ${toInject.size} at $runAt for $url: ${toInject.map { it.name }}")
+        // Wibgar aw1:1993 joins with "\n" then wraps once; we do per-script to isolate errors but same wrapper
+        // Use Wibgar wrapper: (function(){ try{ code }catch(e){console.error('Custom script error:', e);}})();
         toInject.forEach { sc ->
-            injectSingle(v, sc, url)
+            injectSingle(v, sc)
         }
     }
 
-    private fun injectSingle(v: WebView, sc: com.lightbrowser.data.UserScript, url: String) {
-        // GM polyfill only if @grant asks for it (WTR has @grant none → skip)
+    private fun injectSingle(v: WebView, sc: com.lightbrowser.data.UserScript) {
         val needsGM = sc.grants.any { it.startsWith("GM_") } && !sc.grants.contains("none")
         val gmPolyfill = if (needsGM) """
-            window.GM_info={script:{name:'${escapeJs(sc.name)}',version:'1.1'}};
-            window.GM_log=function(x){console.log(x)};
+            window.GM_info={script:{name:'${escapeJs(sc.name)}'}};
             window.GM_setValue=function(k,v){try{localStorage.setItem('GM_'+k, JSON.stringify(v))}catch(e){}};
             window.GM_getValue=function(k,d){try{var v=localStorage.getItem('GM_'+k); return v===null?d:JSON.parse(v)}catch(e){return d}};
             window.GM_addStyle=function(css){var s=document.createElement('style');s.textContent=css;document.head.appendChild(s);return s};
-            window.GM_xmlhttpRequest=function(o){fetch(o.url,{method:o.method||'GET',headers:o.headers,body:o.data,credentials:'include'}).then(r=>r.text().then(t=>o.onload&&o.onload({responseText:t,status:r.status,responseHeaders:r.headers}))).catch(e=>o.onerror&&o.onerror(e))};
+            window.GM_xmlhttpRequest=function(o){fetch(o.url,{method:o.method||'GET',headers:o.headers,body:o.data,credentials:'include'}).then(r=>r.text().then(t=>o.onload&&o.onload({responseText:t,status:r.status})) ).catch(e=>o.onerror&&o.onerror(e))};
             window.unsafeWindow=window;
         """.trimIndent() else ""
-
-        // Use separate evaluate per script to isolate errors and avoid huge payload issues
-        // Wrap in try/catch and log
+        val marker = "console.log('LB inject: ${escapeJs(sc.name)} @ ${escapeJs(sc.runAt)}');"
+        // Wibgar style wrapper
         val code = sc.code
-        // Escape ` and $ for Kotlin string? Already in code. For JS injection, we need to avoid breaking evaluateJavascript string.
-        // evaluateJavascript takes a JS snippet, not a JSON string, so we can send raw. To be safe, we base64-encode large scripts and decode in page?
-        // For WTR (~30k), raw is okay, but to be robust, use encode via evaluated string with JSON.stringify? Simpler: send raw, WebView handles.
-        // Add a console marker so user can see injection.
-        val marker = "console.log('LB inject: ${escapeJs(sc.name)} @ ${escapeJs(sc.runAt)} for '+location.href);"
-        val wrapped = """
-            (function(){
-              $marker
-              try{
-                $gmPolyfill
-                ${code}
-              }catch(e){ console.error('LB script error ${escapeJs(sc.name)}', e); }
-            })();
-        """.trimIndent()
+        val wrapped = "(function(){ try{\n$marker\n$gmPolyfill\n$code\n}catch(e){console.error('Custom script error:', e);} })();"
         v.evaluateJavascript(wrapped) { result ->
             Log.d(TAG, "inject result ${sc.name}: $result")
         }
@@ -265,7 +375,7 @@ class BrowserFragment : Fragment() {
             input.contains(".") && !input.contains(" ") -> "https://$input"
             else -> "https://www.google.com/search?q=" + Uri.encode(input)
         }
-        binding.webView.loadUrl(url)
+        binding.webView.loadUrl(url, mapOf("X-Requested-With" to ""))
     }
 
     fun canGoBack() = _binding?.webView?.canGoBack() == true
