@@ -28,6 +28,9 @@ class BrowserFragment : Fragment() {
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
 
+    private val consoleLogs = mutableListOf<String>()
+    private var lastInjectInfo = "No inject yet"
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentBrowserBinding.inflate(inflater, container, false)
@@ -145,7 +148,14 @@ class BrowserFragment : Fragment() {
 
             override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
                 cm?.let {
-                    Log.d(TAG, "JS ${it.messageLevel()} ${it.sourceId()}:${it.lineNumber()} ${it.message()}")
+                    val msg = "${it.messageLevel()} ${it.sourceId()}:${it.lineNumber()} ${it.message()}"
+                    Log.d(TAG, "JS $msg")
+                    consoleLogs.add("[${it.messageLevel()}] ${it.message()} @ ${it.sourceId()}:${it.lineNumber()}")
+                    if (consoleLogs.size > 120) consoleLogs.removeAt(0)
+                    // show error toast for quick feedback
+                    if (it.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                        // don't spam; just log
+                    }
                 }
                 return super.onConsoleMessage(cm)
             }
@@ -231,6 +241,7 @@ class BrowserFragment : Fragment() {
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
         binding.btnRefresh.setOnClickListener { wv.reload() }
+        binding.btnTest.setOnClickListener { showTestDialog() }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
@@ -321,7 +332,10 @@ class BrowserFragment : Fragment() {
         if (all.isEmpty()) return
         val matched = all.filter { it.enabled && com.lightbrowser.data.UserScript.matchesUrl(it.matches, url) }
         if (matched.isEmpty()) {
-            Log.d(TAG, "No scripts match $url (have ${all.size})")
+            val msg = "No scripts match $url (have ${all.size}, patterns=${all.map { it.matches }})"
+            Log.d(TAG, msg)
+            lastInjectInfo = msg
+            consoleLogs.add(msg)
             return
         }
         val toInject = matched.filter { sc ->
@@ -335,7 +349,9 @@ class BrowserFragment : Fragment() {
             Log.d(TAG, "Matched ${matched.size} but none for runAt=$runAt")
             return
         }
-        Log.d(TAG, "Injecting ${toInject.size} at $runAt for $url: ${toInject.map { it.name }}")
+        lastInjectInfo = "Inject ${toInject.size} @ $runAt for $url: ${toInject.joinToString(","){it.name}} at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}"
+        Log.d(TAG, lastInjectInfo)
+        consoleLogs.add(lastInjectInfo)
         // Wibgar aw1:1993 joins with "\n" then wraps once; we do per-script to isolate errors but same wrapper
         // Use Wibgar wrapper: (function(){ try{ code }catch(e){console.error('Custom script error:', e);}})();
         toInject.forEach { sc ->
@@ -363,6 +379,145 @@ class BrowserFragment : Fragment() {
     }
 
     private fun escapeJs(s: String) = s.replace("\\","\\\\").replace("'","\\'").replace("\n","\\n").replace("\"","\\\"")
+
+    private fun showTestDialog() {
+        val ctx = requireContext()
+        val wv = binding.webView
+        val currentUrl = wv.url ?: binding.urlBar.text.toString()
+        val all = try { ScriptStorage.all(ctx) } catch (_: Exception) { emptyList() }
+        val matched = all.filter { it.enabled && com.lightbrowser.data.UserScript.matchesUrl(it.matches, currentUrl) }
+
+        val scroll = android.widget.ScrollView(ctx)
+        val container = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(32, 24, 32, 24)
+        }
+
+        fun addTitle(t: String) {
+            val tv = android.widget.TextView(ctx).apply {
+                text = t; setTextColor(android.graphics.Color.parseColor("#FFC084FC"))
+                textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
+                setPadding(0, 16, 0, 6)
+            }
+            container.addView(tv)
+        }
+        fun addText(t: String, mono: Boolean = false) {
+            val tv = android.widget.TextView(ctx).apply {
+                text = t; setTextColor(android.graphics.Color.parseColor("#FFC8CDF3"))
+                textSize = 11f
+                if (mono) typeface = android.graphics.Typeface.MONOSPACE
+                setTextIsSelectable(true)
+            }
+            container.addView(tv)
+        }
+        fun addBtn(label: String, onClick: () -> Unit) {
+            val b = com.google.android.material.button.MaterialButton(ctx).apply {
+                text = label; textSize = 11f
+            }
+            b.setOnClickListener { onClick() }
+            container.addView(b)
+        }
+
+        addTitle("Current URL")
+        addText(currentUrl, true)
+        addTitle("Scripts (${all.size} total, ${matched.size} matched)")
+        if (all.isEmpty()) addText("No scripts saved. Go to Scripts tab → + Add and paste WTR script.")
+        else {
+            all.forEach { sc ->
+                val isMatched = matched.contains(sc)
+                val mark = if (!sc.enabled) "⭕ disabled" else if (isMatched) "✅ matched" else "❌ no-match"
+                addText("• ${sc.name} [$mark] runAt=${sc.runAt} matches=${sc.matches.joinToString(",").ifEmpty { "<all_urls>" }}")
+            }
+        }
+        addTitle("Last inject info")
+        addText(lastInjectInfo, true)
+
+        addTitle("Console logs (${consoleLogs.size})")
+        val logsTv = android.widget.TextView(ctx).apply {
+            text = if (consoleLogs.isEmpty()) "No logs yet. Try Re-inject." else consoleLogs.takeLast(60).joinToString("\n")
+            setTextColor(android.graphics.Color.parseColor("#FF99FFFFFF"))
+            textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(12, 12, 12, 12)
+            setBackgroundColor(android.graphics.Color.parseColor("#FF0D0F1A"))
+        }
+        val logScroll = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 420)
+            addView(logsTv)
+        }
+        container.addView(logScroll)
+
+        // custom JS input
+        addTitle("Run custom JS (manual test)")
+        val etJs = android.widget.EditText(ctx).apply {
+            hint = "e.g. document.getElementById('wtr-panel') ? 'found' : 'NOT found'"
+            setText("document.getElementById('wtr-panel') ? 'WTR panel FOUND' : 'WTR panel NOT found – script not injected / error'")
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 11f
+        }
+        container.addView(etJs)
+
+        scroll.addView(container)
+
+        val dlg = android.app.AlertDialog.Builder(ctx)
+            .setTitle("🧪 Script Tester")
+            .setView(scroll)
+            .setPositiveButton("Close", null)
+            .create()
+
+        // add bottom actions after show so we can keep dialog open
+        dlg.setOnShowListener {
+            // we will add extra buttons via container, not dialog buttons, to keep it open
+        }
+        dlg.show()
+
+        // programmatically add action buttons inside container after logs
+        // Note: we already added container, now add functional buttons
+        // Need to add after the scroll view – we already added logs, now add buttons below
+        // To avoid rebuild, add now:
+        addBtn("🔄 Re-inject NOW (document_idle)") {
+            val url = wv.url ?: currentUrl
+            lastInjectInfo = "Manual re-inject at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())} for $url"
+            injectScripts(wv, url, "document_idle")
+            logsTv.text = "Triggered inject for $url\nCheck logs after 1s…"
+            wv.postDelayed({
+                logsTv.text = consoleLogs.takeLast(60).joinToString("\n").ifEmpty { "Still no logs – check if script matched URL.\nMatched: ${matched.map { it.name }}" }
+            }, 800)
+        }
+        addBtn("🧹 Clear logs") {
+            consoleLogs.clear()
+            logsTv.text = "Cleared"
+            lastInjectInfo = "Logs cleared"
+        }
+        addBtn("📋 Copy logs") {
+            val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", consoleLogs.joinToString("\n")))
+            Toast.makeText(ctx, "Copied ${consoleLogs.size} lines", Toast.LENGTH_SHORT).show()
+        }
+        addBtn("▶ Run custom JS") {
+            val code = etJs.text.toString()
+            if (code.isBlank()) return@addBtn
+            wv.evaluateJavascript(code) { res ->
+                val out = "Result: $res"
+                consoleLogs.add(out)
+                logsTv.text = consoleLogs.takeLast(60).joinToString("\n")
+                Toast.makeText(ctx, out.take(200), Toast.LENGTH_LONG).show()
+            }
+        }
+        addBtn("🔍 Check WTR panel") {
+            wv.evaluateJavascript("(function(){ var p=document.getElementById('wtr-panel'); return p ? 'FOUND: '+p.outerHTML.slice(0,200) : 'NOT FOUND'; })();") { res ->
+                logsTv.text = "WTR check: $res\n" + consoleLogs.takeLast(40).joinToString("\n")
+                consoleLogs.add("WTR check: $res")
+            }
+        }
+        addBtn("🌐 Test fetch permission") {
+            wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test',{method:'GET',credentials:'include'}).then(r=>r.text().then(t=> 'fetch ok '+r.status+' '+t.slice(0,120))).catch(e=>'fetch err '+e);") { res ->
+                logsTv.text = "Fetch test callback: $res\n" + consoleLogs.takeLast(40).joinToString("\n")
+            }
+            // also do evaluate with console
+            wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test').then(r=>console.log('fetch then '+r.status)).catch(e=>console.error('fetch catch '+e)); console.log('fetch sent');", null)
+        }
+    }
 
     private fun loadFromBar() {
         var input = binding.urlBar.text.toString().trim()
