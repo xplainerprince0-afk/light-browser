@@ -12,8 +12,6 @@ import android.view.inputmethod.EditorInfo
 import android.webkit.*
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import androidx.webkit.ServiceWorkerController
-import androidx.webkit.ServiceWorkerClient
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.DownloadHelper
 import com.lightbrowser.data.Prefs
@@ -42,14 +40,15 @@ class BrowserFragment : Fragment() {
 
         // === Wibgar fq1:311 ServiceWorker pre-config (critical for Worker blob: + fetch) ===
         try {
-            val sw = ServiceWorkerController.getInstance()
-            sw.setServiceWorkerClient(object : ServiceWorkerClient() {
-                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? = null
-            })
-            sw.serviceWorkerWebSettings.apply {
-                allowContentAccess = true
-                allowFileAccess = true
-                // blockNetworkLoads = false default
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                val sw = android.webkit.ServiceWorkerController.getInstance()
+                sw.setServiceWorkerClient(object : android.webkit.ServiceWorkerClient() {
+                    override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? = null
+                })
+                sw.serviceWorkerWebSettings.apply {
+                    allowContentAccess = true
+                    allowFileAccess = true
+                }
             }
         } catch (e: Exception) { Log.w(TAG, "ServiceWorker sw failed", e) }
 
@@ -65,9 +64,7 @@ class BrowserFragment : Fragment() {
             s.databaseEnabled = true // IndexedDB for WTR
             s.allowFileAccess = true // !isIncognito – WTR Worker via blob needs true
             s.allowContentAccess = true
-            try { s.databasePath = requireContext().getDir("databases", 0).path } catch (_: Exception) {}
-            // deprecated but Wibgar keeps it
-            @Suppress("DEPRECATION") s.renderPriority = WebSettings.RenderPriority.HIGH
+            try { @Suppress("DEPRECATION") s.databasePath = requireContext().getDir("databases", 0).path } catch (_: Exception) {}
             s.setSupportZoom(true)
             s.builtInZoomControls = true
             s.displayZoomControls = false
