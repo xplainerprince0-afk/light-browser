@@ -148,14 +148,23 @@ class BrowserFragment : Fragment() {
 
             override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
                 cm?.let {
-                    val msg = "${it.messageLevel()} ${it.sourceId()}:${it.lineNumber()} ${it.message()}"
-                    Log.d(TAG, "JS $msg")
-                    consoleLogs.add("[${it.messageLevel()}] ${it.message()} @ ${it.sourceId()}:${it.lineNumber()}")
-                    if (consoleLogs.size > 120) consoleLogs.removeAt(0)
-                    // show error toast for quick feedback
-                    if (it.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                        // don't spam; just log
+                    val src = it.sourceId() ?: ""
+                    val msg = it.message() ?: ""
+                    // Filter out Cloudflare Turnstile noise (challenges.cloudflare.com) – not relevant to WTR script
+                    if (src.contains("challenges.cloudflare.com") || src.contains("turnstile") || msg.contains("challenges.cloudflare")) {
+                        // still log to Logcat for completeness but don't spam UI console
+                        Log.d(TAG, "JS [filtered Turnstile] $msg @ $src")
+                        return@let
                     }
+                    // Filter out obfuscated %c%d transparent spam from Turnstile
+                    if (msg.contains("font-size:0;color:transparent") || msg == "NaN" || msg.trim() == "1") {
+                        Log.d(TAG, "JS [filtered spam] $msg")
+                        return@let
+                    }
+                    val full = "[${it.messageLevel()}] ${it.message()} @ ${it.sourceId()}:${it.lineNumber()}"
+                    Log.d(TAG, "JS $full")
+                    consoleLogs.add(full)
+                    if (consoleLogs.size > 150) consoleLogs.removeAt(0)
                 }
                 return super.onConsoleMessage(cm)
             }
@@ -352,6 +361,7 @@ class BrowserFragment : Fragment() {
         lastInjectInfo = "Inject ${toInject.size} @ $runAt for $url: ${toInject.joinToString(","){it.name}} at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}"
         Log.d(TAG, lastInjectInfo)
         consoleLogs.add(lastInjectInfo)
+        try { Toast.makeText(requireContext(), lastInjectInfo.take(120), Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
         // Wibgar aw1:1993 joins with "\n" then wraps once; we do per-script to isolate errors but same wrapper
         // Use Wibgar wrapper: (function(){ try{ code }catch(e){console.error('Custom script error:', e);}})();
         toInject.forEach { sc ->
@@ -456,8 +466,10 @@ class BrowserFragment : Fragment() {
             val btnRun = com.google.android.material.button.MaterialButton(ctx).apply { text = "▶ Run custom JS"; textSize = 11f }
             val btnCheck = com.google.android.material.button.MaterialButton(ctx).apply { text = "🔍 Check WTR panel"; textSize = 11f }
             val btnFetch = com.google.android.material.button.MaterialButton(ctx).apply { text = "🌐 Test fetch"; textSize = 11f }
+            val btnForce = com.google.android.material.button.MaterialButton(ctx).apply { text = "⚡ Force inject (ignore @match)"; textSize = 11f }
 
             container.addView(btnReinject)
+            container.addView(btnForce)
             container.addView(btnClear)
             container.addView(btnCopy)
             container.addView(btnRun)
@@ -524,6 +536,21 @@ class BrowserFragment : Fragment() {
                     }
                     wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test').then(r=>console.log('fetch then '+r.status)).catch(e=>console.error('fetch catch '+e)); console.log('fetch sent');", null)
                 } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+            }
+            btnForce.setOnClickListener {
+                try {
+                    val allEnabled = all.filter { it.enabled }
+                    if (allEnabled.isEmpty()) { Toast.makeText(ctx, "No enabled scripts", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+                    var count = 0
+                    allEnabled.forEach { sc ->
+                        injectSingle(wv, sc)
+                        count++
+                    }
+                    val msg = "Force injected $count script(s) ignoring @match"
+                    consoleLogs.add(msg)
+                    logsTv.text = "$msg\n" + consoleLogs.takeLast(60).joinToString("\n")
+                    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) { Toast.makeText(ctx, "Force inject error: ${e.message}", Toast.LENGTH_LONG).show() }
             }
         } catch (e: Exception) {
             Log.e(TAG, "showTestDialog crash", e)
