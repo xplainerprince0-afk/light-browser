@@ -16,18 +16,9 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="bottomNavigationStyle">@style/Widget.LightBrowser.BottomNav</item>
-        <item name="materialAlertDialogTheme">@style/ThemeOverlay.LightBrowser.Dialog</item>
         <!-- Material 3 typography -->
         <item name="textAppearanceTitleLarge">@style/TextAppearance.LightBrowser.TitleLarge</item>
         <item name="textAppearanceBodyMedium">@style/TextAppearance.LightBrowser.Body</item>
-    </style>
-
-    <style name="ThemeOverlay.LightBrowser.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
-        <item name="alertDialogStyle">@style/Widget.LightBrowser.Dialog</item>
-    </style>
-
-    <style name="Widget.LightBrowser.Dialog" parent="Widget.Material3.AlertDialog">
-        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.LightBrowser.Medium</item>
     </style>
 
     <style name="ShapeAppearance.LightBrowser.Medium" parent="ShapeAppearance.Material3.MediumComponent">
