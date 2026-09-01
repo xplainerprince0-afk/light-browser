@@ -577,20 +577,18 @@ class BrowserFragment : Fragment() {
     private fun showMoreMenu(anchor: View) {
         try {
             val ctx = requireContext()
-            val wrapped = android.view.ContextThemeWrapper(ctx, R.style.ThemeOverlay_LightBrowser_Popup)
-            val popup = android.widget.PopupMenu(wrapped, anchor)
-            // Force opaque background (Material3 surface) – fixes transparent over web page
+            val popup = android.widget.PopupMenu(ctx, anchor)
+            // Force opaque background via reflection – fixes transparent over web page
             try {
                 val field = popup.javaClass.getDeclaredField("mPopup")
                 field.isAccessible = true
                 val menuPopupHelper = field.get(popup)
-                val popupClass = menuPopupHelper.javaClass
                 try {
-                    val bgField = popupClass.getDeclaredField("mPopup")
-                    bgField.isAccessible = true
-                    val popupWindow = bgField.get(menuPopupHelper) as? android.widget.PopupWindow
+                    val popupWindow = menuPopupHelper.javaClass.getDeclaredField("mPopup").let { it.isAccessible = true; it.get(menuPopupHelper) as? android.widget.PopupWindow }
                     popupWindow?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(androidx.core.content.ContextCompat.getColor(ctx, R.color.surface)))
-                } catch (_: Exception) {}
+                } catch (_: Exception) {
+                    // fallback: try to set via style is not needed – just keep default opaque
+                }
             } catch (_: Exception) {}
             // Phase 2: Relocated core features into dropdown (clean toolbar)
             popup.menu.add(0, 10, 0, "↻ Refresh")
