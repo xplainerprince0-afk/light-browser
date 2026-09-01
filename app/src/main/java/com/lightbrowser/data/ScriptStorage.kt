@@ -25,7 +25,8 @@ object ScriptStorage {
                     enabled = o.optBoolean("enabled", true),
                     description = o.optString("description", ""),
                     matches = o.optJSONArray("matches")?.let { ja -> (0 until ja.length()).map { ja.getString(it) } } ?: emptyList(),
-                    runAt = o.optString("runAt", "document_idle")
+                    runAt = o.optString("runAt", "document_idle"),
+                    grants = o.optJSONArray("grants")?.let { ja -> (0 until ja.length()).map { ja.getString(it) } } ?: emptyList()
                 )
             }.toMutableList()
         } catch (_: Exception) { mutableListOf() }
@@ -42,6 +43,7 @@ object ScriptStorage {
             o.put("description", sc.description)
             o.put("matches", JSONArray(sc.matches))
             o.put("runAt", sc.runAt)
+            o.put("grants", JSONArray(sc.grants))
             arr.put(o)
         }
         prefs(ctx).edit().putString(KEY, arr.toString()).apply()

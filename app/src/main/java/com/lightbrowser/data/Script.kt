@@ -9,7 +9,8 @@ data class UserScript(
     val enabled: Boolean = true,
     val description: String = "",
     val matches: List<String> = emptyList(), // from @match / @include
-    val runAt: String = "document_idle" // document_start / document_end / document_idle
+    val runAt: String = "document_idle", // document_start / document_end / document_idle
+    val grants: List<String> = emptyList()
 ) {
     companion object {
         fun parseMeta(code: String): Map<String, List<String>> {
@@ -17,7 +18,7 @@ data class UserScript(
             val m = Regex("""//\s*==UserScript==([\s\S]*?)//\s*==/UserScript==""").find(code)
             if (m != null) {
                 val block = m.groupValues[1]
-                Regex("""//\s*@(\w+)\s+(.*)""").findAll(block).forEach { mr ->
+                Regex("""//\s*@(\S+)\s+(.*)""").findAll(block).forEach { mr ->
                     val k = mr.groupValues[1].trim()
                     val v = mr.groupValues[2].trim()
                     map.getOrPut(k) { mutableListOf() }.add(v)
@@ -32,27 +33,33 @@ data class UserScript(
             val desc = meta["description"]?.firstOrNull() ?: ""
             val matches = (meta["match"] ?: emptyList()) + (meta["include"] ?: emptyList())
             val runAt = meta["run-at"]?.firstOrNull() ?: "document_idle"
-            return UserScript(name = name, code = raw, description = desc, matches = matches, runAt = runAt)
+            val grants = meta["grant"] ?: emptyList()
+            return UserScript(name = name, code = raw, description = desc, matches = matches, runAt = runAt, grants = grants)
         }
 
-        // very small glob->regex: *://*/*  =>  https?://.*\/.*  ; also domain wildcards
         fun globToRegex(glob: String): Regex {
-            // escape regex except *
+            if (glob == "<all_urls>") return Regex(".*", RegexOption.IGNORE_CASE)
+            // Violentmonkey @match glob -> regex. Escape then restore *
             var r = Regex.escape(glob).replace("\\*", ".*")
-            // handle Violentmonkey specials: <all_urls>
-            if (glob == "<all_urls>") r = ".*"
+            // also handle scheme wildcard *:// -> https?://
+            if (r.startsWith(".*://")) r = r.replaceFirst(".*://", "(https?|http|https)://")
             return Regex("^$r$", RegexOption.IGNORE_CASE)
         }
 
         fun matchesUrl(patterns: List<String>, url: String): Boolean {
-            if (patterns.isEmpty()) return true // inject everywhere if no @match (like Wibgar before)
-            val u = url.lowercase()
+            if (patterns.isEmpty()) return true
+            val u = url.lowercase().trim()
             return patterns.any { p ->
+                val pat = p.trim()
+                if (pat.isEmpty()) return@any false
+                if (pat == "<all_urls>") return@any true
                 try {
-                    // exact match or glob
-                    if (p.contains("*") || p == "<all_urls>") globToRegex(p).containsMatchIn(u)
-                    else u.contains(p.lowercase().trim().removePrefix("*://").removePrefix("https://").removePrefix("http://").substringBefore("/"))
-                } catch (_: Exception) { false }
+                    val regex = globToRegex(pat)
+                    regex.containsMatchIn(u)
+                } catch (_: Exception) {
+                    // fallback: simple contains of host
+                    u.contains(pat.lowercase())
+                }
             }
         }
     }

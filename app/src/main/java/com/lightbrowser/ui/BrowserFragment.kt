@@ -3,6 +3,7 @@ package com.lightbrowser.ui
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -22,6 +23,7 @@ class BrowserFragment : Fragment() {
 
     companion object {
         var pendingUrl: String? = null
+        private const val TAG = "LightBrowser"
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -38,8 +40,11 @@ class BrowserFragment : Fragment() {
         s.javaScriptEnabled = Prefs.jsEnabled
         s.domStorageEnabled = true
         s.databaseEnabled = true
-        s.allowFileAccess = false
+        // WTR script uses Worker via blob: + indexedDB + fetch → need file access
+        s.allowFileAccess = true
         s.allowContentAccess = true
+        s.allowFileAccessFromFileURLs = true
+        s.allowUniversalAccessFromFileURLs = true
         s.useWideViewPort = true
         s.loadWithOverviewMode = true
         s.builtInZoomControls = true
@@ -48,24 +53,23 @@ class BrowserFragment : Fragment() {
         s.cacheMode = WebSettings.LOAD_DEFAULT
         s.mediaPlaybackRequiresUserGesture = false
         s.javaScriptCanOpenWindowsAutomatically = true
+        // important for IndexedDB / localStorage on some OEMs
+        try { s.setGeolocationEnabled(false) } catch (_: Exception) {}
         if (Prefs.desktopMode) {
             s.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-            s.useWideViewPort = true
         }
 
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
 
-        // blob bridge
         wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "LightBlobBridge")
 
         wv.webViewClient = object : WebViewClient() {
-            // adblock simple host list
-            private val adHosts = setOf("doubleclick.net","googlesyndication.com","googletagmanager.com","facebook.net","adsystem")
+            private val adHosts = setOf("doubleclick.net","googlesyndication.com","googletagmanager.com","facebook.net","adsystem","googletagservices.com")
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): android.webkit.WebResourceResponse? {
                 if (Prefs.adBlock) {
                     val host = request?.url?.host ?: ""
-                    if (adHosts.any { host.contains(it) }) {
+                    if (adHosts.any { host.contains(it, ignoreCase = true) }) {
                         return android.webkit.WebResourceResponse("text/plain","utf-8", java.io.ByteArrayInputStream("".toByteArray()))
                     }
                 }
@@ -76,22 +80,39 @@ class BrowserFragment : Fragment() {
                 binding.progress.visibility = View.VISIBLE
                 binding.progress.progress = 10
                 url?.let { binding.urlBar.setText(it) }
-                // document_start scripts
-                injectScripts(v, url, "document_start")
+                if (url != null) injectScripts(v, url, "document_start")
             }
             override fun onPageFinished(v: WebView?, url: String?) {
                 binding.progress.visibility = View.GONE
                 url?.let { binding.urlBar.setText(it) }
                 if (Prefs.desktopMode) injectDesktop(v)
-                injectScripts(v, url, "document_idle")
-                injectBlobHook(v)
+                // WTR needs DOM ready; small delay ensures document.body exists
+                v?.postDelayed({
+                    if (url != null) injectScripts(v, url, "document_end")
+                    if (url != null) injectScripts(v, url, "document_idle")
+                    injectBlobHook(v)
+                }, 400)
             }
             override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean { return false }
+            override fun onReceivedError(v: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
+                Log.e(TAG, "onReceivedError ${err?.description} url=${req?.url}")
+            }
         }
         wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(v: WebView?, p: Int) {
                 if (p < 100) { binding.progress.visibility = View.VISIBLE; binding.progress.progress = p }
                 else binding.progress.visibility = View.GONE
+            }
+            override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
+                cm?.let {
+                    Log.d(TAG, "JS ${it.messageLevel()} ${it.sourceId()}:${it.lineNumber()} ${it.message()}")
+                    // surface script errors to user for debugging WTR
+                    if (it.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                        // don't toast spam, just log; uncomment to debug:
+                        // Toast.makeText(requireContext(), "JS: ${it.message()}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                return super.onConsoleMessage(cm)
             }
         }
         wv.setDownloadListener { url, ua, cd, mime, _ ->
@@ -99,12 +120,14 @@ class BrowserFragment : Fragment() {
                 Toast.makeText(requireContext(), "Blob download – capturing...", Toast.LENGTH_SHORT).show()
                 wv.evaluateJavascript("""
                     (function(){
-                      var url="$url";
-                      fetch(url).then(r=>r.blob()).then(b=>{
-                        var r=new FileReader();
-                        r.onload=function(){ LightBlobBridge.onBlobData(r.result, "download.bin", b.type); };
-                        r.readAsDataURL(b);
-                      }).catch(e=>{ console.log(e)});
+                      try{
+                        var url="$url";
+                        fetch(url).then(r=>r.blob()).then(b=>{
+                          var r=new FileReader();
+                          r.onload=function(){ LightBlobBridge.onBlobData(r.result, "download.bin", b.type); };
+                          r.readAsDataURL(b);
+                        }).catch(e=>{ console.log("blob fetch err",e)});
+                      }catch(e){ console.error(e)}
                     })();
                 """.trimIndent(), null)
             } else {
@@ -114,7 +137,7 @@ class BrowserFragment : Fragment() {
 
         wv.setOnLongClickListener { v ->
             val result = (v as WebView).hitTestResult
-            if (result.type == WebView.HitTestResult.SRC_ANCHOR_TYPE || result.type == WebView.HitTestResult.IMAGE_TYPE) {
+            if (result.type == WebView.HitTestResult.SRC_ANCHOR_TYPE || result.type == WebView.HitTestResult.IMAGE_TYPE || result.type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
                 result.extra?.let { url ->
                     android.app.AlertDialog.Builder(requireContext())
                         .setTitle("Link")
@@ -154,7 +177,7 @@ class BrowserFragment : Fragment() {
                 m.content='width=1280, initial-scale=0.8, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
                 Object.defineProperty(navigator,'userAgent',{get:()=>'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',configurable:true});
                 Object.defineProperty(navigator,'platform',{get:()=>'Win32',configurable:true});
-              }catch(e){}
+              }catch(e){console.error(e)}
             })();
         """.trimIndent()
         v.evaluateJavascript(js, null)
@@ -162,14 +185,10 @@ class BrowserFragment : Fragment() {
 
     private fun injectBlobHook(v: WebView?) {
         if (v == null) return
-        // hook blob clicks for download
         val js = """
             (function(){
               if(window.__lb_blobHook) return; window.__lb_blobHook=true;
-              document.addEventListener('click', function(e){
-                var a=e.target.closest('a');
-                if(a && a.href && a.href.startsWith('blob:')){ /* let download listener handle */ }
-              }, true);
+              console.log("LB: blob hook installed");
             })();
         """.trimIndent()
         v.evaluateJavascript(js, null)
@@ -177,24 +196,66 @@ class BrowserFragment : Fragment() {
 
     private fun injectScripts(v: WebView?, url: String?, runAt: String) {
         if (v == null || url == null) return
-        val list = try { ScriptStorage.enabledForUrl(requireContext(), url) } catch (_: Exception) { emptyList() }
-        if (list.isEmpty()) return
-        val toInject = list.filter { it.runAt == runAt || (runAt=="document_idle" && it.runAt=="document_end") || (it.runAt=="document_idle" && runAt=="document_idle") }
-        if (toInject.isEmpty()) return
-        // build concatenated + GM polyfill
-        val gmPolyfill = """
-            window.GM_info={script:{name:'LightBrowser',version:'1.1'}};
-            window.GM_log=function(x){console.log(x)};
-            window.GM_setValue=function(k,v){localStorage.setItem('GM_'+k, v)};
-            window.GM_getValue=function(k,d){var v=localStorage.getItem('GM_'+k); return v===null?d:v};
-            window.GM_addStyle=function(css){var s=document.createElement('style');s.textContent=css;document.head.appendChild(s);return s};
-            window.GM_xmlhttpRequest=function(o){fetch(o.url,{method:o.method||'GET',headers:o.headers,body:o.data}).then(r=>r.text().then(t=>o.onload&&o.onload({responseText:t,status:r.status})) ).catch(e=>o.onerror&&o.onerror(e))};
-            window.unsafeWindow=window;
-        """.trimIndent()
-        val code = toInject.joinToString("\n") { it.code }
-        val wrapped = "(function(){ try{ $gmPolyfill\n$code\n }catch(e){console.error('LB script error',e)} })();"
-        v.evaluateJavascript(wrapped, null)
+        val all = try { ScriptStorage.all(requireContext()) } catch (_: Exception) { emptyList() }
+        if (all.isEmpty()) return
+        val matched = all.filter { it.enabled && com.lightbrowser.data.UserScript.matchesUrl(it.matches, url) }
+        if (matched.isEmpty()) {
+            Log.d(TAG, "No scripts match $url (have ${all.size} total, patterns=${all.map { it.matches }})")
+            return
+        }
+        val toInject = matched.filter { sc ->
+            when (sc.runAt) {
+                "document_start" -> runAt == "document_start"
+                "document_end" -> runAt == "document_end" || runAt == "document_idle"
+                else -> runAt == "document_idle" || runAt == "document_end" // document_idle scripts run at idle/end
+            }
+        }
+        if (toInject.isEmpty()) {
+            Log.d(TAG, "Matched ${matched.size} but none for runAt=$runAt url=$url")
+            return
+        }
+        Log.d(TAG, "Injecting ${toInject.size} script(s) at $runAt for $url: ${toInject.map { it.name }}")
+        toInject.forEach { sc ->
+            injectSingle(v, sc, url)
+        }
     }
+
+    private fun injectSingle(v: WebView, sc: com.lightbrowser.data.UserScript, url: String) {
+        // GM polyfill only if @grant asks for it (WTR has @grant none → skip)
+        val needsGM = sc.grants.any { it.startsWith("GM_") } && !sc.grants.contains("none")
+        val gmPolyfill = if (needsGM) """
+            window.GM_info={script:{name:'${escapeJs(sc.name)}',version:'1.1'}};
+            window.GM_log=function(x){console.log(x)};
+            window.GM_setValue=function(k,v){try{localStorage.setItem('GM_'+k, JSON.stringify(v))}catch(e){}};
+            window.GM_getValue=function(k,d){try{var v=localStorage.getItem('GM_'+k); return v===null?d:JSON.parse(v)}catch(e){return d}};
+            window.GM_addStyle=function(css){var s=document.createElement('style');s.textContent=css;document.head.appendChild(s);return s};
+            window.GM_xmlhttpRequest=function(o){fetch(o.url,{method:o.method||'GET',headers:o.headers,body:o.data,credentials:'include'}).then(r=>r.text().then(t=>o.onload&&o.onload({responseText:t,status:r.status,responseHeaders:r.headers}))).catch(e=>o.onerror&&o.onerror(e))};
+            window.unsafeWindow=window;
+        """.trimIndent() else ""
+
+        // Use separate evaluate per script to isolate errors and avoid huge payload issues
+        // Wrap in try/catch and log
+        val code = sc.code
+        // Escape ` and $ for Kotlin string? Already in code. For JS injection, we need to avoid breaking evaluateJavascript string.
+        // evaluateJavascript takes a JS snippet, not a JSON string, so we can send raw. To be safe, we base64-encode large scripts and decode in page?
+        // For WTR (~30k), raw is okay, but to be robust, use encode via evaluated string with JSON.stringify? Simpler: send raw, WebView handles.
+        // Add a console marker so user can see injection.
+        val marker = "console.log('LB inject: ${escapeJs(sc.name)} @ ${escapeJs(sc.runAt)} for '+location.href);"
+        val wrapped = """
+            (function(){
+              $marker
+              try{
+                $gmPolyfill
+                ${code}
+              }catch(e){ console.error('LB script error ${escapeJs(sc.name)}', e); }
+            })();
+        """.trimIndent()
+        v.evaluateJavascript(wrapped) { result ->
+            Log.d(TAG, "inject result ${sc.name}: $result")
+        }
+    }
+
+    private fun escapeJs(s: String) = s.replace("\\","\\\\").replace("'","\\'").replace("\n","\\n").replace("\"","\\\"")
 
     private fun loadFromBar() {
         var input = binding.urlBar.text.toString().trim()
