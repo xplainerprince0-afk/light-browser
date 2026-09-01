@@ -12,6 +12,7 @@ import android.view.inputmethod.EditorInfo
 import android.webkit.*
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import com.lightbrowser.R
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.BookmarkStorage
 import com.lightbrowser.data.DownloadHelper
