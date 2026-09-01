@@ -13,7 +13,9 @@ import android.webkit.*
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import com.lightbrowser.data.AppCtx
+import com.lightbrowser.data.BookmarkStorage
 import com.lightbrowser.data.DownloadHelper
+import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.Prefs
 import com.lightbrowser.data.ScriptStorage
 import com.lightbrowser.databinding.FragmentBrowserBinding
@@ -119,7 +121,15 @@ class BrowserFragment : Fragment() {
             override fun onPageFinished(v: WebView?, url: String?) {
                 super.onPageFinished(v, url)
                 binding.progress.visibility = View.GONE
-                url?.let { binding.urlBar.setText(it) }
+                url?.let {
+                    binding.urlBar.setText(it)
+                    // save history + update bookmark star
+                    try {
+                        val title = v?.title ?: it
+                        HistoryStorage.add(requireContext(), it, title)
+                    } catch (_: Exception) {}
+                    updateBookmarkIcon(it)
+                }
 
                 // Wibgar aw1:708 visibility override for youtube etc – keep for background fetch survival (WTR auto-scrape throttled if hidden)
                 injectVisibilityHack(v, url)
@@ -251,6 +261,9 @@ class BrowserFragment : Fragment() {
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
         binding.btnRefresh.setOnClickListener { wv.reload() }
         binding.btnTest.setOnClickListener { showTestDialog() }
+        binding.btnBookmark.setOnClickListener { toggleBookmark() }
+        binding.btnHistory.setOnClickListener { showHistoryDialog() }
+        binding.btnHistory.setOnLongClickListener { showBookmarksDialog(); true }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
@@ -556,6 +569,78 @@ class BrowserFragment : Fragment() {
             Log.e(TAG, "showTestDialog crash", e)
             try { Toast.makeText(requireContext(), "Tester error: ${e.message}", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
         }
+    }
+
+    // Public for MainActivity to load url without recreation (cache retain)
+    fun loadUrl(url: String) {
+        try {
+            _binding?.webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
+            _binding?.urlBar?.setText(url)
+        } catch (_: Exception) {}
+    }
+
+    private fun updateBookmarkIcon(url: String) {
+        try {
+            val marked = BookmarkStorage.isBookmarked(requireContext(), url)
+            _binding?.btnBookmark?.text = if (marked) "★" else "☆"
+        } catch (_: Exception) {}
+    }
+
+    private fun toggleBookmark() {
+        try {
+            val wv = _binding?.webView ?: return
+            val url = wv.url ?: binding.urlBar.text.toString()
+            if (url.isBlank() || url.startsWith("about:")) return
+            val title = wv.title ?: url
+            val nowMarked = BookmarkStorage.toggle(requireContext(), url, title)
+            binding.btnBookmark.text = if (nowMarked) "★" else "☆"
+            Toast.makeText(requireContext(), if (nowMarked) "Bookmarked" else "Removed bookmark", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun showHistoryDialog() {
+        try {
+            val ctx = requireContext()
+            val list = HistoryStorage.all(ctx)
+            if (list.isEmpty()) { Toast.makeText(ctx, "No history yet", Toast.LENGTH_SHORT).show(); return }
+            val items = list.map { "${it.title}\n${it.url} (${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(it.time))})" }.toTypedArray()
+            android.app.AlertDialog.Builder(ctx)
+                .setTitle("History (${list.size})")
+                .setItems(items) { _, which ->
+                    val entry = list[which]
+                    loadUrl(entry.url)
+                }
+                .setPositiveButton("Close", null)
+                .setNeutralButton("Clear") { _, _ ->
+                    HistoryStorage.clear(ctx)
+                    Toast.makeText(ctx, "History cleared", Toast.LENGTH_SHORT).show()
+                }
+                .show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
+    }
+
+    private fun showBookmarksDialog() {
+        try {
+            val ctx = requireContext()
+            val list = BookmarkStorage.all(ctx)
+            if (list.isEmpty()) { Toast.makeText(ctx, "No bookmarks – tap ☆ to add", Toast.LENGTH_SHORT).show(); return }
+            val items = list.map { "${it.title}\n${it.url}" }.toTypedArray()
+            android.app.AlertDialog.Builder(ctx)
+                .setTitle("Bookmarks (${list.size}) – long-press History for this")
+                .setItems(items) { _, which -> loadUrl(list[which].url) }
+                .setPositiveButton("Close", null)
+                .setNeutralButton("Clear") { _, _ ->
+                    BookmarkStorage.clear(ctx)
+                    updateBookmarkIcon(binding.webView.url ?: "")
+                    Toast.makeText(ctx, "Bookmarks cleared", Toast.LENGTH_SHORT).show()
+                }
+                .show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
+    }
+
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (hidden) _binding?.webView?.onPause() else _binding?.webView?.onResume()
     }
 
     private fun loadFromBar() {

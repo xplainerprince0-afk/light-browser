@@ -12,6 +12,20 @@ import com.lightbrowser.ui.SettingsFragment
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
+    private var currentId: Int = R.id.nav_browser
+
+    // Keep fragments alive to preserve WebView state (no destroy on tab switch)
+    private val fragments = mutableMapOf<Int, Fragment>()
+
+    private fun getFrag(id: Int): Fragment = fragments.getOrPut(id) {
+        when (id) {
+            R.id.nav_browser -> BrowserFragment()
+            R.id.nav_scripts -> ScriptsFragment()
+            R.id.nav_downloads -> DownloadsFragment()
+            R.id.nav_settings -> SettingsFragment()
+            else -> BrowserFragment()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -19,7 +33,22 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        if (savedInstanceState == null) switchTab(R.id.nav_browser)
+        // pre-create browser fragment
+        if (savedInstanceState == null) {
+            switchTab(R.id.nav_browser)
+        } else {
+            // restore fragments from manager
+            supportFragmentManager.fragments.forEach { f ->
+                val id = when (f) {
+                    is BrowserFragment -> R.id.nav_browser
+                    is ScriptsFragment -> R.id.nav_scripts
+                    is DownloadsFragment -> R.id.nav_downloads
+                    is SettingsFragment -> R.id.nav_settings
+                    else -> null
+                }
+                if (id != null) fragments[id] = f
+            }
+        }
 
         binding.bottomNav.setOnItemSelectedListener { item ->
             switchTab(item.itemId)
@@ -35,20 +64,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun switchTab(id: Int) {
-        val frag: Fragment = when (id) {
-            R.id.nav_browser -> BrowserFragment()
-            R.id.nav_scripts -> ScriptsFragment()
-            R.id.nav_downloads -> DownloadsFragment()
-            R.id.nav_settings -> SettingsFragment()
-            else -> BrowserFragment()
+        if (currentId == id && fragments.containsKey(id)) return
+        val tx = supportFragmentManager.beginTransaction()
+        // hide current
+        fragments[currentId]?.let { if (it.isAdded) tx.hide(it) }
+        val next = getFrag(id)
+        if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString())
+        tx.commit()
+        currentId = id
+    }
+
+    fun switchToBrowser(url: String? = null) {
+        url?.let { BrowserFragment.pendingUrl = it }
+        binding.bottomNav.selectedItemId = R.id.nav_browser
+        // if url provided and browser already visible, load it
+        if (url != null) {
+            (fragments[R.id.nav_browser] as? BrowserFragment)?.loadUrl(url)
         }
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.container, frag)
-            .commit()
     }
 
     override fun onBackPressed() {
-        val current = supportFragmentManager.findFragmentById(R.id.container)
+        val current = fragments[currentId]
         if (current is BrowserFragment && current.canGoBack()) {
             current.goBack()
         } else {

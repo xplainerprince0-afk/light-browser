@@ -3,7 +3,22 @@
         <item name="colorPrimary">@color/purple_500</item>
         <item name="colorPrimaryVariant">@color/purple_700</item>
         <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">#A78BFA</item>
         <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:navigationBarColor">@color/bg_dark</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="bottomNavigationStyle">@style/Widget.LightBrowser.BottomNav</item>
+    </style>
+
+    <style name="Widget.LightBrowser.BottomNav" parent="Widget.Material3.BottomNavigationView">
+        <item name="android:background">@color/surface</item>
+        <item name="itemIconTint">#E2E8F0</item>
+        <item name="itemTextColor">#94A3B8</item>
+        <item name="itemActiveIndicatorStyle">@style/Widget.LightBrowser.Indicator</item>
+    </style>
+
+    <style name="Widget.LightBrowser.Indicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:color">#2A2D4A</item>
     </style>
 </resources>

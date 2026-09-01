@@ -11,8 +11,8 @@ android {
         applicationId = "com.lightbrowser"
         minSdk = 21
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.5-tester"
+        versionCode = 7
+        versionName = "1.6-wtr"
         // keep dex small
         multiDexEnabled = false
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }

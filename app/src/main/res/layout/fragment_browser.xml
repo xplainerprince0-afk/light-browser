@@ -5,82 +5,114 @@
     android:orientation="vertical"
     android:background="@color/bg_dark">
 
-    <LinearLayout
+    <!-- Top bar – improved: rounded, elevated, with history/bookmark -->
+    <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:orientation="horizontal"
-        android:padding="6dp"
-        android:gravity="center_vertical"
-        android:background="@color/surface">
+        android:layout_height="wrap_content"
+        android:layout_margin="8dp"
+        android:elevation="4dp"
+        app:cardCornerRadius="14dp"
+        app:cardBackgroundColor="@color/surface"
+        app:strokeColor="#1AFFFFFF"
+        app:strokeWidth="1dp">
 
-        <TextView
-            android:id="@+id/btnBack"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:gravity="center"
-            android:text="@string/action_back"
-            android:textColor="@color/white"
-            android:textSize="18sp"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:orientation="horizontal"
+            android:padding="6dp"
+            android:gravity="center_vertical">
 
-        <TextView
-            android:id="@+id/btnForward"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:gravity="center"
-            android:text="@string/action_forward"
-            android:textColor="@color/white"
-            android:textSize="18sp"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+            <TextView
+                android:id="@+id/btnBack"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="‹"
+                android:textColor="@color/white"
+                android:textSize="22sp"
+                android:fontFamily="sans-serif-light"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
 
-        <EditText
-            android:id="@+id/urlBar"
-            android:layout_width="0dp"
-            android:layout_height="40dp"
-            android:layout_weight="1"
-            android:layout_marginHorizontal="6dp"
-            android:background="@drawable/bg_url_bar"
-            android:hint="@string/hint_url"
-            android:textColor="@color/white"
-            android:textColorHint="#99FFFFFF"
-            android:paddingHorizontal="14dp"
-            android:singleLine="true"
-            android:imeOptions="actionGo"
-            android:inputType="textUri"
-            android:textSize="14sp"/>
+            <TextView
+                android:id="@+id/btnForward"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="›"
+                android:textColor="@color/white"
+                android:textSize="22sp"
+                android:fontFamily="sans-serif-light"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
 
-        <TextView
-            android:id="@+id/btnGo"
-            android:layout_width="48dp"
-            android:layout_height="40dp"
-            android:gravity="center"
-            android:text="@string/action_go"
-            android:textColor="@color/white"
-            android:backgroundTint="@color/purple_500"
-            android:background="@drawable/bg_btn_go"
-            android:textSize="13sp"
-            android:textStyle="bold"/>
+            <EditText
+                android:id="@+id/urlBar"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="6dp"
+                android:background="@drawable/bg_url_bar"
+                android:hint="@string/hint_url"
+                android:textColor="@color/white"
+                android:textColorHint="#99FFFFFF"
+                android:paddingHorizontal="14dp"
+                android:singleLine="true"
+                android:imeOptions="actionGo"
+                android:inputType="textUri"
+                android:textSize="13sp"
+                android:fontFamily="sans-serif"/>
 
-        <TextView
-            android:id="@+id/btnRefresh"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:gravity="center"
-            android:text="@string/action_refresh"
-            android:textColor="@color/white"
-            android:textSize="18sp"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
+            <TextView
+                android:id="@+id/btnGo"
+                android:layout_width="42dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="›"
+                android:textColor="@color/white"
+                android:background="@drawable/bg_btn_go"
+                android:textSize="18sp"/>
 
-        <TextView
-            android:id="@+id/btnTest"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:gravity="center"
-            android:text="🧪"
-            android:textColor="@color/white"
-            android:textSize="16sp"
-            android:background="?attr/selectableItemBackgroundBorderless"/>
-    </LinearLayout>
+            <TextView
+                android:id="@+id/btnBookmark"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="☆"
+                android:textColor="#FFC084FC"
+                android:textSize="18sp"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+
+            <TextView
+                android:id="@+id/btnHistory"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="◷"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+
+            <TextView
+                android:id="@+id/btnRefresh"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="⟳"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+
+            <TextView
+                android:id="@+id/btnTest"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="🧪"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
     <ProgressBar
         android:id="@+id/progress"
@@ -89,11 +121,13 @@
         android:layout_height="2dp"
         android:max="100"
         android:progressTint="@color/purple_500"
+        android:progressBackgroundTint="#1AFFFFFF"
         android:visibility="gone"/>
 
     <WebView
         android:id="@+id/webView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"/>
+        android:layout_weight="1"
+        android:background="@color/bg_dark"/>
 </LinearLayout>
