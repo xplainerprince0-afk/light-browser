@@ -255,17 +255,23 @@ class BrowserFragment : Fragment() {
             false
         }
 
+        // Fluid keyboard: let WebView handle insets, toolbar stays pinned
+        try {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+                val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+                // only pad WebView bottom by keyboard height, not whole UI
+                v.setPadding(0, 0, 0, 0)
+                binding.webView.setPadding(0, 0, 0, ime.bottom)
+                insets
+            }
+        } catch (_: Exception) {}
+
         binding.btnGo.setOnClickListener { loadFromBar() }
         binding.urlBar.setOnEditorActionListener { _, id, _ ->
             if (id == EditorInfo.IME_ACTION_GO || id == EditorInfo.IME_ACTION_SEARCH) { loadFromBar(); true } else false
         }
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
-        binding.btnRefresh.setOnClickListener { wv.reload() }
-        binding.btnTest.setOnClickListener { showTestDialog() }
-        binding.btnBookmark.setOnClickListener { toggleBookmark() }
-        binding.btnHistory.setOnClickListener { showHistoryDialog() }
-        binding.btnHistory.setOnLongClickListener { showBookmarksDialog(); true }
         binding.btnMore.setOnClickListener { showMoreMenu(it) }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
@@ -565,20 +571,34 @@ class BrowserFragment : Fragment() {
         try {
             val ctx = requireContext()
             val popup = android.widget.PopupMenu(ctx, anchor)
+            // Core browser features (relocated from top bar)
+            popup.menu.add(0, 10, 0, "↻ Refresh")
+            popup.menu.add(0, 11, 0, "⭐ Bookmark this page")
+            popup.menu.add(0, 12, 0, "🧪 Tester")
             popup.menu.add(0, 1, 0, "📜 Scripts")
             popup.menu.add(0, 2, 0, "⬇️ Downloads")
             popup.menu.add(0, 3, 0, "⚙️ Settings")
             popup.menu.add(0, 4, 0, "🕘 History")
             popup.menu.add(0, 5, 0, "⭐ Bookmarks")
+            // Workspace suite (new freed space)
+            popup.menu.add(0, 20, 0, "📁 File Manager")
+            popup.menu.add(0, 21, 0, "💻 Terminal")
+            popup.menu.add(0, 22, 0, "🎵 Music Player")
             popup.menu.add(0, 6, 0, if (Prefs.desktopMode) "🖥️ Desktop: ON" else "🖥️ Desktop: OFF")
             popup.menu.add(0, 7, 0, "🧹 Clear cache")
             popup.setOnMenuItemClickListener { item ->
                 when (item.itemId) {
+                    10 -> binding.webView.reload()
+                    11 -> toggleBookmark()
+                    12 -> showTestDialog()
                     1 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_scripts)
                     2 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_downloads)
                     3 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_settings)
                     4 -> showHistoryDialog()
                     5 -> showBookmarksDialog()
+                    20 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_filemanager)
+                    21 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_terminal)
+                    22 -> (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_music)
                     6 -> {
                         Prefs.desktopMode = !Prefs.desktopMode
                         Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
@@ -608,9 +628,10 @@ class BrowserFragment : Fragment() {
     }
 
     private fun updateBookmarkIcon(url: String) {
+        // toolbar bookmark star removed in Material3 clean-up – now in 3-dot menu, just log
         try {
             val marked = BookmarkStorage.isBookmarked(requireContext(), url)
-            _binding?.btnBookmark?.text = if (marked) "★" else "☆"
+            Log.d(TAG, "bookmark $url marked=$marked")
         } catch (_: Exception) {}
     }
 
@@ -621,8 +642,7 @@ class BrowserFragment : Fragment() {
             if (url.isBlank() || url.startsWith("about:")) return
             val title = wv.title ?: url
             val nowMarked = BookmarkStorage.toggle(requireContext(), url, title)
-            binding.btnBookmark.text = if (nowMarked) "★" else "☆"
-            Toast.makeText(requireContext(), if (nowMarked) "Bookmarked" else "Removed bookmark", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), if (nowMarked) "★ Bookmarked" else "☆ Removed", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_SHORT).show() }
     }
 

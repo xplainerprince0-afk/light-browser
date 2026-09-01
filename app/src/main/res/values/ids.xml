@@ -1,0 +1,9 @@
+<resources>
+    <item name="nav_browser" type="id" />
+    <item name="nav_scripts" type="id" />
+    <item name="nav_downloads" type="id" />
+    <item name="nav_settings" type="id" />
+    <item name="nav_filemanager" type="id" />
+    <item name="nav_terminal" type="id" />
+    <item name="nav_music" type="id" />
+</resources>
