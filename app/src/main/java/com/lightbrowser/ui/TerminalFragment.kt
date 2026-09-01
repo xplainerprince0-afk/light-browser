@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import com.lightbrowser.R
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.ScriptStorage
 import com.lightbrowser.databinding.FragmentTerminalBinding

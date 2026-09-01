@@ -397,6 +397,10 @@ class BrowserFragment : Fragment() {
         }
     }
 
+    fun runJs(code: String, callback: (String?) -> Unit = {}) {
+        try { _binding?.webView?.evaluateJavascript(code, callback) } catch (_: Exception) {}
+    }
+
     private fun escapeJs(s: String) = s.replace("\\","\\\\").replace("'","\\'").replace("\n","\\n").replace("\"","\\\"")
 
     private fun showTestDialog() {
