@@ -1,0 +1,54 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APK (with logs)
+        run: ./gradlew assembleRelease --stacktrace --info
+        # logs visible in Actions tab
+
+      - name: APK size report
+        if: always()
+        run: |
+          ls -lh app/build/outputs/apk/release/ || true
+          du -h app/build/outputs/apk/release/*.apk || true
+          echo "### APK size" >> $GITHUB_STEP_SUMMARY
+          ls -lh app/build/outputs/apk/release/*.apk | tee -a $GITHUB_STEP_SUMMARY || true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LightBrowser-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-logs
+          path: |
+            app/build/reports/
+            app/build/outputs/
+          retention-days: 7
