@@ -19,13 +19,21 @@ android {
         vectorDrawables { useSupportLibrary = true }
     }
 
+    signingConfigs {
+        create("lightbrowser") {
+            storeFile = file("lightbrowser.jks")
+            storePassword = "lightbrowser123"
+            keyAlias = "lightbrowser"
+            keyPassword = "lightbrowser123"
+            // keep same key for upgrades – do not regenerate. For Play Store use your own upload key.
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            // FIX for "Package appears to be invalid": previous release was unsigned (app-release-unsigned.apk)
-            // Use debug signing for CI release so APK is v1/v2 signed and installable. Replace with your own keystore for store release.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("lightbrowser")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -33,6 +41,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("lightbrowser")
         }
     }
     compileOptions {

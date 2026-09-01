@@ -381,141 +381,153 @@ class BrowserFragment : Fragment() {
     private fun escapeJs(s: String) = s.replace("\\","\\\\").replace("'","\\'").replace("\n","\\n").replace("\"","\\\"")
 
     private fun showTestDialog() {
-        val ctx = requireContext()
-        val wv = binding.webView
-        val currentUrl = wv.url ?: binding.urlBar.text.toString()
-        val all = try { ScriptStorage.all(ctx) } catch (_: Exception) { emptyList() }
-        val matched = all.filter { it.enabled && com.lightbrowser.data.UserScript.matchesUrl(it.matches, currentUrl) }
+        try {
+            val ctx = requireContext()
+            val wv = _binding?.webView ?: return
+            val currentUrl = try { wv.url ?: binding.urlBar.text.toString() } catch (_: Exception) { binding.urlBar.text.toString() }
+            val all = try { ScriptStorage.all(ctx) } catch (_: Exception) { emptyList() }
+            val matched = all.filter { it.enabled && com.lightbrowser.data.UserScript.matchesUrl(it.matches, currentUrl) }
 
-        val scroll = android.widget.ScrollView(ctx)
-        val container = android.widget.LinearLayout(ctx).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(32, 24, 32, 24)
-        }
-
-        fun addTitle(t: String) {
-            val tv = android.widget.TextView(ctx).apply {
-                text = t; setTextColor(android.graphics.Color.parseColor("#FFC084FC"))
-                textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
-                setPadding(0, 16, 0, 6)
+            val container = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(32, 24, 32, 24)
             }
-            container.addView(tv)
-        }
-        fun addText(t: String, mono: Boolean = false) {
-            val tv = android.widget.TextView(ctx).apply {
-                text = t; setTextColor(android.graphics.Color.parseColor("#FFC8CDF3"))
-                textSize = 11f
-                if (mono) typeface = android.graphics.Typeface.MONOSPACE
+
+            fun addTitle(t: String) {
+                val tv = android.widget.TextView(ctx).apply {
+                    text = t; setTextColor(android.graphics.Color.parseColor("#FFC084FC"))
+                    textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
+                    setPadding(0, 16, 0, 6)
+                }
+                container.addView(tv)
+            }
+            fun addText(t: String, mono: Boolean = false) {
+                val tv = android.widget.TextView(ctx).apply {
+                    text = t; setTextColor(android.graphics.Color.parseColor("#FFC8CDF3"))
+                    textSize = 11f
+                    if (mono) typeface = android.graphics.Typeface.MONOSPACE
+                    setTextIsSelectable(true)
+                }
+                container.addView(tv)
+            }
+
+            addTitle("Current URL")
+            addText(currentUrl, true)
+            addTitle("Scripts (${all.size} total, ${matched.size} matched)")
+            if (all.isEmpty()) addText("No scripts saved. Go to Scripts tab → + Add and paste WTR script.")
+            else {
+                all.forEach { sc ->
+                    val isMatched = matched.contains(sc)
+                    val mark = if (!sc.enabled) "⭕ disabled" else if (isMatched) "✅ matched" else "❌ no-match"
+                    addText("• ${sc.name} [$mark] runAt=${sc.runAt} matches=${sc.matches.joinToString(",").ifEmpty { "<all_urls>" }}")
+                }
+            }
+            addTitle("Last inject info")
+            addText(lastInjectInfo, true)
+
+            addTitle("Console logs (${consoleLogs.size})")
+            val logsTv = android.widget.TextView(ctx).apply {
+                text = if (consoleLogs.isEmpty()) "No logs yet. Try Re-inject." else consoleLogs.takeLast(60).joinToString("\n")
+                setTextColor(android.graphics.Color.parseColor("#FFE0E0E0"))
+                textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE
                 setTextIsSelectable(true)
+                setPadding(12, 12, 12, 12)
+                setBackgroundColor(android.graphics.Color.parseColor("#FF0D0F1A"))
             }
-            container.addView(tv)
-        }
-        fun addBtn(label: String, onClick: () -> Unit) {
-            val b = com.google.android.material.button.MaterialButton(ctx).apply {
-                text = label; textSize = 11f
+            val logScroll = android.widget.ScrollView(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 420)
+                addView(logsTv)
             }
-            b.setOnClickListener { onClick() }
-            container.addView(b)
-        }
+            container.addView(logScroll)
 
-        addTitle("Current URL")
-        addText(currentUrl, true)
-        addTitle("Scripts (${all.size} total, ${matched.size} matched)")
-        if (all.isEmpty()) addText("No scripts saved. Go to Scripts tab → + Add and paste WTR script.")
-        else {
-            all.forEach { sc ->
-                val isMatched = matched.contains(sc)
-                val mark = if (!sc.enabled) "⭕ disabled" else if (isMatched) "✅ matched" else "❌ no-match"
-                addText("• ${sc.name} [$mark] runAt=${sc.runAt} matches=${sc.matches.joinToString(",").ifEmpty { "<all_urls>" }}")
+            addTitle("Run custom JS (manual test)")
+            val etJs = android.widget.EditText(ctx).apply {
+                hint = "e.g. document.title"
+                setText("document.getElementById('wtr-panel') ? 'WTR panel FOUND' : 'WTR panel NOT found – script not injected / error'")
+                setTextColor(android.graphics.Color.WHITE)
+                textSize = 11f
             }
-        }
-        addTitle("Last inject info")
-        addText(lastInjectInfo, true)
+            container.addView(etJs)
 
-        addTitle("Console logs (${consoleLogs.size})")
-        val logsTv = android.widget.TextView(ctx).apply {
-            text = if (consoleLogs.isEmpty()) "No logs yet. Try Re-inject." else consoleLogs.takeLast(60).joinToString("\n")
-            setTextColor(android.graphics.Color.parseColor("#FF99FFFFFF"))
-            textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE
-            setTextIsSelectable(true)
-            setPadding(12, 12, 12, 12)
-            setBackgroundColor(android.graphics.Color.parseColor("#FF0D0F1A"))
-        }
-        val logScroll = android.widget.ScrollView(ctx).apply {
-            layoutParams = android.widget.LinearLayout.LayoutParams(android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 420)
-            addView(logsTv)
-        }
-        container.addView(logScroll)
+            // --- buttons built BEFORE dialog creation to avoid crash after show() ---
+            val btnReinject = com.google.android.material.button.MaterialButton(ctx).apply { text = "🔄 Re-inject NOW"; textSize = 11f }
+            val btnClear = com.google.android.material.button.MaterialButton(ctx).apply { text = "🧹 Clear logs"; textSize = 11f }
+            val btnCopy = com.google.android.material.button.MaterialButton(ctx).apply { text = "📋 Copy logs"; textSize = 11f }
+            val btnRun = com.google.android.material.button.MaterialButton(ctx).apply { text = "▶ Run custom JS"; textSize = 11f }
+            val btnCheck = com.google.android.material.button.MaterialButton(ctx).apply { text = "🔍 Check WTR panel"; textSize = 11f }
+            val btnFetch = com.google.android.material.button.MaterialButton(ctx).apply { text = "🌐 Test fetch"; textSize = 11f }
 
-        // custom JS input
-        addTitle("Run custom JS (manual test)")
-        val etJs = android.widget.EditText(ctx).apply {
-            hint = "e.g. document.getElementById('wtr-panel') ? 'found' : 'NOT found'"
-            setText("document.getElementById('wtr-panel') ? 'WTR panel FOUND' : 'WTR panel NOT found – script not injected / error'")
-            setTextColor(android.graphics.Color.WHITE)
-            textSize = 11f
-        }
-        container.addView(etJs)
+            container.addView(btnReinject)
+            container.addView(btnClear)
+            container.addView(btnCopy)
+            container.addView(btnRun)
+            container.addView(btnCheck)
+            container.addView(btnFetch)
 
-        scroll.addView(container)
+            val scroll = android.widget.ScrollView(ctx).apply { addView(container) }
 
-        val dlg = android.app.AlertDialog.Builder(ctx)
-            .setTitle("🧪 Script Tester")
-            .setView(scroll)
-            .setPositiveButton("Close", null)
-            .create()
+            val dlg = android.app.AlertDialog.Builder(ctx)
+                .setTitle("🧪 Script Tester")
+                .setView(scroll)
+                .setPositiveButton("Close", null)
+                .create()
+            dlg.show()
 
-        // add bottom actions after show so we can keep dialog open
-        dlg.setOnShowListener {
-            // we will add extra buttons via container, not dialog buttons, to keep it open
-        }
-        dlg.show()
-
-        // programmatically add action buttons inside container after logs
-        // Note: we already added container, now add functional buttons
-        // Need to add after the scroll view – we already added logs, now add buttons below
-        // To avoid rebuild, add now:
-        addBtn("🔄 Re-inject NOW (document_idle)") {
-            val url = wv.url ?: currentUrl
-            lastInjectInfo = "Manual re-inject at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())} for $url"
-            injectScripts(wv, url, "document_idle")
-            logsTv.text = "Triggered inject for $url\nCheck logs after 1s…"
-            wv.postDelayed({
-                logsTv.text = consoleLogs.takeLast(60).joinToString("\n").ifEmpty { "Still no logs – check if script matched URL.\nMatched: ${matched.map { it.name }}" }
-            }, 800)
-        }
-        addBtn("🧹 Clear logs") {
-            consoleLogs.clear()
-            logsTv.text = "Cleared"
-            lastInjectInfo = "Logs cleared"
-        }
-        addBtn("📋 Copy logs") {
-            val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", consoleLogs.joinToString("\n")))
-            Toast.makeText(ctx, "Copied ${consoleLogs.size} lines", Toast.LENGTH_SHORT).show()
-        }
-        addBtn("▶ Run custom JS") {
-            val code = etJs.text.toString()
-            if (code.isBlank()) return@addBtn
-            wv.evaluateJavascript(code) { res ->
-                val out = "Result: $res"
-                consoleLogs.add(out)
-                logsTv.text = consoleLogs.takeLast(60).joinToString("\n")
-                Toast.makeText(ctx, out.take(200), Toast.LENGTH_LONG).show()
+            btnReinject.setOnClickListener {
+                try {
+                    val url = wv.url ?: currentUrl
+                    lastInjectInfo = "Manual re-inject at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())} for $url"
+                    injectScripts(wv, url, "document_idle")
+                    logsTv.text = "Triggered inject for $url\nCheck logs after 1s…"
+                    wv.postDelayed({
+                        logsTv.text = consoleLogs.takeLast(60).joinToString("\n").ifEmpty { "Still no logs – check if script matched URL.\nMatched: ${matched.map { it.name }}" }
+                    }, 900)
+                } catch (e: Exception) { Toast.makeText(ctx, "Re-inject error: ${e.message}", Toast.LENGTH_LONG).show() }
             }
-        }
-        addBtn("🔍 Check WTR panel") {
-            wv.evaluateJavascript("(function(){ var p=document.getElementById('wtr-panel'); return p ? 'FOUND: '+p.outerHTML.slice(0,200) : 'NOT FOUND'; })();") { res ->
-                logsTv.text = "WTR check: $res\n" + consoleLogs.takeLast(40).joinToString("\n")
-                consoleLogs.add("WTR check: $res")
+            btnClear.setOnClickListener {
+                consoleLogs.clear()
+                logsTv.text = "Cleared"
+                lastInjectInfo = "Logs cleared"
             }
-        }
-        addBtn("🌐 Test fetch permission") {
-            wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test',{method:'GET',credentials:'include'}).then(r=>r.text().then(t=> 'fetch ok '+r.status+' '+t.slice(0,120))).catch(e=>'fetch err '+e);") { res ->
-                logsTv.text = "Fetch test callback: $res\n" + consoleLogs.takeLast(40).joinToString("\n")
+            btnCopy.setOnClickListener {
+                try {
+                    val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", consoleLogs.joinToString("\n")))
+                    Toast.makeText(ctx, "Copied ${consoleLogs.size} lines", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
             }
-            // also do evaluate with console
-            wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test').then(r=>console.log('fetch then '+r.status)).catch(e=>console.error('fetch catch '+e)); console.log('fetch sent');", null)
+            btnRun.setOnClickListener {
+                val code = etJs.text.toString()
+                if (code.isBlank()) return@setOnClickListener
+                try {
+                    wv.evaluateJavascript(code) { res ->
+                        val out = "Result: $res"
+                        consoleLogs.add(out)
+                        logsTv.text = consoleLogs.takeLast(60).joinToString("\n")
+                        Toast.makeText(ctx, out.take(200), Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) { Toast.makeText(ctx, "JS error: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+            btnCheck.setOnClickListener {
+                try {
+                    wv.evaluateJavascript("(function(){ var p=document.getElementById('wtr-panel'); return p ? 'FOUND: '+p.outerHTML.slice(0,220) : 'NOT FOUND'; })();") { res ->
+                        val msg = "WTR check: $res"
+                        consoleLogs.add(msg)
+                        logsTv.text = "$msg\n" + consoleLogs.takeLast(40).joinToString("\n")
+                    }
+                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+            }
+            btnFetch.setOnClickListener {
+                try {
+                    wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test',{method:'GET',credentials:'include'}).then(r=>r.text().then(t=> 'fetch ok '+r.status+' '+t.slice(0,120))).catch(e=>'fetch err '+e);") { res ->
+                        logsTv.text = "Fetch test callback: $res\n" + consoleLogs.takeLast(40).joinToString("\n")
+                    }
+                    wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test').then(r=>console.log('fetch then '+r.status)).catch(e=>console.error('fetch catch '+e)); console.log('fetch sent');", null)
+                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "showTestDialog crash", e)
+            try { Toast.makeText(requireContext(), "Tester error: ${e.message}", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
         }
     }
 
