@@ -5,33 +5,33 @@
     <group android:id="@+id/grp_library" android:checkableBehavior="none">
         <item
             android:id="@+id/menu_pick_library"
-            android:icon="@android:drawable/ic_menu_archive"
+            android:icon="@drawable/ic_folder"
             android:title="Pick Library Folder" />
         <item
             android:id="@+id/menu_switch_novel"
-            android:icon="@android:drawable/ic_menu_sort_by_size"
+            android:icon="@drawable/ic_code"
             android:title="Switch Novel" />
     </group>
 
     <group android:id="@+id/grp_playback" android:checkableBehavior="none">
         <item
             android:id="@+id/menu_seek_back"
-            android:icon="@android:drawable/ic_media_previous"
+            android:icon="@drawable/ic_audio"
             android:title="Seek -10s" />
         <item
             android:id="@+id/menu_seek_forward"
-            android:icon="@android:drawable/ic_media_next"
+            android:icon="@drawable/ic_audio"
             android:title="Seek +10s" />
     </group>
 
     <group android:id="@+id/grp_tools" android:checkableBehavior="none">
         <item
             android:id="@+id/menu_scan"
-            android:icon="@android:drawable/ic_popup_sync"
+            android:icon="@drawable/ic_folder"
             android:title="Rescan Library" />
         <item
             android:id="@+id/menu_stop"
-            android:icon="@android:drawable/ic_media_pause"
+            android:icon="@drawable/ic_audio"
             android:title="Stop Playback" />
     </group>
 
