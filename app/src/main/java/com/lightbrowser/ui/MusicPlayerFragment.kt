@@ -24,7 +24,6 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.menu.MaterialMenuInflater
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentMusicBinding
 import kotlinx.coroutines.CoroutineScope
@@ -198,11 +197,12 @@ class MusicPlayerFragment : Fragment() {
         
         android.app.AlertDialog.Builder(requireContext())
             .setTitle("Pick Library Root (from Sandbox)")
-            .setItems(items) { _, which ->
+            .setItems(items) { dialog: android.content.DialogInterface, which: Int ->
                 val selectedDir = dirs[which]
                 val uri = Uri.fromFile(selectedDir)
                 libraryUri = uri
                 scanLibraryFromFile(selectedDir)
+                dialog.dismiss()
             }
             .setNegativeButton("Cancel", null)
             .show()
