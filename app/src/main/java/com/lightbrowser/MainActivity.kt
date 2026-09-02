@@ -63,10 +63,26 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_drawer_player -> switchTab(R.id.nav_music)
                 R.id.nav_drawer_terminal -> switchTab(R.id.nav_terminal)
                 R.id.nav_drawer_settings -> switchTab(R.id.nav_settings)
-                R.id.nav_drawer_scripts -> switchTab(R.id.nav_scripts)
-                R.id.nav_drawer_downloads -> switchTab(R.id.nav_downloads)
-                R.id.nav_drawer_history -> switchTab(R.id.nav_history)
-                R.id.nav_drawer_bookmarks -> switchTab(R.id.nav_bookmarks)
+                R.id.nav_drawer_scripts -> {
+                    // Switch to scripts tab (not in bottom nav)
+                    Toast.makeText(this, "Userscripts", Toast.LENGTH_SHORT).show()
+                    true
+                }
+                R.id.nav_drawer_downloads -> {
+                    // Switch to downloads tab (not in bottom nav)
+                    Toast.makeText(this, "Downloads", Toast.LENGTH_SHORT).show()
+                    true
+                }
+                R.id.nav_drawer_history -> {
+                    // Switch to history tab (not in bottom nav)
+                    Toast.makeText(this, "History", Toast.LENGTH_SHORT).show()
+                    true
+                }
+                R.id.nav_drawer_bookmarks -> {
+                    // Switch to bookmarks tab (not in bottom nav)
+                    Toast.makeText(this, "Bookmarks", Toast.LENGTH_SHORT).show()
+                    true
+                }
                 R.id.nav_drawer_about -> showAboutDialog()
             }
             binding.drawerLayout.closeDrawer(GravityCompat.START)
