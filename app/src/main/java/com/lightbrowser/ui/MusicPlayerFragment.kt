@@ -72,6 +72,15 @@ class MusicPlayerFragment : Fragment() {
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
+        // Phase 1: Fix status bar overlap
+        try {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(b.root) { view, insets ->
+                val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+                view.setPadding(0, statusBars.top, 0, 0)
+                insets
+            }
+            androidx.core.view.ViewCompat.requestApplyInsets(b.root)
+        } catch (_: Exception) {}
         b.recycler.layoutManager = LinearLayoutManager(requireContext())
         b.btnScan.setOnClickListener { scan() }
         b.btnAddFolder.setOnClickListener { folderPicker.launch(null) }

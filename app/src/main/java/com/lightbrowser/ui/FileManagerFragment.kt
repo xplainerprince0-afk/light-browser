@@ -46,6 +46,15 @@ class FileManagerFragment : Fragment() {
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
+        // Phase 1: Fix status bar overlap for File Manager top bar
+        try {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(b.root) { view, insets ->
+                val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+                view.setPadding(0, statusBars.top, 0, 0)
+                insets
+            }
+            androidx.core.view.ViewCompat.requestApplyInsets(b.root)
+        } catch (_: Exception) {}
         sandboxDir = File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() }
         downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         b.recycler.layoutManager = LinearLayoutManager(requireContext())

@@ -255,18 +255,33 @@ class BrowserFragment : Fragment() {
             false
         }
 
-        // Phase 1: Fix status bar overlap + fluid keyboard (toolbar stays below status bar, WebView handles IME)
+        // Phase 1: Fix status bar overlap – toolbar must be BELOW status bar
+        // Use WindowInsets on toolbarCard's top margin (not just padding) so card sits below clock/battery
         try {
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.toolbarCard) { v, insets ->
                 val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
-                // toolbar gets status bar top padding (fixes overlap under battery/time)
-                try { binding.toolbarCard.setPadding(0, statusBars.top, 0, 0) } catch (_: Exception) {}
-                // WebView gets IME bottom padding (fluid, not crushing)
-                v.setPadding(0, 0, 0, 0)
-                binding.webView.setPadding(0, 0, 0, ime.bottom)
+                try {
+                    val lp = v.layoutParams as? android.view.ViewGroup.MarginLayoutParams
+                    if (lp != null) {
+                        lp.topMargin = statusBars.top + (10 * resources.displayMetrics.density).toInt()
+                        v.layoutParams = lp
+                    } else {
+                        v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
+                    }
+                } catch (_: Exception) {
+                    v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
+                }
                 insets
             }
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.webView) { v, insets ->
+                val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+                val navBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+                val bottom = if (ime.bottom > 0) ime.bottom else navBars.bottom
+                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, bottom)
+                insets
+            }
+            androidx.core.view.ViewCompat.requestApplyInsets(binding.toolbarCard)
+            androidx.core.view.ViewCompat.requestApplyInsets(binding.webView)
         } catch (_: Exception) {}
 
         binding.btnGo.setOnClickListener { loadFromBar() }
@@ -577,19 +592,47 @@ class BrowserFragment : Fragment() {
     private fun showMoreMenu(anchor: View) {
         try {
             val ctx = requireContext()
-            val popup = android.widget.PopupMenu(ctx, anchor)
-            // Force opaque background via reflection – fixes transparent over web page
-            try {
-                val field = popup.javaClass.getDeclaredField("mPopup")
-                field.isAccessible = true
-                val menuPopupHelper = field.get(popup)
-                try {
-                    val popupWindow = menuPopupHelper.javaClass.getDeclaredField("mPopup").let { it.isAccessible = true; it.get(menuPopupHelper) as? android.widget.PopupWindow }
-                    popupWindow?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(androidx.core.content.ContextCompat.getColor(ctx, R.color.surface)))
-                } catch (_: Exception) {
-                    // fallback: try to set via style is not needed – just keep default opaque
+            // Use AlertDialog with solid Material3 surface instead of PopupMenu (fixes transparent over web page)
+            val items = arrayOf("↻ Refresh", "⭐ Bookmark this page", "🧪 Tester", "📜 Scripts", "⬇️ Downloads", "⚙️ Settings", "🕘 History", "⭐ Bookmarks", "🖥️ Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", "🧹 Clear cache")
+            // For true solid background, use MaterialAlertDialog with surface color
+            val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+                .setTitle("Menu")
+                .setItems(items) { _, which ->
+                    when (which) {
+                        0 -> binding.webView.reload()
+                        1 -> toggleBookmark()
+                        2 -> showTestDialog()
+                        3 -> showScriptsDialog()
+                        4 -> showDownloadsDialog()
+                        5 -> showSettingsDialog()
+                        6 -> showHistoryDialog()
+                        7 -> showBookmarksDialog()
+                        8 -> {
+                            Prefs.desktopMode = !Prefs.desktopMode
+                            android.widget.Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", android.widget.Toast.LENGTH_SHORT).show()
+                            binding.webView.reload()
+                        }
+                        9 -> {
+                            try {
+                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                android.webkit.WebStorage.getInstance().deleteAllData()
+                                ctx.cacheDir.deleteRecursively()
+                                android.widget.Toast.makeText(ctx, "Cache cleared", android.widget.Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) { android.widget.Toast.makeText(ctx, e.message, android.widget.Toast.LENGTH_LONG).show() }
+                        }
+                    }
                 }
-            } catch (_: Exception) {}
+                .create()
+            // Force solid surface background
+            try { dlg.window?.setBackgroundDrawableResource(R.color.surface) } catch (_: Exception) {}
+            dlg.show()
+            return
+        } catch (_: Exception) {
+            // fallback to old popup if dialog fails
+        }
+        try {
+            val ctx2 = requireContext()
+            val popup = android.widget.PopupMenu(ctx2, anchor)
             // Phase 2: Relocated core features into dropdown (clean toolbar)
             popup.menu.add(0, 10, 0, "↻ Refresh")
             popup.menu.add(0, 11, 0, "⭐ Bookmark this page")
