@@ -20,6 +20,7 @@ import com.lightbrowser.ui.TerminalFragment
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var currentId: Int = R.id.nav_browser
+    private var isNavSyncing = false
 
     private val fragments = mutableMapOf<Int, Fragment>()
 
@@ -74,6 +75,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.bottomNav.setOnItemSelectedListener { item ->
+            if (isNavSyncing) return@setOnItemSelectedListener true
             switchTab(item.itemId)
             true
         }
@@ -89,6 +91,8 @@ class MainActivity : AppCompatActivity() {
     fun switchTab(id: Int) {
         try {
             if (currentId == id && fragments.containsKey(id) && fragments[id]?.isAdded == true) return
+            // Prevent re-entrant add of same fragment before commit (bottomNav sync triggers listener)
+            if (currentId == id && fragments.containsKey(id)) return
             if (supportFragmentManager.isStateSaved) {
                 val tx2 = supportFragmentManager.beginTransaction()
                 fragments[currentId]?.let { if (it.isAdded) try { tx2.hide(it) } catch (_: Exception) {} }
@@ -96,6 +100,7 @@ class MainActivity : AppCompatActivity() {
                 if (n2.isAdded) try { tx2.show(n2) } catch (_: Exception) {} else try { tx2.add(R.id.container, n2, id.toString()) } catch (_: Exception) {}
                 try { tx2.commitAllowingStateLoss() } catch (_: Exception) {}
                 currentId = id
+                syncBottomNav(id)
                 return
             }
             val tx = supportFragmentManager.beginTransaction()
@@ -104,12 +109,22 @@ class MainActivity : AppCompatActivity() {
             try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) { try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) {} }
             try { tx.commit() } catch (_: Exception) { try { tx.commitAllowingStateLoss() } catch (_: Exception) {} }
             currentId = id
-            if (id == R.id.nav_browser || id == R.id.nav_filemanager || id == R.id.nav_terminal || id == R.id.nav_music) {
-                if (binding.bottomNav.selectedItemId != id) try { binding.bottomNav.selectedItemId = id } catch (_: Exception) {}
-            }
+            syncBottomNav(id)
         } catch (e: Exception) {
             try { android.util.Log.e("LightBrowser", "switchTab $id", e) } catch (_: Exception) {}
             try { android.widget.Toast.makeText(this, "Tab error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+        }
+    }
+
+    private fun syncBottomNav(id: Int) {
+        if (id != R.id.nav_browser && id != R.id.nav_filemanager && id != R.id.nav_terminal && id != R.id.nav_music) return
+        try {
+            if (binding.bottomNav.selectedItemId == id) return
+            isNavSyncing = true
+            binding.bottomNav.selectedItemId = id
+        } catch (_: Exception) {} finally {
+            // post to avoid immediate re-entrance
+            try { binding.bottomNav.post { isNavSyncing = false } } catch (_: Exception) { isNavSyncing = false }
         }
     }
 
