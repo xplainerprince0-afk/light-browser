@@ -104,7 +104,7 @@ class BrowserFragment : Fragment() {
                 url?.let {
                     updateCollapsedBar(it)
                     // keep EditText in sync even if hidden
-                    binding.urlBar.setText(it)
+                    binding.urlBar.setText(it as CharSequence)
                 }
                 if (url != null) injectScripts(v, url, "document_start")
             }
@@ -116,7 +116,7 @@ class BrowserFragment : Fragment() {
                 binding.btnGo.text = "↻"
                 url?.let {
                     updateCollapsedBar(it)
-                    binding.urlBar.setText(it)
+                    binding.urlBar.setText(it as CharSequence)
                     try {
                         val title = v?.title ?: it
                         HistoryStorage.add(requireContext(), it, title)
@@ -284,17 +284,8 @@ class BrowserFragment : Fragment() {
 
     // ──── URL bar collapse/expand ─────────────────────────────────────────────
 
-    private fun updateCollapsedBar(url: String) {
-        try {
-            val uri = android.net.Uri.parse(url)
-            val domain = uri.host ?: url
-            binding.tvDomain.text = domain
-            val isHttps = url.startsWith("https://")
-            binding.tvLock.text = if (isHttps) "🔒" else "⚠️"
-        } catch (_: Exception) {
-            binding.tvDomain.text = url
-        }
-    }
+
+
 
     private fun expandUrlBar() {
         if (binding.urlBar.visibility == View.VISIBLE) return
@@ -585,7 +576,7 @@ class BrowserFragment : Fragment() {
     fun loadUrl(url: String) {
         try {
             _binding?.webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
-            _binding?.urlBar?.setText(url)
+            _binding?.urlBar?.setText(url as CharSequence)
             updateCollapsedBar(url)
             collapseUrlBar()
         } catch (_: Exception) {}

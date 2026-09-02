@@ -505,7 +505,7 @@ class FileManagerFragment : Fragment() {
         try {
             val ctx = try { requireContext() } catch (_: Exception) { return }
             android.app.AlertDialog.Builder(ctx)
-                .setTitle("Delete "${f.name}"?")
+                .setTitle("Delete \"${f.name}\"?")
                 .setMessage(if (f.isDirectory) "This will delete the folder and all its contents." else "This action cannot be undone.")
                 .setPositiveButton("Delete") { _, _ ->
                     val ok = try { if (f.isDirectory) f.deleteRecursively() else f.delete() } catch (_: Exception) { false }
