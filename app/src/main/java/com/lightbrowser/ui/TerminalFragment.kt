@@ -311,7 +311,8 @@ class TerminalFragment : Fragment() {
         append("Alpine installed: $alpineInstalled")
         append("Root: ${AlpineEnv.alpineDir(sd).absolutePath}")
         if (alpineInstalled) {
-            runShell("cat /etc/alpine-release 2>/dev/null || echo unknown")
+            val rel = File(AlpineEnv.alpineDir(sd), "etc/alpine-release")
+            append(if (rel.exists()) rel.readText().trim() else "unknown")
         } else {
             append("Run: install-alpine")
         }
