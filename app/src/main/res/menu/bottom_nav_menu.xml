@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/nav_browser" android:title="Browser" android:icon="@android:drawable/ic_menu_view"/>
-    <item android:id="@+id/nav_filemanager" android:title="Files" android:icon="@android:drawable/ic_menu_gallery"/>
-    <item android:id="@+id/nav_terminal" android:title="Terminal" android:icon="@android:drawable/ic_menu_edit"/>
-    <item android:id="@+id/nav_music" android:title="Music" android:icon="@android:drawable/ic_media_play"/>
+    <item android:id="@+id/nav_browser" android:title="Browser" android:icon="@drawable/ic_web"/>
+    <item android:id="@+id/nav_filemanager" android:title="Sandbox" android:icon="@drawable/ic_folder"/>
+    <item android:id="@+id/nav_music" android:title="Player" android:icon="@drawable/ic_audio"/>
+    <item android:id="@+id/nav_settings" android:title="Settings" android:icon="@drawable/ic_settings"/>
 </menu>

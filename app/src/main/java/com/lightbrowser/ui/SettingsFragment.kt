@@ -1,5 +1,8 @@
 package com.lightbrowser.ui
 
+import android.app.AppCompatDelegate
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -7,6 +10,7 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import android.widget.Toast
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.fragment.app.Fragment
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.Prefs
@@ -22,13 +26,16 @@ class SettingsFragment : Fragment() {
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
-        // init prefs if needed
         try { AppCtx.init(requireContext()) } catch (_: Exception) {}
 
         b.etHome.setText(Prefs.homePage)
         b.swJs.isChecked = Prefs.jsEnabled
         b.swDesktop.isChecked = Prefs.desktopMode
         b.swAdblock.isChecked = Prefs.adBlock
+        
+        // Dark/Light mode
+        val isDarkMode = isDarkModeEnabled()
+        b.swDarkMode.isChecked = isDarkMode
 
         b.etHome.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) {
@@ -39,22 +46,24 @@ class SettingsFragment : Fragment() {
         b.swJs.setOnCheckedChangeListener { _, c -> Prefs.jsEnabled = c }
         b.swDesktop.setOnCheckedChangeListener { _, c -> Prefs.desktopMode = c; Toast.makeText(requireContext(), if(c) "Desktop mode ON (restart browser tab)" else "Desktop OFF", Toast.LENGTH_SHORT).show() }
         b.swAdblock.setOnCheckedChangeListener { _, c -> Prefs.adBlock = c }
+        
+        b.swDarkMode.setOnCheckedChangeListener { _, isChecked ->
+            setDarkMode(isChecked)
+            Toast.makeText(requireContext(), if (isChecked) "Dark mode enabled" else "Light mode enabled", Toast.LENGTH_SHORT).show()
+        }
 
         b.btnClearCache.setOnClickListener {
             try {
                 CookieManager.getInstance().removeAllCookies(null)
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
-                // clear WebView cache is done per fragment; also clear app cache
                 requireContext().cacheDir.deleteRecursively()
                 Toast.makeText(requireContext(), "Cache & cookies cleared", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
         }
         b.btnClearHistory.setOnClickListener {
             try {
-                // clear prefs for demo (not scripts)
                 requireContext().getSharedPreferences("lb_prefs", 0).edit().clear().apply()
-                // reapply defaults
                 Prefs.homePage = "https://www.google.com"
                 b.etHome.setText(Prefs.homePage)
                 b.swJs.isChecked = true
@@ -62,6 +71,21 @@ class SettingsFragment : Fragment() {
                 Toast.makeText(requireContext(), "Browsing prefs reset", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
         }
+    }
+
+    private fun isDarkModeEnabled(): Boolean {
+        val prefs = requireContext().getSharedPreferences("app_theme", Context.MODE_PRIVATE)
+        return prefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM) == AppCompatDelegate.MODE_NIGHT_YES
+    }
+
+    private fun setDarkMode(enabled: Boolean) {
+        val prefs = requireContext().getSharedPreferences("app_theme", Context.MODE_PRIVATE)
+        val mode = if (enabled) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+        prefs.edit().putInt("theme_mode", mode).apply()
+        AppCompatDelegate.setDefaultNightMode(mode)
+        
+        // Notify activity to recreate
+        (activity as? com.lightbrowser.MainActivity)?.recreate()
     }
 
     override fun onDestroyView() { _b = null; super.onDestroyView() }

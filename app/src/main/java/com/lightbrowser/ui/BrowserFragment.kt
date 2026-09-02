@@ -272,7 +272,7 @@ class BrowserFragment : Fragment() {
         }
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
-        binding.btnMore.setOnClickListener { showMoreMenu(it) }
+        binding.btnMore.setOnClickListener { showMoreMenuBottomSheet(it) }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
@@ -571,12 +571,70 @@ class BrowserFragment : Fragment() {
         }
     }
 
-    private fun showMoreMenu(anchor: View) {
+    private fun showMoreMenuBottomSheet(anchor: View) {
         try {
             val ctx = requireContext()
-            // Use AlertDialog with solid Material3 surface instead of PopupMenu (fixes transparent over web page)
+            val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(ctx, com.google.android.material.R.style.Widget_Material3_BottomSheet_Modal)
+            
+            val view = LayoutInflater.from(ctx).inflate(R.layout.bottomsheet_browser_menu, null)
+            bottomSheet.setContentView(view)
+            
+            val recycler = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.menuRecycler)
+            recycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
+            
+            val menuItems = listOf(
+                MenuItemData("↻", "Refresh", R.drawable.ic_refresh, { binding.webView.reload() }),
+                MenuItemData("⭐", "Bookmark this page", R.drawable.ic_bookmark, { toggleBookmark() }),
+                MenuItemData("🧪", "Tester", R.drawable.ic_bug_report, { showTestDialog() }),
+                MenuItemData("📜", "Scripts", R.drawable.ic_code, { showScriptsDialog() }),
+                MenuItemData("⬇️", "Downloads", R.drawable.ic_download, { showDownloadsDialog() }),
+                MenuItemData("⚙️", "Settings", R.drawable.ic_settings, { showSettingsDialog() }),
+                MenuItemData("🕘", "History", R.drawable.ic_history, { showHistoryDialog() }),
+                MenuItemData("⭐", "Bookmarks", R.drawable.ic_bookmark, { showBookmarksDialog() }),
+                MenuItemData("🖥️", "Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", R.drawable.ic_desktop, { 
+                    Prefs.desktopMode = !Prefs.desktopMode
+                    Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
+                    binding.webView.reload()
+                }),
+                MenuItemData("🧹", "Clear cache", R.drawable.ic_clear, { 
+                    try {
+                        CookieManager.getInstance().removeAllCookies(null)
+                        android.webkit.WebStorage.getInstance().deleteAllData()
+                        ctx.cacheDir.deleteRecursively()
+                        Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+                })
+            )
+            
+            recycler.adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<MenuViewHolder>() {
+                override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MenuViewHolder {
+                    val v = LayoutInflater.from(parent.context).inflate(R.layout.item_menu, parent, false)
+                    return MenuViewHolder(v)
+                }
+                override fun onBindViewHolder(holder: MenuViewHolder, position: Int) {
+                    val item = menuItems[position]
+                    holder.icon.setImageResource(item.iconRes)
+                    holder.title.text = item.title
+                    holder.itemView.setOnClickListener {
+                        item.action.invoke()
+                        bottomSheet.dismiss()
+                    }
+                }
+                override fun getItemCount() = menuItems.size
+            }
+            
+            bottomSheet.show()
+            return
+        } catch (_: Exception) {}
+        
+        // Fallback to old menu if bottom sheet fails
+        showMoreMenuLegacy(anchor)
+    }
+
+    private fun showMoreMenuLegacy(anchor: View) {
+        try {
+            val ctx = requireContext()
             val items = arrayOf("↻ Refresh", "⭐ Bookmark this page", "🧪 Tester", "📜 Scripts", "⬇️ Downloads", "⚙️ Settings", "🕘 History", "⭐ Bookmarks", "🖥️ Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", "🧹 Clear cache")
-            // For true solid background, use MaterialAlertDialog with surface color
             val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
                 .setTitle("Menu")
                 .setItems(items) { _, which ->
@@ -591,69 +649,35 @@ class BrowserFragment : Fragment() {
                         7 -> showBookmarksDialog()
                         8 -> {
                             Prefs.desktopMode = !Prefs.desktopMode
-                            android.widget.Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", android.widget.Toast.LENGTH_SHORT).show()
+                            Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
                             binding.webView.reload()
                         }
                         9 -> {
                             try {
-                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                CookieManager.getInstance().removeAllCookies(null)
                                 android.webkit.WebStorage.getInstance().deleteAllData()
                                 ctx.cacheDir.deleteRecursively()
-                                android.widget.Toast.makeText(ctx, "Cache cleared", android.widget.Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) { android.widget.Toast.makeText(ctx, e.message, android.widget.Toast.LENGTH_LONG).show() }
+                                Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
                         }
                     }
                 }
                 .create()
-            // Force solid surface background
             try { dlg.window?.setBackgroundDrawableResource(R.color.surface) } catch (_: Exception) {}
             dlg.show()
-            return
-        } catch (_: Exception) {
-            // fallback to old popup if dialog fails
-        }
-        try {
-            val ctx2 = requireContext()
-            val popup = android.widget.PopupMenu(ctx2, anchor)
-            // Phase 2: Relocated core features into dropdown (clean toolbar)
-            popup.menu.add(0, 10, 0, "↻ Refresh")
-            popup.menu.add(0, 11, 0, "⭐ Bookmark this page")
-            popup.menu.add(0, 12, 0, "🧪 Tester")
-            popup.menu.add(0, 1, 0, "📜 Scripts")
-            popup.menu.add(0, 2, 0, "⬇️ Downloads")
-            popup.menu.add(0, 3, 0, "⚙️ Settings")
-            popup.menu.add(0, 4, 0, "🕘 History")
-            popup.menu.add(0, 5, 0, "⭐ Bookmarks")
-            popup.menu.add(0, 6, 0, if (Prefs.desktopMode) "🖥️ Desktop: ON" else "🖥️ Desktop: OFF")
-            popup.menu.add(0, 7, 0, "🧹 Clear cache")
-            popup.setOnMenuItemClickListener { item ->
-                when (item.itemId) {
-                    10 -> binding.webView.reload()
-                    11 -> toggleBookmark()
-                    12 -> showTestDialog()
-                    1 -> showScriptsDialog()
-                    2 -> showDownloadsDialog()
-                    3 -> showSettingsDialog()
-                    4 -> showHistoryDialog()
-                    5 -> showBookmarksDialog()
-                    6 -> {
-                        Prefs.desktopMode = !Prefs.desktopMode
-                        Toast.makeText(ctx2, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
-                        binding.webView.reload()
-                    }
-                    7 -> {
-                        try {
-                            android.webkit.CookieManager.getInstance().removeAllCookies(null)
-                            android.webkit.WebStorage.getInstance().deleteAllData()
-                            ctx2.cacheDir.deleteRecursively()
-                            Toast.makeText(ctx2, "Cache cleared", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) { Toast.makeText(ctx2, e.message, Toast.LENGTH_LONG).show() }
-                    }
-                }
-                true
-            }
-            popup.show()
         } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
+    }
+
+    data class MenuItemData(
+        val iconPrefix: String,
+        val title: String,
+        val iconRes: Int,
+        val action: () -> Unit
+    )
+
+    class MenuViewHolder(view: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view) {
+        val icon: ImageView = view.findViewById(R.id.menuIcon)
+        val title: TextView = view.findViewById(R.id.menuTitle)
     }
 
     private fun showScriptsDialog() {

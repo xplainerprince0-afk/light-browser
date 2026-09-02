@@ -10,12 +10,9 @@ import androidx.fragment.app.Fragment
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.databinding.ActivityMainBinding
 import com.lightbrowser.ui.BrowserFragment
-import com.lightbrowser.ui.DownloadsFragment
 import com.lightbrowser.ui.FileManagerFragment
 import com.lightbrowser.ui.MusicPlayerFragment
-import com.lightbrowser.ui.ScriptsFragment
 import com.lightbrowser.ui.SettingsFragment
-import com.lightbrowser.ui.TerminalFragment
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -28,10 +25,7 @@ class MainActivity : AppCompatActivity() {
         when (id) {
             R.id.nav_browser -> BrowserFragment()
             R.id.nav_filemanager -> FileManagerFragment()
-            R.id.nav_terminal -> TerminalFragment()
             R.id.nav_music -> MusicPlayerFragment()
-            R.id.nav_scripts -> ScriptsFragment()
-            R.id.nav_downloads -> DownloadsFragment()
             R.id.nav_settings -> SettingsFragment()
             else -> BrowserFragment()
         }
@@ -117,7 +111,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncBottomNav(id: Int) {
-        if (id != R.id.nav_browser && id != R.id.nav_filemanager && id != R.id.nav_terminal && id != R.id.nav_music) return
+        if (id != R.id.nav_browser && id != R.id.nav_filemanager && id != R.id.nav_music && id != R.id.nav_settings) return
         try {
             if (binding.bottomNav.selectedItemId == id) return
             isNavSyncing = true

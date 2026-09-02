@@ -19,6 +19,10 @@
             android:icon="@drawable/ic_file"
             android:title="Import File (SAF)" />
         <item
+            android:id="@+id/menu_import_folder"
+            android:icon="@drawable/ic_folder"
+            android:title="Import Folder (SAF)" />
+        <item
             android:id="@+id/menu_export"
             android:icon="@drawable/ic_file"
             android:title="Export File (SAF)" />

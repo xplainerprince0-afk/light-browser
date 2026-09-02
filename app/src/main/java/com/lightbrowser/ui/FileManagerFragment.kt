@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupMenu
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
@@ -25,8 +26,14 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentFilemanagerBinding
+import com.lightbrowser.data.DownloadHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -41,6 +48,9 @@ class FileManagerFragment : Fragment() {
     private var importLauncher: ActivityResultLauncher<Array<String>>? = null
     private var exportLauncher: ActivityResultLauncher<String>? = null
     private var exportFile: File? = null
+    private var importFolderLauncher: ActivityResultLauncher<Uri?>? = null
+
+    private val scope = CoroutineScope(Dispatchers.Main)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,6 +62,18 @@ class FileManagerFragment : Fragment() {
         try {
             exportLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri: Uri? ->
                 if (uri != null && exportFile != null) try { exportFileToUri(exportFile!!, uri) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+        
+        // Import folder picker
+        try {
+            importFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
+                if (uri != null) {
+                    try {
+                        requireContext().contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        copyFolderToSandbox(uri)
+                    } catch (e: Exception) { safeToast(e.message) }
+                }
             }
         } catch (_: Exception) {}
     }
@@ -90,6 +112,9 @@ class FileManagerFragment : Fragment() {
             } catch (_: Exception) {}
             try { bb.btnOverflow.setOnClickListener { try { showOverflowMenu() } catch (_: Exception) {} } } catch (_: Exception) {}
 
+            // Ensure Downloads folder exists in sandbox
+            ensureSandboxDownloadsFolder()
+
             try { sandboxDir?.let { openDir(it) } ?: run { bb.empty.visibility = View.VISIBLE; bb.empty.text = "Sandbox unavailable" } } catch (e: Exception) {
                 android.util.Log.e("FileManager", "openDir sandbox", e)
                 safeToast("Init error: ${e.message}")
@@ -97,6 +122,12 @@ class FileManagerFragment : Fragment() {
         } catch (e: Exception) {
             android.util.Log.e("FileManager", "onViewCreated crash", e)
             try { Toast.makeText(requireContext(), "Files error: ${e.message}", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+        }
+    }
+
+    private fun ensureSandboxDownloadsFolder() {
+        sandboxDir?.let { sd ->
+            File(sd, "Downloads").apply { if (!exists()) mkdirs() }
         }
     }
 
@@ -116,6 +147,7 @@ class FileManagerFragment : Fragment() {
                         R.id.menu_open_sandbox -> sandboxDir?.let { openDir(it) }
                         R.id.menu_open_downloads -> downloadsDir?.let { openDir(it) }
                         R.id.menu_import -> try { importLauncher?.launch(arrayOf("*/*")) } catch (e: Exception) { safeToast(e.message) }
+                        R.id.menu_import_folder -> importFolderLauncher?.launch(null)
                         R.id.menu_export -> {
                             val cur = currentDir
                             val sd = sandboxDir
@@ -423,6 +455,64 @@ class FileManagerFragment : Fragment() {
             val info = "Name: ${f.name}\nPath: ${f.absolutePath}\nSize: ${f.length()} bytes\nDir: ${f.isDirectory}\nModified: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(f.lastModified()))}"
             android.app.AlertDialog.Builder(ctx).setTitle("Details").setMessage(info).setPositiveButton("OK", null).show()
         } catch (_: Exception) {}
+    }
+
+    // Import folder from external storage to sandbox
+    private fun copyFolderToSandbox(sourceUri: Uri) {
+        try {
+            val sandboxDir = this.sandboxDir ?: return
+            val sourceDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(requireContext(), sourceUri) ?: return
+            
+            val progressDialog = android.app.ProgressDialog(requireContext()).apply {
+                setTitle("Importing Folder")
+                setMessage("Copying files to sandbox...")
+                setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
+                setCancelable(false)
+                show()
+            }
+
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val copiedCount = copyDocumentTreeRecursive(sourceDoc, sandboxDir, progressDialog)
+                    withContext(Dispatchers.Main) {
+                        progressDialog.dismiss()
+                        safeToast("Imported $copiedCount file(s) to sandbox")
+                        refresh()
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        progressDialog.dismiss()
+                        safeToast("Import failed: ${e.message}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            safeToast("Import failed: ${e.message}")
+        }
+    }
+
+    private fun copyDocumentTreeRecursive(sourceDoc: androidx.documentfile.provider.DocumentFile, destDir: File, progressDialog: android.app.ProgressDialog): Int {
+        var count = 0
+        sourceDoc.listFiles()?.forEach { item ->
+            if (item.isDirectory) {
+                val subDir = File(destDir, item.name ?: "folder").apply { mkdirs() }
+                count += copyDocumentTreeRecursive(item, subDir, progressDialog)
+            } else if (item.isFile) {
+                try {
+                    val destFile = File(destDir, item.name ?: "file_${System.currentTimeMillis()}")
+                    requireContext().contentResolver.openInputStream(item.uri)?.use { input ->
+                        FileOutputStream(destFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    count++
+                    withContext(Dispatchers.Main) {
+                        progressDialog.incrementProgressBy(1)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        return count
     }
 
     override fun onDestroyView() { _b = null; super.onDestroyView() }

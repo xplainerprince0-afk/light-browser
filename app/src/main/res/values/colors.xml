@@ -1,16 +1,32 @@
 <resources>
     <!-- Material 3 dark palette -->
-    <color name="purple_500">#7C6FFF</color>
-    <color name="purple_700">#5B49E6</color>
-    <color name="purple_300">#A78BFA</color>
-    <color name="teal_200">#5EEAD4</color>
     <color name="teal_700">#0F766E</color>
+    <color name="teal_200">#5EEAD4</color>
+    <color name="teal_500">#14B8A6</color>
+    
     <color name="black">#000000</color>
     <color name="white">#FFFFFF</color>
+    
+    <!-- Dark theme colors -->
     <color name="bg_dark">#0B0F19</color>
     <color name="surface">#121827</color>
     <color name="surfaceVariant">#1E293B</color>
     <color name="onSurface">#F8FAFC</color>
     <color name="onSurfaceVariant">#94A3B8</color>
     <color name="outline">#334155</color>
+    
+    <!-- Light theme colors -->
+    <color name="surface_light">#F8FAFC</color>
+    <color name="surfaceVariant_light">#E2E8F0</color>
+    <color name="onSurface_light">#0F172A</color>
+    <color name="onSurfaceVariant_light">#475569</color>
+    <color name="outline_light">#CBD5E1</color>
+    
+    <!-- Bottom nav color selectors for dark theme -->
+    <color name="bottom_nav_active">#5EEAD4</color>
+    <color name="bottom_nav_inactive">#94A3B8</color>
+    
+    <!-- Bottom nav color selectors for light theme -->
+    <color name="bottom_nav_active_light">#0F766E</color>
+    <color name="bottom_nav_inactive_light">#64748B</color>
 </resources>
