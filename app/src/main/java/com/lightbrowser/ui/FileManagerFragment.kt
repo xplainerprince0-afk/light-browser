@@ -46,16 +46,8 @@ class FileManagerFragment : Fragment() {
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
-        // Phase 1: Fix status bar overlap for File Manager top bar
-        try {
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(b.root) { view, insets ->
-                val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                view.setPadding(0, statusBars.top, 0, 0)
-                insets
-            }
-            androidx.core.view.ViewCompat.requestApplyInsets(b.root)
-        } catch (_: Exception) {}
-        sandboxDir = File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() }
+        // Phase 1 fix: MainActivity container now handles statusBars.top – fragment must not double-pad.
+        try { sandboxDir = File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) { try { sandboxDir = File(requireContext().cacheDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) {} }
         downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         b.recycler.layoutManager = LinearLayoutManager(requireContext())
         b.btnUp.setOnClickListener { navigateUp() }
@@ -101,11 +93,13 @@ class FileManagerFragment : Fragment() {
     }
 
     private fun openDir(dir: File) {
-        // Sandboxed: only allow sandbox and Downloads
-        val allowed = dir.absolutePath.startsWith(sandboxDir.absolutePath) || dir.absolutePath.startsWith(downloadsDir.absolutePath) || dir == sandboxDir || dir == downloadsDir
-        val target = if (allowed && dir.exists()) dir else sandboxDir
-        currentDir = target
-        refresh()
+        try {
+            if (!::sandboxDir.isInitialized || !::downloadsDir.isInitialized) return
+            val allowed = try { dir.absolutePath.startsWith(sandboxDir.absolutePath) || dir.absolutePath.startsWith(downloadsDir.absolutePath) || dir == sandboxDir || dir == downloadsDir } catch (_: Exception) { false }
+            val target = try { if (allowed && dir.exists()) dir else sandboxDir } catch (_: Exception) { sandboxDir }
+            currentDir = target
+            refresh()
+        } catch (_: Exception) { try { refresh() } catch (_: Exception) {} }
     }
 
     private fun navigateUp() {
@@ -123,13 +117,16 @@ class FileManagerFragment : Fragment() {
     }
 
     private fun refresh() {
-        val ctx = requireContext()
-        b.tvPath.text = currentDir.absolutePath.replace(ctx.filesDir.absolutePath, "[Sandbox]").replace(downloadsDir.absolutePath, "[Downloads]")
+        val bb = _b ?: return
+        val ctx = try { requireContext() } catch (_: Exception) { return }
+        if (!::sandboxDir.isInitialized || !::downloadsDir.isInitialized) return
+        try { bb.tvPath.text = currentDir.absolutePath.replace(ctx.filesDir.absolutePath, "[Sandbox]").replace(downloadsDir.absolutePath, "[Downloads]") } catch (_: Exception) { try { bb.tvPath.text = currentDir.name } catch (_: Exception) {} }
         val files = try { currentDir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })) ?: emptyList() } catch (_: Exception) { emptyList() }
-        b.tvCount.text = "${files.size} items"
-        b.empty.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE
-        b.recycler.visibility = if (files.isEmpty()) View.GONE else View.VISIBLE
-        b.recycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+        try { bb.tvCount.text = "${files.size} items" } catch (_: Exception) {}
+        try { bb.empty.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE } catch (_: Exception) {}
+        try { bb.recycler.visibility = if (files.isEmpty()) View.GONE else View.VISIBLE } catch (_: Exception) {}
+        try {
+            bb.recycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             override fun onCreateViewHolder(p: ViewGroup, t: Int) =
                 object : RecyclerView.ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_download, p, false)) {}
             override fun onBindViewHolder(h: RecyclerView.ViewHolder, i: Int) {
@@ -151,6 +148,7 @@ class FileManagerFragment : Fragment() {
             }
             override fun getItemCount() = files.size
         }
+        } catch (_: Exception) {}
     }
 
     private fun openFile(f: File) {

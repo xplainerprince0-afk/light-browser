@@ -255,32 +255,14 @@ class BrowserFragment : Fragment() {
             false
         }
 
-        // Phase 1: Fix status bar overlap – toolbar must be BELOW status bar
-        // Use WindowInsets on toolbarCard's top margin (not just padding) so card sits below clock/battery
+        // Phase 1 fix: container now provides top inset, so toolbarCard hack removed (was doubling and unreliable).
         try {
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.toolbarCard) { v, insets ->
-                val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                try {
-                    val lp = v.layoutParams as? android.view.ViewGroup.MarginLayoutParams
-                    if (lp != null) {
-                        lp.topMargin = statusBars.top + (10 * resources.displayMetrics.density).toInt()
-                        v.layoutParams = lp
-                    } else {
-                        v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
-                    }
-                } catch (_: Exception) {
-                    v.setPadding(v.paddingLeft, statusBars.top, v.paddingRight, v.paddingBottom)
-                }
-                insets
-            }
             androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.webView) { v, insets ->
                 val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
-                val navBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
-                val bottom = if (ime.bottom > 0) ime.bottom else navBars.bottom
+                val bottom = ime.bottom
                 v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, bottom)
                 insets
             }
-            androidx.core.view.ViewCompat.requestApplyInsets(binding.toolbarCard)
             androidx.core.view.ViewCompat.requestApplyInsets(binding.webView)
         } catch (_: Exception) {}
 

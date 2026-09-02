@@ -44,16 +44,16 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Phase 1: Apply WindowInsets to prevent overlap
+        // Phase 1 fix: Edge-to-edge – container must sit BELOW status bar.
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            // container gets status bar top padding is handled in BrowserFragment toolbar, nav bar bottom padding for bottom_nav
-            binding.container.updatePadding(bottom = if (ime.bottom > 0) 0 else navBars.bottom)
+            binding.container.updatePadding(top = statusBars.top, bottom = if (ime.bottom > 0) 0 else navBars.bottom)
             binding.bottomNav.updatePadding(bottom = navBars.bottom)
             insets
         }
+        ViewCompat.requestApplyInsets(binding.root)
 
         if (savedInstanceState == null) {
             switchTab(R.id.nav_browser)
@@ -87,16 +87,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun switchTab(id: Int) {
-        if (currentId == id && fragments.containsKey(id) && fragments[id]?.isAdded == true) return
-        val tx = supportFragmentManager.beginTransaction()
-        fragments[currentId]?.let { if (it.isAdded) tx.hide(it) }
-        val next = getFrag(id)
-        if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString())
-        tx.commit()
-        currentId = id
-        // only update bottom nav if id is in bottom nav menu (Browser/Files/Terminal/Music)
-        if (id == R.id.nav_browser || id == R.id.nav_filemanager || id == R.id.nav_terminal || id == R.id.nav_music) {
-            try { binding.bottomNav.selectedItemId = id } catch (_: Exception) {}
+        try {
+            if (currentId == id && fragments.containsKey(id) && fragments[id]?.isAdded == true) return
+            if (supportFragmentManager.isStateSaved) {
+                val tx2 = supportFragmentManager.beginTransaction()
+                fragments[currentId]?.let { if (it.isAdded) try { tx2.hide(it) } catch (_: Exception) {} }
+                val n2 = getFrag(id)
+                if (n2.isAdded) try { tx2.show(n2) } catch (_: Exception) {} else try { tx2.add(R.id.container, n2, id.toString()) } catch (_: Exception) {}
+                try { tx2.commitAllowingStateLoss() } catch (_: Exception) {}
+                currentId = id
+                return
+            }
+            val tx = supportFragmentManager.beginTransaction()
+            fragments[currentId]?.let { if (it.isAdded) try { tx.hide(it) } catch (_: Exception) {} }
+            val next = getFrag(id)
+            try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) { try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) {} }
+            try { tx.commit() } catch (_: Exception) { try { tx.commitAllowingStateLoss() } catch (_: Exception) {} }
+            currentId = id
+            if (id == R.id.nav_browser || id == R.id.nav_filemanager || id == R.id.nav_terminal || id == R.id.nav_music) {
+                if (binding.bottomNav.selectedItemId != id) try { binding.bottomNav.selectedItemId = id } catch (_: Exception) {}
+            }
+        } catch (e: Exception) {
+            try { android.util.Log.e("LightBrowser", "switchTab $id", e) } catch (_: Exception) {}
+            try { android.widget.Toast.makeText(this, "Tab error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
         }
     }
 

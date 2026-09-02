@@ -29,16 +29,8 @@ class TerminalFragment : Fragment() {
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
-        // Phase 1: Fix status bar overlap
-        try {
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(b.root) { view, insets ->
-                val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                view.setPadding(0, statusBars.top, 0, 0)
-                insets
-            }
-            androidx.core.view.ViewCompat.requestApplyInsets(b.root)
-        } catch (_: Exception) {}
-        b.btnSend.setOnClickListener { exec() }
+        // Phase 1 fix: insets handled by activity container
+        try { b.btnSend.setOnClickListener { try { exec() } catch (_: Exception) {} } } catch (_: Exception) {}
         b.etInput.setOnEditorActionListener { _, _, _ -> exec(); true }
         b.btnClear.setOnClickListener { logs.clear(); b.tvLogs.text = "Cleared.\n"; scrollBottom() }
         b.btnCopy.setOnClickListener {

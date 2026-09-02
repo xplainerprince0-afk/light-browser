@@ -72,15 +72,7 @@ class MusicPlayerFragment : Fragment() {
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
-        // Phase 1: Fix status bar overlap
-        try {
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(b.root) { view, insets ->
-                val statusBars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-                view.setPadding(0, statusBars.top, 0, 0)
-                insets
-            }
-            androidx.core.view.ViewCompat.requestApplyInsets(b.root)
-        } catch (_: Exception) {}
+        // Phase 1 fix: container handles top inset
         b.recycler.layoutManager = LinearLayoutManager(requireContext())
         b.btnScan.setOnClickListener { scan() }
         b.btnAddFolder.setOnClickListener { folderPicker.launch(null) }
@@ -233,7 +225,7 @@ class MusicPlayerFragment : Fragment() {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        if (hidden && player?.isPlaying == true) { player?.pause(); b.btnPlay.text = "▶" }
+        try { if (hidden && player?.isPlaying == true) { try { player?.pause() } catch (_: Exception) {}; try { _b?.btnPlay?.text = "▶" } catch (_: Exception) {} } } catch (_: Exception) {}
     }
-    override fun onDestroyView() { handler.removeCallbacks(updateRunnable); stopPlayer(); _b = null; super.onDestroyView() }
+    override fun onDestroyView() { try { handler.removeCallbacks(updateRunnable) } catch (_: Exception) {}; try { stopPlayer() } catch (_: Exception) {}; _b = null; super.onDestroyView() }
 }
