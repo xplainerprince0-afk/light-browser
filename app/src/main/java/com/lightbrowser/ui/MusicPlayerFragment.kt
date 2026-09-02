@@ -136,8 +136,8 @@ class MusicPlayerFragment : Fragment() {
                     val dur = try { p.duration } catch (_: Exception) { 0 }
                     try { bb.playerSeekBar.max = if (dur > 0) dur else 100 } catch (_: Exception) {}
                     try { bb.playerSeekBar.progress = pos } catch (_: Exception) {}
-                    try { bb.playerCurrentTime.text = companion.formatDuration(pos.toLong()) } catch (_: Exception) {}
-                    try { bb.playerDuration.text = companion.formatDuration(dur.toLong()) } catch (_: Exception) {}
+                    try { bb.playerCurrentTime.text = formatDuration(pos.toLong()) } catch (_: Exception) {}
+                    try { bb.playerDuration.text = formatDuration(dur.toLong()) } catch (_: Exception) {}
                     
                     // Update chapter progress in novel list
                     if (currentNovelIndex >= 0 && currentNovelIndex < novels.size) {
@@ -150,7 +150,7 @@ class MusicPlayerFragment : Fragment() {
                                 playedDuration = playedMs
                             )
                             novels = novels.toMutableList().apply { this[currentNovelIndex] = updatedNovel }
-                            runOnUiThread { updateNovelList() }
+                            handler.post { updateNovelList() }
                         }
                     }
                 }
@@ -180,7 +180,7 @@ class MusicPlayerFragment : Fragment() {
             // Setup player view
             bb.playerSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { 
-                    if (fromUser) try { bb.playerCurrentTime.text = companion.formatDuration(p.toLong()) } catch (_: Exception) {} 
+                    if (fromUser) try { bb.playerCurrentTime.text = formatDuration(p.toLong()) } catch (_: Exception) {} 
                 }
                 override fun onStartTrackingTouch(sb: SeekBar?) { isSeeking = true }
                 override fun onStopTrackingTouch(sb: SeekBar?) { isSeeking = false; try { player?.seekTo(sb?.progress ?: 0) } catch (_: Exception) {} }
@@ -352,10 +352,9 @@ class MusicPlayerFragment : Fragment() {
                 }
             }
 
-            novelList.sortBy { it.name.lowercase() }
             novels = novelList
             
-            runOnUiThread {
+            handler.post {
                 updateNovelList()
                 if (novels.isNotEmpty() && currentNovelIndex == -1) {
                     // Don't auto-select, let user choose
@@ -506,7 +505,7 @@ class MusicPlayerFragment : Fragment() {
                 setOnErrorListener { _, what, extra -> safeToast("Error $what/$extra"); true }
                 try { prepareAsync() } catch (e: Exception) { safeToast(e.message) }
             }
-            try { (bb.novelRecycler.adapter as? NovelAdapter)?.notifyDataSetChanged() } catch (_: Exception) {}
+            try { (_b?.novelRecycler?.adapter as? NovelAdapter)?.notifyDataSetChanged() } catch (_: Exception) {}
         } catch (e: Exception) { safeToast("Play failed: ${e.message}") }
     }
 
