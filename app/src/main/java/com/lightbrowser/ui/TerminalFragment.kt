@@ -296,7 +296,9 @@ class TerminalFragment : Fragment() {
         val sd = sandboxDir ?: return
         appendColored("Installing Alpine Linux…", Color.WHITE)
         scope.launch(Dispatchers.IO) {
-            val ok = AlpineEnv.install(sd) { msg -> withContext(Dispatchers.Main) { append(msg) } }
+            val ok = AlpineEnv.install(sd) { msg ->
+                scope.launch(Dispatchers.Main) { append(msg) }
+            }
             withContext(Dispatchers.Main) {
                 alpineInstalled = ok
                 if (ok) appendColored("✓ Alpine ready. Try: apk info, ls, cat /etc/alpine-release", Color.parseColor("#00FF41"))

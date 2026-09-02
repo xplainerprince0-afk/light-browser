@@ -46,7 +46,7 @@ object AlpineEnv {
         dest.mkdirs()
         val tarball = File(dest, "alpine-minirootfs.tar.gz")
         return try {
-            onProgress("Downloading Alpine $ALPINE_VERSION ($archSlug())…")
+            onProgress("Downloading Alpine $ALPINE_VERSION (${archSlug()})…")
             downloadFile(downloadUrl(), tarball, onProgress)
             onProgress("Extracting to sandbox/alpine…")
             extractTarGz(tarball, dest)
