@@ -7,15 +7,16 @@
     android:background="@color/bg_dark"
     android:fitsSystemWindows="false">
 
-    <!-- Material 3 pill toolbar – with WindowInsets statusBarsPadding -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/toolbarCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="10dp"
-        app:cardCornerRadius="24dp"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="4dp"
+        app:cardCornerRadius="28dp"
         app:cardBackgroundColor="@color/surface"
-        app:strokeColor="#0DFFFFFF"
+        app:strokeColor="#14FFFFFF"
         app:strokeWidth="1dp"
         app:cardElevation="0dp">
 
@@ -23,29 +24,43 @@
             android:layout_width="match_parent"
             android:layout_height="52dp"
             android:orientation="horizontal"
-            android:padding="6dp"
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="4dp"
             android:gravity="center_vertical">
 
             <TextView
-                android:id="@+id/btnBack"
+                android:id="@+id/btnDrawer"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:gravity="center"
+                android:text="☰"
+                android:textColor="@color/teal_200"
+                android:textSize="20sp"
+                android:contentDescription="@string/open_drawer"
+                android:background="?attr/selectableItemBackgroundBorderless"/>
+
+            <TextView
+                android:id="@+id/btnBack"
+                android:layout_width="36dp"
+                android:layout_height="40dp"
+                android:gravity="center"
                 android:text="‹"
-                android:textColor="@color/white"
+                android:textColor="@color/onSurface"
                 android:textSize="22sp"
                 android:fontFamily="sans-serif-light"
+                android:contentDescription="@string/action_back"
                 android:background="?attr/selectableItemBackgroundBorderless"/>
 
             <TextView
                 android:id="@+id/btnForward"
-                android:layout_width="40dp"
+                android:layout_width="36dp"
                 android:layout_height="40dp"
                 android:gravity="center"
                 android:text="›"
-                android:textColor="@color/white"
+                android:textColor="@color/onSurface"
                 android:textSize="22sp"
                 android:fontFamily="sans-serif-light"
+                android:contentDescription="@string/action_forward"
                 android:background="?attr/selectableItemBackgroundBorderless"/>
 
             <EditText
@@ -53,11 +68,11 @@
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
-                android:layout_marginHorizontal="8dp"
+                android:layout_marginHorizontal="6dp"
                 android:background="@drawable/bg_url_bar"
                 android:hint="@string/hint_url"
                 android:textColor="@color/white"
-                android:textColorHint="#80FFFFFF"
+                android:textColorHint="#66FFFFFF"
                 android:paddingHorizontal="16dp"
                 android:singleLine="true"
                 android:imeOptions="actionGo"
@@ -71,10 +86,11 @@
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:gravity="center"
-                android:text="›"
+                android:text="→"
                 android:textColor="@color/white"
                 android:background="@drawable/bg_btn_go"
-                android:textSize="18sp"/>
+                android:textSize="16sp"
+                android:contentDescription="@string/action_go"/>
 
             <TextView
                 android:id="@+id/btnMore"
@@ -82,7 +98,7 @@
                 android:layout_height="40dp"
                 android:gravity="center"
                 android:text="⋮"
-                android:textColor="@color/white"
+                android:textColor="@color/onSurface"
                 android:textSize="22sp"
                 android:background="?attr/selectableItemBackgroundBorderless"/>
         </LinearLayout>
@@ -92,13 +108,13 @@
         android:id="@+id/progress"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="2dp"
+        android:layout_height="3dp"
+        android:layout_marginHorizontal="12dp"
         android:max="100"
-        android:progressTint="@color/purple_500"
+        android:progressTint="@color/teal_500"
         android:progressBackgroundTint="#0DFFFFFF"
         android:visibility="gone"/>
 
-    <!-- Workspace is WebView – fluid, not pushed by keyboard -->
     <WebView
         android:id="@+id/webView"
         android:layout_width="match_parent"

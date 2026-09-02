@@ -18,6 +18,7 @@ import android.widget.Toast
 import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.RecyclerView
+import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.BookmarkStorage
@@ -279,7 +280,8 @@ class BrowserFragment : Fragment() {
         }
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
-        binding.btnMore.setOnClickListener { (activity as? MainActivity)?.openDrawer() }
+        binding.btnDrawer.setOnClickListener { (activity as? MainActivity)?.openDrawer() }
+        binding.btnMore.setOnClickListener { showMoreMenuSlideIn(it) }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
@@ -652,12 +654,13 @@ class BrowserFragment : Fragment() {
     }
     
     private fun closeSlideInMenu(panel: LinearLayout, overlay: View, decorView: ViewGroup?) {
+        val root = panel.parent as? View
         panel.animate()
             .translationX(panel.width.toFloat())
             .setDuration(200)
             .setInterpolator(android.view.animation.AccelerateInterpolator())
             .withEndAction {
-                decorView?.removeView(panel.parent as? View)
+                (root?.parent as? ViewGroup)?.removeView(root)
             }
             .start()
         overlay.animate()
@@ -758,6 +761,10 @@ class BrowserFragment : Fragment() {
             Toast.makeText(requireContext(), if (nowMarked) "★ Bookmarked" else "☆ Removed", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_SHORT).show() }
     }
+
+    fun showHistory() = showHistoryDialog()
+
+    fun showBookmarks() = showBookmarksDialog()
 
     private fun showHistoryDialog() {
         try {

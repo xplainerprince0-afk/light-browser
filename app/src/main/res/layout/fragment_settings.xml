@@ -1,49 +1,143 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent"
-    android:background="@color/bg_dark">
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:clipToPadding="false">
 
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="vertical" android:padding="16dp">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
 
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:text="Settings" android:textColor="@color/white" android:textSize="20sp" android:textStyle="bold"/>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Settings"
+            android:textColor="@color/onSurface"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:letterSpacing="-0.02" />
 
-        <com.google.android.material.textfield.TextInputLayout
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="16dp" style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
-            <com.google.android.material.textfield.TextInputEditText android:id="@+id/etHome"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:hint="Homepage URL" android:textColor="@color/white" android:inputType="textUri"/>
-        </com.google.android.material.textfield.TextInputLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Browser preferences and data"
+            android:textColor="@color/onSurfaceVariant"
+            android:textSize="13sp" />
 
-        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/swJs"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="16dp" android:text="Enable JavaScript" android:textColor="@color/white"/>
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            app:cardCornerRadius="20dp"
+            app:cardBackgroundColor="@color/surface"
+            app:strokeColor="#14FFFFFF"
+            app:strokeWidth="1dp"
+            app:cardElevation="0dp">
 
-        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/swDesktop"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="12dp" android:text="Desktop mode (force Win32 UA + viewport 1280)" android:textColor="@color/white"/>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/swAdblock"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="12dp" android:text="AdBlock placeholder (blocks known ad hosts)" android:textColor="@color/white"/>
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    app:boxCornerRadiusTopStart="14dp"
+                    app:boxCornerRadiusTopEnd="14dp"
+                    app:boxCornerRadiusBottomStart="14dp"
+                    app:boxCornerRadiusBottomEnd="14dp">
 
-        <com.google.android.material.switchmaterial.SwitchMaterial android:id="@+id/swDarkMode"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="12dp" android:text="Dark mode" android:textColor="@color/white"/>
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etHome"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="Homepage URL"
+                        android:textColor="@color/onSurface"
+                        android:inputType="textUri" />
+                </com.google.android.material.textfield.TextInputLayout>
 
-        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" android:layout_marginVertical="16dp"/>
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swJs"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="Enable JavaScript"
+                    android:textColor="@color/onSurface" />
 
-        <com.google.android.material.button.MaterialButton android:id="@+id/btnClearCache"
-            android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Clear cache &amp; cookies"/>
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swDesktop"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Desktop mode"
+                    android:textColor="@color/onSurface" />
 
-        <com.google.android.material.button.MaterialButton android:id="@+id/btnClearHistory"
-            android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Clear browsing data (storage)"
-            style="@style/Widget.Material3.Button.OutlinedButton" android:layout_marginTop="8dp"/>
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swAdblock"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Ad blocker"
+                    android:textColor="@color/onSurface" />
 
-        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="20dp" android:textColor="#66FFFFFF" android:textSize="11sp"
-            android:text="LightBrowser v1.1 — size-optimized, WebView-based. Scripts injected via evaluateJavascript (see Wibgar analysis). Release is debug-signed for installability; replace with your own keystore for Play Store."/>
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swDarkMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Dark mode"
+                    android:textColor="@color/onSurface" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="20dp"
+            app:cardBackgroundColor="@color/surface"
+            app:strokeColor="#14FFFFFF"
+            app:strokeWidth="1dp"
+            app:cardElevation="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnClearCache"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Clear cache and cookies"
+                    app:cornerRadius="14dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnClearHistory"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Reset browsing preferences"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    app:cornerRadius="14dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:gravity="center"
+            android:textColor="@color/onSurfaceVariant"
+            android:textSize="11sp"
+            android:text="LightBrowser v2.1 — Material 3, WebView-based" />
     </LinearLayout>
 </ScrollView>

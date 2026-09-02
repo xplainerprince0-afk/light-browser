@@ -7,13 +7,11 @@
     android:background="@color/bg_dark"
     android:fitsSystemWindows="true">
 
-    <!-- Main content -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@color/bg_dark">
 
-        <!-- Fluid container -->
         <FrameLayout
             android:id="@+id/container"
             android:layout_width="0dp"
@@ -23,15 +21,15 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent" />
 
-        <!-- Material 3 bottom nav -->
         <com.google.android.material.bottomnavigation.BottomNavigationView
             android:id="@+id/bottom_nav"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:background="@color/surface"
-            app:elevation="3dp"
+            app:elevation="8dp"
             app:itemIconTint="@color/bottom_nav_colors"
             app:itemTextColor="@color/bottom_nav_colors"
+            app:itemActiveIndicatorStyle="@style/Widget.LightBrowser.Indicator"
             app:labelVisibilityMode="labeled"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -40,7 +38,6 @@
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
-    <!-- Navigation Drawer (Left side) -->
     <com.google.android.material.navigation.NavigationView
         android:id="@+id/navView"
         android:layout_width="300dp"

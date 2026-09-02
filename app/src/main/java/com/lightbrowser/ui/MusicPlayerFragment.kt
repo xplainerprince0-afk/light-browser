@@ -25,6 +25,7 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentMusicBinding
 import kotlinx.coroutines.CoroutineScope
@@ -190,6 +191,7 @@ class MusicPlayerFragment : Fragment() {
             bb.btnPickLibrary.setOnClickListener { try { pickLibraryFromSandbox() } catch (e: Exception) { safeToast(e.message) } }
             bb.btnImportFolder.setOnClickListener { try { importFolderPicker?.launch(null) } catch (e: Exception) { safeToast(e.message) } }
             bb.btnSwitchNovel.setOnClickListener { try { showNovelList() } catch (e: Exception) { safeToast(e.message) } }
+            bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.openDrawer() }
             bb.playerBtnPlay.setOnClickListener { try { toggle() } catch (_: Exception) {} }
             bb.playerBtnPrev.setOnClickListener { try { prevChapter() } catch (_: Exception) {} }
             bb.playerBtnNext.setOnClickListener { try { nextChapter() } catch (_: Exception) {} }

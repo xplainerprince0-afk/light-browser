@@ -3,15 +3,14 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <!-- Dimmed background overlay -->
     <View
         android:id="@+id/menuOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#80000000"
+        android:background="#99000000"
+        android:alpha="0"
         android:visibility="gone" />
 
-    <!-- Slide-in panel from right -->
     <LinearLayout
         android:id="@+id/menuPanel"
         android:layout_width="300dp"
@@ -20,41 +19,38 @@
         android:orientation="vertical"
         android:background="@color/surface"
         android:translationX="300dp"
-        android:elevation="8dp">
+        android:elevation="12dp">
 
-        <!-- Handle bar -->
         <View
             android:layout_width="40dp"
             android:layout_height="4dp"
             android:layout_marginTop="12dp"
             android:layout_gravity="center_horizontal"
-            android:background="@color/outline"
-            android:translationX="300dp" />
+            android:background="@color/outline" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Menu"
+            android:text="Browser Menu"
             android:textColor="@color/onSurface"
             android:textSize="18sp"
             android:textStyle="bold"
             android:paddingTop="16dp"
             android:paddingBottom="12dp"
-            android:gravity="center"
-            android:translationX="300dp" />
+            android:gravity="center" />
 
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="@color/outline"
-            android:translationX="300dp" />
+            android:background="@color/outline" />
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/menuRecycler"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:nestedScrollingEnabled="false"
-            android:translationX="300dp" />
+            android:clipToPadding="false"
+            android:paddingVertical="8dp"
+            android:nestedScrollingEnabled="false" />
     </LinearLayout>
 </FrameLayout>

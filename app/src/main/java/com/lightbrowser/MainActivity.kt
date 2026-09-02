@@ -1,21 +1,23 @@
 package com.lightbrowser
 
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
+import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.ActionBarDrawerToggle
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
-import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.Fragment
-import com.google.android.material.navigation.NavigationView
-import com.lightbrowser.data.AppCtx
 import com.lightbrowser.databinding.ActivityMainBinding
 import com.lightbrowser.ui.BrowserFragment
+import com.lightbrowser.ui.DownloadsFragment
 import com.lightbrowser.ui.FileManagerFragment
 import com.lightbrowser.ui.MusicPlayerFragment
+import com.lightbrowser.ui.ScriptsFragment
 import com.lightbrowser.ui.SettingsFragment
 import com.lightbrowser.ui.TerminalFragment
 
@@ -35,19 +37,23 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_music -> MusicPlayerFragment()
             R.id.nav_terminal -> TerminalFragment()
             R.id.nav_settings -> SettingsFragment()
+            R.id.nav_scripts -> ScriptsFragment()
+            R.id.nav_downloads -> DownloadsFragment()
             else -> BrowserFragment()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val themePrefs = getSharedPreferences("app_theme", MODE_PRIVATE)
+        AppCompatDelegate.setDefaultNightMode(
+            themePrefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_YES)
+        )
         super.onCreate(savedInstanceState)
-        // Edge-to-edge with proper insets
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        AppCtx.init(this)
+        com.lightbrowser.data.AppCtx.init(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Setup drawer toggle
         drawerToggle = ActionBarDrawerToggle(
             this, binding.drawerLayout, null,
             R.string.open_drawer, R.string.close_drawer
@@ -55,7 +61,6 @@ class MainActivity : AppCompatActivity() {
         binding.drawerLayout.addDrawerListener(drawerToggle)
         drawerToggle.syncState()
 
-        // Handle navigation item clicks
         binding.navView.setNavigationItemSelectedListener { item ->
             when (item.itemId) {
                 R.id.nav_drawer_browser -> switchTab(R.id.nav_browser)
@@ -63,25 +68,15 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_drawer_player -> switchTab(R.id.nav_music)
                 R.id.nav_drawer_terminal -> switchTab(R.id.nav_terminal)
                 R.id.nav_drawer_settings -> switchTab(R.id.nav_settings)
-                R.id.nav_drawer_scripts -> {
-                    // Switch to scripts tab (not in bottom nav)
-                    Toast.makeText(this, "Userscripts", Toast.LENGTH_SHORT).show()
-                    true
-                }
-                R.id.nav_drawer_downloads -> {
-                    // Switch to downloads tab (not in bottom nav)
-                    Toast.makeText(this, "Downloads", Toast.LENGTH_SHORT).show()
-                    true
-                }
+                R.id.nav_drawer_scripts -> switchTab(R.id.nav_scripts)
+                R.id.nav_drawer_downloads -> switchTab(R.id.nav_downloads)
                 R.id.nav_drawer_history -> {
-                    // Switch to history tab (not in bottom nav)
-                    Toast.makeText(this, "History", Toast.LENGTH_SHORT).show()
-                    true
+                    switchTab(R.id.nav_browser)
+                    (fragments[R.id.nav_browser] as? BrowserFragment)?.showHistory()
                 }
                 R.id.nav_drawer_bookmarks -> {
-                    // Switch to bookmarks tab (not in bottom nav)
-                    Toast.makeText(this, "Bookmarks", Toast.LENGTH_SHORT).show()
-                    true
+                    switchTab(R.id.nav_browser)
+                    (fragments[R.id.nav_browser] as? BrowserFragment)?.showBookmarks()
                 }
                 R.id.nav_drawer_about -> showAboutDialog()
             }
@@ -89,17 +84,10 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
-        // Handle window insets for edge-to-edge and keyboard
-        // adjustResize in manifest handles keyboard, we just manage status/nav bars
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            
-            // Container: top padding for status bar, bottom padding for bottom nav
-            binding.container.updatePadding(
-                top = statusBars.top,
-                bottom = navBars.bottom
-            )
+            binding.container.updatePadding(top = statusBars.top, bottom = navBars.bottom)
             binding.bottomNav.updatePadding(bottom = navBars.bottom)
             insets
         }
@@ -114,6 +102,9 @@ class MainActivity : AppCompatActivity() {
                     is FileManagerFragment -> R.id.nav_filemanager
                     is MusicPlayerFragment -> R.id.nav_music
                     is TerminalFragment -> R.id.nav_terminal
+                    is SettingsFragment -> R.id.nav_settings
+                    is ScriptsFragment -> R.id.nav_scripts
+                    is DownloadsFragment -> R.id.nav_downloads
                     else -> null
                 }
                 if (id != null) fragments[id] = f
@@ -134,6 +125,25 @@ class MainActivity : AppCompatActivity() {
                 switchTab(R.id.nav_browser)
             }
         }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+                    binding.drawerLayout.closeDrawer(GravityCompat.START)
+                    return
+                }
+                val current = fragments[currentId]
+                if (current is BrowserFragment && current.canGoBack()) {
+                    current.goBack()
+                } else if (currentId != R.id.nav_browser) {
+                    switchTab(R.id.nav_browser)
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
     }
 
     override fun onPostCreate(savedInstanceState: Bundle?) {
@@ -146,10 +156,13 @@ class MainActivity : AppCompatActivity() {
         drawerToggle.onConfigurationChanged(newConfig)
     }
 
+    fun openDrawer() {
+        binding.drawerLayout.openDrawer(GravityCompat.START)
+    }
+
     fun switchTab(id: Int) {
         try {
             if (currentId == id && fragments.containsKey(id) && fragments[id]?.isAdded == true) return
-            if (currentId == id && fragments.containsKey(id)) return
             if (supportFragmentManager.isStateSaved) {
                 val tx2 = supportFragmentManager.beginTransaction()
                 fragments[currentId]?.let { if (it.isAdded) try { tx2.hide(it) } catch (_: Exception) {} }
@@ -163,23 +176,32 @@ class MainActivity : AppCompatActivity() {
             val tx = supportFragmentManager.beginTransaction()
             fragments[currentId]?.let { if (it.isAdded) try { tx.hide(it) } catch (_: Exception) {} }
             val next = getFrag(id)
-            try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) { try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) {} }
+            try {
+                if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString())
+            } catch (_: Exception) {
+                try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) {}
+            }
             try { tx.commit() } catch (_: Exception) { try { tx.commitAllowingStateLoss() } catch (_: Exception) {} }
             currentId = id
             syncBottomNav(id)
         } catch (e: Exception) {
             try { android.util.Log.e("LightBrowser", "switchTab $id", e) } catch (_: Exception) {}
-            try { android.widget.Toast.makeText(this, "Tab error: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+            try { Toast.makeText(this, "Tab error: ${e.message}", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
         }
     }
 
     private fun syncBottomNav(id: Int) {
-        if (id != R.id.nav_browser && id != R.id.nav_filemanager && id != R.id.nav_music && id != R.id.nav_terminal && id != R.id.nav_settings) return
+        val bottomNavIds = setOf(
+            R.id.nav_browser, R.id.nav_filemanager, R.id.nav_music,
+            R.id.nav_terminal, R.id.nav_settings
+        )
         try {
-            if (binding.bottomNav.selectedItemId == id) return
-            isNavSyncing = true
-            binding.bottomNav.selectedItemId = id
-            // Update navigation view checked state
+            if (id in bottomNavIds) {
+                if (binding.bottomNav.selectedItemId != id) {
+                    isNavSyncing = true
+                    binding.bottomNav.selectedItemId = id
+                }
+            }
             val navItemId = when (id) {
                 R.id.nav_browser -> R.id.nav_drawer_browser
                 R.id.nav_filemanager -> R.id.nav_drawer_sandbox
@@ -206,37 +228,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
-            binding.drawerLayout.closeDrawer(GravityCompat.START)
-        } else {
-            val current = fragments[currentId]
-            if (current is BrowserFragment && current.canGoBack()) {
-                current.goBack()
-            } else if (currentId != R.id.nav_browser) {
-                switchTab(R.id.nav_browser)
-            } else {
-                super.onBackPressed()
-            }
-        }
-    }
-
     private fun showAboutDialog() {
         android.app.AlertDialog.Builder(this)
             .setTitle("About LightBrowser")
-            .setMessage("LightBrowser v1.0\n\nA lightweight browser with terminal, file manager, and audiobook player.\n\nBuilt with Material 3 and Kotlin.")
+            .setMessage(
+                "LightBrowser v2.1\n\n" +
+                "A lightweight browser with sandbox file manager, terminal, and audiobook player.\n\n" +
+                "Built with Material 3 and Kotlin."
+            )
             .setPositiveButton("OK", null)
             .show()
-    }
-
-    private fun getFrag(id: Int): Fragment = fragments.getOrPut(id) {
-        when (id) {
-            R.id.nav_browser -> BrowserFragment()
-            R.id.nav_filemanager -> FileManagerFragment()
-            R.id.nav_music -> MusicPlayerFragment()
-            R.id.nav_terminal -> TerminalFragment()
-            R.id.nav_settings -> SettingsFragment()
-            else -> BrowserFragment()
-        }
     }
 }
