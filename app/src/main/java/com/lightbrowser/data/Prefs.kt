@@ -32,6 +32,24 @@ object Prefs {
     var cacheEnabled: Boolean
         get() = p(AppCtx.ctx).getBoolean("cache_enabled", true)
         set(v) { p(AppCtx.ctx).edit().putBoolean("cache_enabled", v).apply() }
+
+    /** Default search engine key (google/bing/duckduckgo/brave/yahoo) */
+    var searchEngine: String
+        get() = p(AppCtx.ctx).getString("search_engine", "google") ?: "google"
+        set(v) { p(AppCtx.ctx).edit().putString("search_engine", v).apply() }
+
+    /** Build search URL for the given query using the configured search engine */
+    fun buildSearchUrl(query: String): String {
+        val encoded = android.net.Uri.encode(query)
+        return when (searchEngine) {
+            "bing"        -> "https://www.bing.com/search?q=$encoded"
+            "duckduckgo"  -> "https://duckduckgo.com/?q=$encoded"
+            "brave"       -> "https://search.brave.com/search?q=$encoded"
+            "yahoo"       -> "https://search.yahoo.com/search?p=$encoded"
+            "ecosia"      -> "https://www.ecosia.org/search?q=$encoded"
+            else          -> "https://www.google.com/search?q=$encoded"  // default: google
+        }
+    }
 }
 
 object AppCtx {

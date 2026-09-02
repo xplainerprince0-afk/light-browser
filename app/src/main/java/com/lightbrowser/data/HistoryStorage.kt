@@ -40,8 +40,11 @@ object HistoryStorage {
         prefs(ctx).edit().putString(KEY, arr.toString()).apply()
     }
 
+    fun saveList(ctx: Context, list: List<HistoryEntry>) = save(ctx, list)
+
     fun clear(ctx: Context) { prefs(ctx).edit().remove(KEY).apply() }
 }
+
 
 data class Bookmark(val url: String, val title: String, val time: Long = System.currentTimeMillis())
 

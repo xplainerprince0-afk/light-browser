@@ -6,10 +6,13 @@
     android:orientation="vertical"
     android:background="@color/bg_dark">
 
+    <!-- Toolbar / Header card -->
     <com.google.android.material.card.MaterialCardView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="12dp"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginTop="10dp"
+        android:layout_marginBottom="4dp"
         app:cardCornerRadius="20dp"
         app:cardBackgroundColor="@color/surface"
         app:strokeColor="#1AFFFFFF"
@@ -21,179 +24,239 @@
             android:layout_height="56dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:padding="12dp">
+            android:paddingHorizontal="8dp">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnUp"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:gravity="center"
-                android:text="↑"
-                android:textColor="?attr/colorOnSurface"
-                android:textSize="18sp"
-                style="@style/Widget.Material3.Button.OutlinedButton"
-                app:cornerRadius="12dp"
-                app:iconTint="?attr/colorOnSurface"
-                android:insetTop="0dp"
-                android:insetBottom="0dp" />
-
-            <TextView
-                android:id="@+id/tvPath"
+            <!-- Search bar -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/tilSearch"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="44dp"
                 android:layout_weight="1"
-                android:ellipsize="middle"
-                android:singleLine="true"
-                android:text="/"
-                android:textColor="@color/white"
-                android:textSize="13sp"
-                android:fontFamily="monospace" />
+                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                app:boxCornerRadiusTopStart="14dp"
+                app:boxCornerRadiusTopEnd="14dp"
+                app:boxCornerRadiusBottomStart="14dp"
+                app:boxCornerRadiusBottomEnd="14dp"
+                app:boxStrokeWidth="0dp"
+                app:boxStrokeWidthFocused="1dp"
+                android:hint="Search files…">
 
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/etSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:textSize="13sp"
+                    android:textColor="@color/onSurface"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:singleLine="true" />
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- View toggle (list/grid) -->
             <TextView
-                android:id="@+id/tvCount"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textColor="#99FFFFFF"
-                android:textSize="11sp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnDrawer"
+                android:id="@+id/btnViewToggle"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:text="☰"
-                android:textSize="20sp"
-                android:textColor="?attr/colorOnSurface"
-                style="@style/Widget.Material3.Button.TextButton"
-                app:cornerRadius="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp" />
+                android:gravity="center"
+                android:text="▦"
+                android:textColor="@color/onSurface"
+                android:textSize="18sp"
+                android:layout_marginStart="4dp"
+                android:background="?attr/selectableItemBackgroundBorderless" />
 
-            <com.google.android.material.button.MaterialButton
+            <!-- Sort button -->
+            <TextView
+                android:id="@+id/btnSort"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:text="⇅"
+                android:textColor="@color/onSurface"
+                android:textSize="18sp"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+
+            <!-- Overflow -->
+            <TextView
                 android:id="@+id/btnOverflow"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
                 android:text="⋮"
+                android:textColor="@color/onSurface"
                 android:textSize="20sp"
-                android:textColor="?attr/colorOnSurface"
-                style="@style/Widget.Material3.Button.TextButton"
-                app:cornerRadius="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp" />
+                android:background="?attr/selectableItemBackgroundBorderless" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- Sticky Breadcrumb Bar -->
+    <!-- Breadcrumb + path bar -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/cardBreadcrumb"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="12dp"
-        android:layout_marginTop="4dp"
+        android:layout_marginBottom="4dp"
         app:cardCornerRadius="12dp"
         app:cardBackgroundColor="#0D1428"
         app:strokeColor="#1AFFFFFF"
         app:strokeWidth="1dp"
         app:cardElevation="0dp"
-        android:visibility="gone">
+        android:visibility="visible">
 
-        <HorizontalScrollView
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:scrollbars="none"
-            android:paddingVertical="8dp"
-            android:paddingHorizontal="12dp">
+            android:layout_height="40dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-            <LinearLayout
-                android:id="@+id/llBreadcrumb"
+            <!-- Back/Up button -->
+            <TextView
+                android:id="@+id/btnUp"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:text="←"
+                android:textColor="@color/teal_200"
+                android:textSize="20sp"
+                android:background="?attr/selectableItemBackgroundBorderless" />
+
+            <!-- Horizontal scrollable breadcrumb -->
+            <HorizontalScrollView
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:scrollbars="none"
+                android:paddingVertical="6dp">
+
+                <LinearLayout
+                    android:id="@+id/llBreadcrumb"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="8dp" />
+            </HorizontalScrollView>
+
+            <!-- Item count -->
+            <TextView
+                android:id="@+id/tvCount"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical" />
-        </HorizontalScrollView>
+                android:textColor="#88AABB"
+                android:textSize="11sp"
+                android:paddingEnd="10dp" />
+        </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
+    <!-- Quick access shortcuts -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="4dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/btnAppFiles"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:text="📁 Sandbox"
+                android:textSize="12sp"
+                style="@style/Widget.Material3.Chip.Assist"
+                android:layout_marginEnd="6dp" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/btnDownloads"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:text="⬇ Downloads"
+                android:textSize="12sp"
+                style="@style/Widget.Material3.Chip.Assist"
+                android:layout_marginEnd="6dp" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/btnImport"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:text="📥 Import"
+                android:textSize="12sp"
+                style="@style/Widget.Material3.Chip.Assist"
+                android:layout_marginEnd="6dp" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/btnNewFolder"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:text="➕ New Folder"
+                android:textSize="12sp"
+                style="@style/Widget.Material3.Chip.Assist" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- File list -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:clipToPadding="false"
-        android:padding="8dp" />
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="8dp" />
 
-    <TextView
-        android:id="@+id/empty"
+    <!-- Empty state -->
+    <LinearLayout
+        android:id="@+id/emptyState"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_weight="0"
+        android:orientation="vertical"
         android:gravity="center"
-        android:text="No files"
-        android:textColor="#66FFFFFF"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📂"
+            android:textSize="48sp" />
+
+        <TextView
+            android:id="@+id/empty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="No files here"
+            android:textColor="#66FFFFFF"
+            android:textSize="16sp"
+            android:layout_marginTop="8dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Import files or create a folder"
+            android:textColor="#44FFFFFF"
+            android:textSize="12sp"
+            android:layout_marginTop="4dp" />
+    </LinearLayout>
+
+    <!-- Hidden path text for compat -->
+    <TextView
+        android:id="@+id/tvPath"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
         android:visibility="gone" />
 
-    <com.google.android.material.card.MaterialCardView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_margin="12dp"
-        app:cardCornerRadius="16dp"
-        app:cardBackgroundColor="#121827"
-        app:strokeColor="#1AFFFFFF"
-        app:strokeWidth="1dp">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="12dp"
-            android:gravity="center_vertical">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnAppFiles"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:text="App"
-                android:textSize="11sp"
-                android:textColor="?attr/colorOnPrimaryContainer"
-                style="@style/Widget.Material3.Button"
-                app:cornerRadius="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp" />
-
-            <View android:layout_width="8dp" android:layout_height="0dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnDownloads"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:text="Downloads"
-                android:textSize="11sp"
-                android:textColor="?attr/colorOnPrimaryContainer"
-                style="@style/Widget.Material3.Button"
-                app:cornerRadius="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp" />
-
-            <View android:layout_width="8dp" android:layout_height="0dp" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnImport"
-                android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
-                android:text="Import"
-                android:textSize="11sp"
-                android:textColor="?attr/colorOnPrimaryContainer"
-                style="@style/Widget.Material3.Button"
-                app:cornerRadius="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp" />
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
+    <!-- Hidden drawer button for compat -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnDrawer"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:insetTop="0dp"
+        android:insetBottom="0dp" />
 
 </LinearLayout>

@@ -7,7 +7,7 @@
     android:background="@color/terminal_bg"
     android:fitsSystemWindows="false">
 
-    <!-- Scrollable terminal output – tap/drag to place cursor & select anywhere -->
+    <!-- Scrollable terminal output -->
     <androidx.core.widget.NestedScrollView
         android:id="@+id/svLogs"
         android:layout_width="match_parent"
@@ -34,6 +34,25 @@
             android:text="@string/terminal_welcome" />
     </androidx.core.widget.NestedScrollView>
 
+    <!-- Termux-style extra-keys row — horizontally scrollable, compact height -->
+    <HorizontalScrollView
+        android:id="@+id/extraKeysScroll"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:scrollbars="none"
+        android:background="#0D1117"
+        android:fadeScrollbars="true">
+
+        <LinearLayout
+            android:id="@+id/llExtraKeys"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="4dp" />
+    </HorizontalScrollView>
+
     <!-- Input row – Termux-style prompt -->
     <LinearLayout
         android:layout_width="match_parent"
@@ -41,7 +60,7 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:paddingHorizontal="8dp"
-        android:paddingVertical="6dp"
+        android:paddingVertical="4dp"
         android:background="#0A0A0A">
 
         <TextView
@@ -54,6 +73,7 @@
             android:fontFamily="monospace"
             android:paddingEnd="4dp" />
 
+        <!-- Native EditText: cursor placement and text selection work naturally -->
         <EditText
             android:id="@+id/etInput"
             android:layout_width="0dp"
@@ -68,7 +88,8 @@
             android:imeOptions="actionSend"
             android:inputType="textNoSuggestions"
             android:textSize="14sp"
-            android:fontFamily="monospace" />
+            android:fontFamily="monospace"
+            android:textCursorDrawable="@null" />
 
         <TextView
             android:id="@+id/btnHistUp"
@@ -91,25 +112,33 @@
             android:background="?attr/selectableItemBackgroundBorderless" />
     </LinearLayout>
 
-    <!-- Bottom toolbar: Clear | Copy | Scripts -->
+    <!-- Bottom toolbar — styled icon+label buttons -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:layout_height="52dp"
         android:orientation="horizontal"
         android:gravity="center"
         android:background="#111111"
-        android:paddingHorizontal="8dp">
+        android:paddingHorizontal="4dp">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnClear"
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="40dp"
+            android:layout_marginHorizontal="4dp"
             android:text="Clear"
-            android:textSize="13sp"
-            android:textColor="@color/terminal_text"
-            style="@style/Widget.Material3.Button.TextButton"
-            app:cornerRadius="8dp"
+            android:textSize="12sp"
+            android:textColor="#CCCCCC"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            app:cornerRadius="10dp"
+            app:strokeColor="#333333"
+            app:strokeWidth="1dp"
+            app:icon="@drawable/ic_clear"
+            app:iconSize="16dp"
+            app:iconTint="#AAAAAA"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
 
@@ -118,11 +147,18 @@
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="40dp"
+            android:layout_marginHorizontal="4dp"
             android:text="Copy"
-            android:textSize="13sp"
-            android:textColor="@color/terminal_text"
-            style="@style/Widget.Material3.Button.TextButton"
-            app:cornerRadius="8dp"
+            android:textSize="12sp"
+            android:textColor="#CCCCCC"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            app:cornerRadius="10dp"
+            app:strokeColor="#333333"
+            app:strokeWidth="1dp"
+            app:iconSize="16dp"
+            app:iconTint="#AAAAAA"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
 
@@ -131,11 +167,19 @@
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="40dp"
+            android:layout_marginHorizontal="4dp"
             android:text="Scripts"
-            android:textSize="13sp"
-            android:textColor="@color/terminal_text"
-            style="@style/Widget.Material3.Button.TextButton"
-            app:cornerRadius="8dp"
+            android:textSize="12sp"
+            android:textColor="#CCCCCC"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            app:cornerRadius="10dp"
+            app:strokeColor="#333333"
+            app:strokeWidth="1dp"
+            app:icon="@drawable/ic_terminal"
+            app:iconSize="16dp"
+            app:iconTint="#AAAAAA"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
     </LinearLayout>

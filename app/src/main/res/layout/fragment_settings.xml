@@ -29,6 +29,7 @@
             android:textColor="@color/onSurfaceVariant"
             android:textSize="13sp" />
 
+        <!-- Browser prefs card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -113,6 +114,92 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Search Engine card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            app:cardCornerRadius="20dp"
+            app:cardBackgroundColor="@color/surface"
+            app:strokeColor="#14FFFFFF"
+            app:strokeWidth="1dp"
+            app:cardElevation="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Default Search Engine"
+                    android:textColor="@color/onSurface"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:paddingBottom="12dp" />
+
+                <!-- Radio-style chip group for search engines -->
+                <com.google.android.material.chip.ChipGroup
+                    android:id="@+id/chipGroupSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:singleSelection="true"
+                    app:selectionRequired="true">
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipGoogle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Google"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        app:chipBackgroundColor="@null" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipBing"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Bing"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        app:chipBackgroundColor="@null" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipDDG"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="DuckDuckGo"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        app:chipBackgroundColor="@null" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipBrave"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Brave"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        app:chipBackgroundColor="@null" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipYahoo"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Yahoo"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        app:chipBackgroundColor="@null" />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/chipEcosia"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Ecosia"
+                        style="@style/Widget.Material3.Chip.Filter"
+                        app:chipBackgroundColor="@null" />
+                </com.google.android.material.chip.ChipGroup>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Data management card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -154,6 +241,6 @@
             android:gravity="center"
             android:textColor="@color/onSurfaceVariant"
             android:textSize="11sp"
-            android:text="LightBrowser v2.3 — Material 3, Alpine terminal" />
+            android:text="LightBrowser v2.4 — Material 3, Alpine terminal" />
     </LinearLayout>
 </ScrollView>

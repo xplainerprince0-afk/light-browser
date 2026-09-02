@@ -4,31 +4,35 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Message
+import android.text.format.DateUtils
 import android.util.Log
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AnimationUtils
 import android.view.inputmethod.EditorInfo
 import android.webkit.*
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.BookmarkStorage
 import com.lightbrowser.data.BrowserProfile
 import com.lightbrowser.data.DownloadHelper
+import com.lightbrowser.data.HistoryEntry
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.Prefs
 import com.lightbrowser.data.ScriptStorage
 import com.lightbrowser.databinding.FragmentBrowserBinding
-import com.google.android.material.bottomsheet.BottomSheetDialog
+import java.text.SimpleDateFormat
+import java.util.*
 
 class BrowserFragment : Fragment() {
     private var _binding: FragmentBrowserBinding? = null
@@ -43,17 +47,21 @@ class BrowserFragment : Fragment() {
     private val consoleLogs = mutableListOf<String>()
     private var lastInjectInfo = "No inject yet"
 
+    // Tab management (simple single-webview multi-url list for now)
+    private val tabUrls = mutableListOf<String>()
+    private var currentTabIndex = 0
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentBrowserBinding.inflate(inflater, container, false)
         return binding.root
     }
 
-    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
+    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface", "ClickableViewAccessibility")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         try { AppCtx.init(requireContext()) } catch (_: Exception) {}
 
-        // === Wibgar fq1:311 ServiceWorker pre-config (critical for Worker blob: + fetch) ===
+        // === ServiceWorker pre-config ===
         try {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
                 val sw = android.webkit.ServiceWorkerController.getInstance()
@@ -73,9 +81,7 @@ class BrowserFragment : Fragment() {
             if (Prefs.desktopMode) wv.settings.userAgentString = DESKTOP_UA
         } catch (e: Exception) { Log.e(TAG, "UA fail", e) }
 
-        // === Wibgar fq1:581 BlobDownloader bridge ===
         wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "BlobDownloader")
-        // keep alias for old scripts
         wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "LightBlobBridge")
 
         wv.webViewClient = object : WebViewClient() {
@@ -94,29 +100,35 @@ class BrowserFragment : Fragment() {
                 super.onPageStarted(v, url, favicon)
                 binding.progress.visibility = View.VISIBLE
                 binding.progress.progress = 10
-                url?.let { binding.urlBar.setText(it) }
+                // Update collapsed bar domain
+                url?.let {
+                    updateCollapsedBar(it)
+                    // keep EditText in sync even if hidden
+                    binding.urlBar.setText(it)
+                }
                 if (url != null) injectScripts(v, url, "document_start")
             }
 
             override fun onPageFinished(v: WebView?, url: String?) {
                 super.onPageFinished(v, url)
                 binding.progress.visibility = View.GONE
+                // Reload icon when page finishes
+                binding.btnGo.text = "↻"
                 url?.let {
+                    updateCollapsedBar(it)
                     binding.urlBar.setText(it)
-                    // save history + update bookmark star
                     try {
                         val title = v?.title ?: it
                         HistoryStorage.add(requireContext(), it, title)
                     } catch (_: Exception) {}
                     updateBookmarkIcon(it)
+                    // update tab list
+                    if (currentTabIndex < tabUrls.size) tabUrls[currentTabIndex] = it
+                    else { tabUrls.add(it); currentTabIndex = tabUrls.size - 1 }
+                    updateTabCount()
                 }
-
-                // Wibgar aw1:708 visibility override for youtube etc – keep for background fetch survival (WTR auto-scrape throttled if hidden)
                 injectVisibilityHack(v, url)
-
                 if (Prefs.desktopMode) injectDesktop(v)
-
-                // Wibgar aw1:792 delay inject: need DOM ready → postDelayed 350ms
                 v?.postDelayed({
                     if (url != null) injectScripts(v, url, "document_end")
                     if (url != null) injectScripts(v, url, "document_idle")
@@ -124,32 +136,36 @@ class BrowserFragment : Fragment() {
                 }, 350)
             }
 
-            override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
-                // keep inside
-                return false
+            override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean = false
+
+            override fun onReceivedError(v: WebView?, req: WebResourceRequest?, err: WebResourceError?) {
+                // Show stop icon on error
+                binding.btnGo.text = "↻"
+                binding.progress.visibility = View.GONE
             }
         }
 
         wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(v: WebView?, p: Int) {
-                if (p < 100) { binding.progress.visibility = View.VISIBLE; binding.progress.progress = p }
-                else binding.progress.visibility = View.GONE
+                if (p < 100) {
+                    binding.progress.visibility = View.VISIBLE
+                    binding.progress.progress = p
+                    binding.btnGo.text = "✕"  // loading → show stop
+                } else {
+                    binding.progress.visibility = View.GONE
+                    binding.btnGo.text = "↻"
+                }
             }
 
             override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
                 cm?.let {
                     val src = it.sourceId() ?: ""
                     val msg = it.message() ?: ""
-                    // Filter out Cloudflare Turnstile noise (challenges.cloudflare.com) – not relevant to WTR script
                     if (src.contains("challenges.cloudflare.com") || src.contains("turnstile") || msg.contains("challenges.cloudflare")) {
-                        // still log to Logcat for completeness but don't spam UI console
-                        Log.d(TAG, "JS [filtered Turnstile] $msg @ $src")
-                        return@let
+                        Log.d(TAG, "JS [filtered Turnstile] $msg @ $src"); return@let
                     }
-                    // Filter out obfuscated %c%d transparent spam from Turnstile
                     if (msg.contains("font-size:0;color:transparent") || msg == "NaN" || msg.trim() == "1") {
-                        Log.d(TAG, "JS [filtered spam] $msg")
-                        return@let
+                        Log.d(TAG, "JS [filtered spam] $msg"); return@let
                     }
                     val full = "[${it.messageLevel()}] ${it.message()} @ ${it.sourceId()}:${it.lineNumber()}"
                     Log.d(TAG, "JS $full")
@@ -159,14 +175,9 @@ class BrowserFragment : Fragment() {
                 return super.onConsoleMessage(cm)
             }
 
-            // Wibgar zv1: handling target="_blank" for downloads/blobs
             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
                 val href = view?.hitTestResult?.extra
-                if (href != null) {
-                    view.loadUrl(href)
-                    return true
-                }
-                // For WebViewTransport case (Wibgar zv1)
+                if (href != null) { view.loadUrl(href); return true }
                 val newView = WebView(view!!.context)
                 newView.webViewClient = WebViewClient()
                 val transport = resultMsg?.obj as? WebView.WebViewTransport
@@ -176,10 +187,8 @@ class BrowserFragment : Fragment() {
             }
         }
 
-        // === Wibgar gr1 DownloadListener with blob XHR bridge ===
         wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
             if (url.startsWith("blob:")) {
-                // Wibgar gr1:1402 XHR bridge → onBlobDownload
                 val js = """
                     (function(){
                       var blobUrl="$url";
@@ -233,31 +242,400 @@ class BrowserFragment : Fragment() {
             false
         }
 
-        // Keyboard handled by MainActivity container insets – bottom nav stays fixed
+        // --- URL bar collapse/expand behaviour ---
+        binding.urlCollapsed.setOnClickListener { expandUrlBar() }
 
-        binding.btnGo.setOnClickListener { loadFromBar() }
-        binding.urlBar.setOnEditorActionListener { _, id, _ ->
-            if (id == EditorInfo.IME_ACTION_GO || id == EditorInfo.IME_ACTION_SEARCH) { loadFromBar(); true } else false
+        binding.urlBar.setOnFocusChangeListener { _, hasFocus ->
+            if (!hasFocus) collapseUrlBar()
         }
+
+        binding.urlBar.setOnEditorActionListener { _, id, _ ->
+            if (id == EditorInfo.IME_ACTION_GO || id == EditorInfo.IME_ACTION_SEARCH) {
+                loadFromBar()
+                collapseUrlBar()
+                true
+            } else false
+        }
+
+        // Reload/stop on btnGo tap
+        binding.btnGo.setOnClickListener {
+            if (binding.btnGo.text == "✕") {
+                wv.stopLoading()
+                binding.btnGo.text = "↻"
+                binding.progress.visibility = View.GONE
+            } else {
+                wv.reload()
+            }
+        }
+
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
-        binding.btnDrawer.setOnClickListener { (activity as? MainActivity)?.openDrawer() }
+        binding.btnTabCount.setOnClickListener { showTabSwitcher() }
         binding.btnMore.setOnClickListener { showMoreMenuSlideIn(it) }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
-            val headers = mapOf("X-Requested-With" to "")
-            wv.loadUrl(start, headers)
+            tabUrls.add(start)
+            currentTabIndex = 0
+            updateTabCount()
+            wv.loadUrl(start, mapOf("X-Requested-With" to ""))
         }
     }
 
-    // Wibgar aw1:708
+    // ──── URL bar collapse/expand ─────────────────────────────────────────────
+
+    private fun updateCollapsedBar(url: String) {
+        try {
+            val uri = android.net.Uri.parse(url)
+            val domain = uri.host ?: url
+            binding.tvDomain.text = domain
+            val isHttps = url.startsWith("https://")
+            binding.tvLock.text = if (isHttps) "🔒" else "⚠️"
+        } catch (_: Exception) {
+            binding.tvDomain.text = url
+        }
+    }
+
+    private fun expandUrlBar() {
+        if (binding.urlBar.visibility == View.VISIBLE) return
+        binding.urlCollapsed.visibility = View.GONE
+        binding.urlBar.visibility = View.VISIBLE
+        binding.urlBar.requestFocus()
+        binding.urlBar.selectAll()
+        val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(binding.urlBar, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    private fun collapseUrlBar() {
+        if (binding.urlCollapsed.visibility == View.VISIBLE) return
+        binding.urlBar.visibility = View.GONE
+        binding.urlCollapsed.visibility = View.VISIBLE
+        val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.hideSoftInputFromWindow(binding.urlBar.windowToken, 0)
+    }
+
+    // ──── Tab management ─────────────────────────────────────────────────────
+
+    private fun updateTabCount() {
+        val count = tabUrls.size.coerceAtLeast(1)
+        binding.btnTabCount.text = count.toString()
+    }
+
+    private fun showTabSwitcher() {
+        val ctx = requireContext()
+        val dlg = android.app.AlertDialog.Builder(ctx)
+        val items = tabUrls.mapIndexed { i, url ->
+            val mark = if (i == currentTabIndex) "● " else "  "
+            val domain = try { android.net.Uri.parse(url).host ?: url } catch (_: Exception) { url }
+            "$mark Tab ${i+1}: $domain"
+        }.toTypedArray()
+
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle("Open tabs (${tabUrls.size})")
+            .setItems(items) { _, which ->
+                currentTabIndex = which
+                val url = tabUrls[which]
+                binding.webView.loadUrl(url, mapOf("X-Requested-With" to ""))
+            }
+            .setPositiveButton("New Tab") { _, _ ->
+                openNewTab(Prefs.homePage)
+            }
+            .setNeutralButton("Close Tab") { _, _ ->
+                closeCurrentTab()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun openNewTab(url: String) {
+        tabUrls.add(url)
+        currentTabIndex = tabUrls.size - 1
+        updateTabCount()
+        binding.webView.loadUrl(url, mapOf("X-Requested-With" to ""))
+    }
+
+    private fun closeCurrentTab() {
+        if (tabUrls.size <= 1) {
+            Toast.makeText(requireContext(), "Can't close the last tab", Toast.LENGTH_SHORT).show()
+            return
+        }
+        tabUrls.removeAt(currentTabIndex)
+        currentTabIndex = (currentTabIndex - 1).coerceAtLeast(0)
+        updateTabCount()
+        binding.webView.loadUrl(tabUrls[currentTabIndex], mapOf("X-Requested-With" to ""))
+    }
+
+    // ──── History dialog (Chrome-style grouped) ───────────────────────────────
+
+    fun showHistory() = showHistoryDialog()
+
+    private fun showHistoryDialog() {
+        try {
+            val ctx = requireContext()
+            val list = HistoryStorage.all(ctx)
+            if (list.isEmpty()) { Toast.makeText(ctx, "No history yet", Toast.LENGTH_SHORT).show(); return }
+
+            val dlgView = LayoutInflater.from(ctx).inflate(android.R.layout.list_content, null)
+            val recycler = RecyclerView(ctx)
+            recycler.layoutManager = LinearLayoutManager(ctx)
+
+            // Group by date
+            val now = System.currentTimeMillis()
+            val todayStart = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY,0); set(Calendar.MINUTE,0); set(Calendar.SECOND,0); set(Calendar.MILLISECOND,0) }.timeInMillis
+            val yesterdayStart = todayStart - 86400_000L
+            val weekStart = todayStart - 6 * 86400_000L
+
+            // Build sections: header strings + entries
+            data class HistoryRow(val isHeader: Boolean, val headerText: String = "", val entry: HistoryEntry? = null)
+            val rows = mutableListOf<HistoryRow>()
+            var lastSection = ""
+            for (e in list) {
+                val sec = when {
+                    e.time >= todayStart    -> "Today"
+                    e.time >= yesterdayStart -> "Yesterday"
+                    e.time >= weekStart     -> "Last 7 Days"
+                    else                   -> "Older"
+                }
+                if (sec != lastSection) { rows.add(HistoryRow(true, sec)); lastSection = sec }
+                rows.add(HistoryRow(false, entry = e))
+            }
+
+            val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+            recycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+                inner class HeaderVH(v: View) : RecyclerView.ViewHolder(v)
+                inner class EntryVH(v: View) : RecyclerView.ViewHolder(v)
+
+                override fun getItemViewType(position: Int) = if (rows[position].isHeader) 0 else 1
+
+                override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+                    return if (viewType == 0) {
+                        val tv = TextView(ctx).apply {
+                            textSize = 12f
+                            setTextColor(0xFF94A3B8.toInt())
+                            setPadding(48, 24, 16, 8)
+                            setTypeface(null, android.graphics.Typeface.BOLD)
+                        }
+                        HeaderVH(tv)
+                    } else {
+                        val v = LayoutInflater.from(parent.context).inflate(R.layout.item_history, parent, false)
+                        EntryVH(v)
+                    }
+                }
+
+                override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+                    val row = rows[position]
+                    if (row.isHeader) {
+                        (holder.itemView as TextView).text = row.headerText
+                    } else {
+                        val e = row.entry ?: return
+                        val domain = try { android.net.Uri.parse(e.url).host ?: e.url } catch (_: Exception) { e.url }
+                        holder.itemView.findViewById<TextView>(R.id.tvFavicon).text = domain.firstOrNull()?.uppercaseChar()?.toString() ?: "🌐"
+                        holder.itemView.findViewById<TextView>(R.id.tvHistTitle).text = e.title.ifBlank { e.url }
+                        holder.itemView.findViewById<TextView>(R.id.tvHistUrl).text = e.url
+                        holder.itemView.findViewById<TextView>(R.id.tvHistTime).text = sdf.format(Date(e.time))
+                        holder.itemView.setOnClickListener { loadUrl(e.url); }
+                        holder.itemView.findViewById<TextView>(R.id.btnHistDelete).setOnClickListener {
+                            val all = HistoryStorage.all(ctx)
+                            all.removeAll { it.url == e.url }
+                            HistoryStorage.saveList(ctx, all)
+                            rows.removeAt(position)
+                            notifyItemRemoved(position)
+                        }
+                    }
+                }
+
+                override fun getItemCount() = rows.size
+            }
+
+            val scrollView = android.widget.ScrollView(ctx)
+            scrollView.addView(recycler)
+
+            android.app.AlertDialog.Builder(ctx)
+                .setTitle("History")
+                .setView(recycler)
+                .setPositiveButton("Close", null)
+                .setNeutralButton("Clear All") { _, _ ->
+                    HistoryStorage.clear(ctx)
+                    Toast.makeText(ctx, "History cleared", Toast.LENGTH_SHORT).show()
+                }
+                .show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
+    }
+
+    // ──── Bookmarks ──────────────────────────────────────────────────────────
+
+    fun showBookmarks() = showBookmarksDialog()
+
+    private fun showBookmarksDialog() {
+        try {
+            val ctx = requireContext()
+            val list = BookmarkStorage.all(ctx)
+            if (list.isEmpty()) { Toast.makeText(ctx, "No bookmarks – use ⭐ Bookmark in menu to add", Toast.LENGTH_SHORT).show(); return }
+            val items = list.map { "${it.title}\n${it.url}" }.toTypedArray()
+            android.app.AlertDialog.Builder(ctx)
+                .setTitle("Bookmarks (${list.size})")
+                .setItems(items) { _, which -> loadUrl(list[which].url) }
+                .setPositiveButton("Close", null)
+                .setNeutralButton("Clear") { _, _ ->
+                    BookmarkStorage.clear(ctx)
+                    Toast.makeText(ctx, "Bookmarks cleared", Toast.LENGTH_SHORT).show()
+                }
+                .show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
+    }
+
+    // ──── Slide-in more menu ─────────────────────────────────────────────────
+
+    private fun showMoreMenuSlideIn(anchor: View) {
+        val ctx = requireContext()
+        val menuView = LayoutInflater.from(ctx).inflate(R.layout.slidein_browser_menu, null)
+        val overlay = menuView.findViewById<View>(R.id.menuOverlay)
+        val panel = menuView.findViewById<LinearLayout>(R.id.menuPanel)
+        val recycler = menuView.findViewById<RecyclerView>(R.id.menuRecycler)
+        val decorView = activity?.window?.decorView?.rootView as? ViewGroup
+        decorView?.addView(menuView)
+
+        recycler.layoutManager = LinearLayoutManager(ctx)
+        val tabsLabel = "New Tab"
+        val menuItems = listOf(
+            MenuItemData("↻", "Refresh", R.drawable.ic_refresh, { binding.webView.reload(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("＋", tabsLabel, R.drawable.ic_web, { openNewTab(Prefs.homePage); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⭐", "Bookmark this page", R.drawable.ic_bookmark, { toggleBookmark(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("🧪", "Tester", R.drawable.ic_bug_report, { showTestDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("📜", "Scripts", R.drawable.ic_code, { showScriptsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⬇️", "Downloads", R.drawable.ic_download, { showDownloadsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⚙️", "Settings", R.drawable.ic_settings, { showSettingsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("🕘", "History", R.drawable.ic_history, { showHistoryDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⭐", "Bookmarks", R.drawable.ic_bookmark, { showBookmarksDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("🖥️", "Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", R.drawable.ic_desktop, {
+                Prefs.desktopMode = !Prefs.desktopMode
+                Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
+                binding.webView.reload()
+                closeSlideInMenu(panel, overlay, decorView)
+            }),
+            MenuItemData("🧹", "Clear cache", R.drawable.ic_clear, {
+                try {
+                    CookieManager.getInstance().removeAllCookies(null)
+                    android.webkit.WebStorage.getInstance().deleteAllData()
+                    ctx.cacheDir.deleteRecursively()
+                    Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+                closeSlideInMenu(panel, overlay, decorView)
+            })
+        )
+
+        recycler.adapter = object : RecyclerView.Adapter<MenuViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MenuViewHolder {
+                val v = LayoutInflater.from(parent.context).inflate(R.layout.item_menu, parent, false)
+                return MenuViewHolder(v)
+            }
+            override fun onBindViewHolder(holder: MenuViewHolder, position: Int) {
+                val item = menuItems[position]
+                holder.icon.setImageResource(item.iconRes)
+                holder.title.text = item.title
+                holder.itemView.setOnClickListener { item.action.invoke() }
+            }
+            override fun getItemCount() = menuItems.size
+        }
+
+        animateSlideIn(panel, overlay)
+        overlay.setOnClickListener { closeSlideInMenu(panel, overlay, decorView) }
+    }
+
+    private fun animateSlideIn(panel: LinearLayout, overlay: View) {
+        overlay.visibility = View.VISIBLE
+        overlay.animate().alpha(1f).setDuration(200).start()
+        panel.animate().translationX(0f).setDuration(250).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+    }
+
+    private fun closeSlideInMenu(panel: LinearLayout, overlay: View, decorView: ViewGroup?) {
+        val root = panel.parent as? View
+        panel.animate()
+            .translationX(panel.width.toFloat())
+            .setDuration(200)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction { (root?.parent as? ViewGroup)?.removeView(root) }
+            .start()
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(200)
+            .withEndAction { overlay.visibility = View.GONE }
+            .start()
+    }
+
+    // ──── Misc helpers ───────────────────────────────────────────────────────
+
+    data class MenuItemData(val iconPrefix: String, val title: String, val iconRes: Int, val action: () -> Unit)
+    class MenuViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val icon: ImageView = view.findViewById(R.id.menuIcon)
+        val title: TextView = view.findViewById(R.id.menuTitle)
+    }
+
+    private fun showScriptsDialog() {
+        try { (activity as? MainActivity)?.switchToTab(R.id.nav_scripts) } catch (_: Exception) {}
+    }
+    private fun showDownloadsDialog() {
+        try { (activity as? MainActivity)?.switchToTab(R.id.nav_downloads) } catch (_: Exception) {}
+    }
+    private fun showSettingsDialog() {
+        try { (activity as? MainActivity)?.switchToTab(R.id.nav_settings) } catch (_: Exception) {}
+    }
+
+    fun loadUrl(url: String) {
+        try {
+            _binding?.webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
+            _binding?.urlBar?.setText(url)
+            updateCollapsedBar(url)
+            collapseUrlBar()
+        } catch (_: Exception) {}
+    }
+
+    private fun updateCollapsedBar(url: String) {
+        try {
+            val uri = android.net.Uri.parse(url)
+            val domain = uri.host ?: url
+            _binding?.tvDomain?.text = domain
+            val isHttps = url.startsWith("https://")
+            _binding?.tvLock?.text = if (isHttps) "🔒" else "⚠️"
+        } catch (_: Exception) {}
+    }
+
+    private fun updateBookmarkIcon(url: String) {
+        try {
+            val marked = BookmarkStorage.isBookmarked(requireContext(), url)
+            Log.d(TAG, "bookmark $url marked=$marked")
+        } catch (_: Exception) {}
+    }
+
+    private fun toggleBookmark() {
+        try {
+            val wv = _binding?.webView ?: return
+            val url = wv.url ?: binding.urlBar.text.toString()
+            if (url.isBlank() || url.startsWith("about:")) return
+            val title = wv.title ?: url
+            val nowMarked = BookmarkStorage.toggle(requireContext(), url, title)
+            Toast.makeText(requireContext(), if (nowMarked) "★ Bookmarked" else "☆ Removed", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_SHORT).show() }
+    }
+
+    private fun loadFromBar() {
+        val input = binding.urlBar.text.toString().trim()
+        if (input.isEmpty()) return
+        val url = when {
+            input.startsWith("http://") || input.startsWith("https://") -> input
+            input.contains(".") && !input.contains(" ") -> "https://$input"
+            else -> Prefs.buildSearchUrl(input)
+        }
+        binding.webView.loadUrl(url, mapOf("X-Requested-With" to ""))
+    }
+
+    // ──── Script injection ───────────────────────────────────────────────────
+
     private fun injectVisibilityHack(v: WebView?, url: String?) {
         if (v == null || url == null) return
         val lower = url.lowercase()
         if (!lower.contains("youtube.com") && !lower.contains("youtu.be") && !lower.contains("soundcloud.com") && !lower.contains("wtr-lab.com")) {
-            // still inject for WTR to prevent background throttle during long scrape
-            // WTR long fetch loop suspends if document.hidden -> inject anyway for wtr-lab
             if (!lower.contains("wtr-lab.com")) return
         }
         val js = """
@@ -271,9 +649,7 @@ class BrowserFragment : Fragment() {
                     document.dispatchEvent(new Event('webkitvisibilitychange'));
                     const originalAddEventListener = document.addEventListener;
                     document.addEventListener = function(type, listener, options) {
-                        if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
-                            return;
-                        }
+                        if (type === 'visibilitychange' || type === 'webkitvisibilitychange') return;
                         return originalAddEventListener.apply(this, arguments);
                     };
                 } catch(e) { console.error(e); }
@@ -284,8 +660,6 @@ class BrowserFragment : Fragment() {
 
     private fun injectDesktop(v: WebView?) {
         if (v == null) return
-        // Fix flicker: don't use MutationObserver that constantly resets viewport on wtr-lab (causes fixed panel reflow)
-        // Just set once, no observer
         val js = """
             (function() {
                 try {
@@ -295,7 +669,6 @@ class BrowserFragment : Fragment() {
                         viewport.name = 'viewport';
                         document.head.appendChild(viewport);
                     }
-                    // keep original viewport but allow zoom, don't force 1280 which breaks WTR layout and causes flicker
                     if (!viewport.content.includes('1280')) {
                         viewport.content = 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
                     }
@@ -321,10 +694,7 @@ class BrowserFragment : Fragment() {
         val matched = all.filter { it.enabled && com.lightbrowser.data.UserScript.matchesUrl(it.matches, url) }
         if (matched.isEmpty()) {
             val msg = "No scripts match $url (have ${all.size}, patterns=${all.map { it.matches }})"
-            Log.d(TAG, msg)
-            lastInjectInfo = msg
-            consoleLogs.add(msg)
-            return
+            Log.d(TAG, msg); lastInjectInfo = msg; consoleLogs.add(msg); return
         }
         val toInject = matched.filter { sc ->
             when (sc.runAt) {
@@ -333,19 +703,11 @@ class BrowserFragment : Fragment() {
                 else -> runAt == "document_idle" || runAt == "document_end"
             }
         }
-        if (toInject.isEmpty()) {
-            Log.d(TAG, "Matched ${matched.size} but none for runAt=$runAt")
-            return
-        }
-        lastInjectInfo = "Inject ${toInject.size} @ $runAt for $url: ${toInject.joinToString(","){it.name}} at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}"
-        Log.d(TAG, lastInjectInfo)
-        consoleLogs.add(lastInjectInfo)
+        if (toInject.isEmpty()) { Log.d(TAG, "Matched ${matched.size} but none for runAt=$runAt"); return }
+        lastInjectInfo = "Inject ${toInject.size} @ $runAt for $url: ${toInject.joinToString(","){it.name}}"
+        Log.d(TAG, lastInjectInfo); consoleLogs.add(lastInjectInfo)
         try { Toast.makeText(requireContext(), lastInjectInfo.take(120), Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
-        // Wibgar aw1:1993 joins with "\n" then wraps once; we do per-script to isolate errors but same wrapper
-        // Use Wibgar wrapper: (function(){ try{ code }catch(e){console.error('Custom script error:', e);}})();
-        toInject.forEach { sc ->
-            injectSingle(v, sc)
-        }
+        toInject.forEach { sc -> injectSingle(v, sc) }
     }
 
     private fun injectSingle(v: WebView, sc: com.lightbrowser.data.UserScript) {
@@ -359,12 +721,9 @@ class BrowserFragment : Fragment() {
             window.unsafeWindow=window;
         """.trimIndent() else ""
         val marker = "console.log('LB inject: ${escapeJs(sc.name)} @ ${escapeJs(sc.runAt)}');"
-        // Wibgar style wrapper
         val code = sc.code
         val wrapped = "(function(){ try{\n$marker\n$gmPolyfill\n$code\n}catch(e){console.error('Custom script error:', e);} })();"
-        v.evaluateJavascript(wrapped) { result ->
-            Log.d(TAG, "inject result ${sc.name}: $result")
-        }
+        v.evaluateJavascript(wrapped) { result -> Log.d(TAG, "inject result ${sc.name}: $result") }
     }
 
     fun runJs(code: String, callback: (String?) -> Unit = {}) {
@@ -385,46 +744,36 @@ class BrowserFragment : Fragment() {
                 orientation = android.widget.LinearLayout.VERTICAL
                 setPadding(32, 24, 32, 24)
             }
-
             fun addTitle(t: String) {
-                val tv = android.widget.TextView(ctx).apply {
+                container.addView(android.widget.TextView(ctx).apply {
                     text = t; setTextColor(android.graphics.Color.parseColor("#FFC084FC"))
                     textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD)
                     setPadding(0, 16, 0, 6)
-                }
-                container.addView(tv)
+                })
             }
             fun addText(t: String, mono: Boolean = false) {
-                val tv = android.widget.TextView(ctx).apply {
+                container.addView(android.widget.TextView(ctx).apply {
                     text = t; setTextColor(android.graphics.Color.parseColor("#FFC8CDF3"))
                     textSize = 11f
                     if (mono) typeface = android.graphics.Typeface.MONOSPACE
                     setTextIsSelectable(true)
-                }
-                container.addView(tv)
+                })
             }
-
-            addTitle("Current URL")
-            addText(currentUrl, true)
+            addTitle("Current URL"); addText(currentUrl, true)
             addTitle("Scripts (${all.size} total, ${matched.size} matched)")
-            if (all.isEmpty()) addText("No scripts saved. Go to Scripts tab → + Add and paste WTR script.")
-            else {
-                all.forEach { sc ->
-                    val isMatched = matched.contains(sc)
-                    val mark = if (!sc.enabled) "⭕ disabled" else if (isMatched) "✅ matched" else "❌ no-match"
-                    addText("• ${sc.name} [$mark] runAt=${sc.runAt} matches=${sc.matches.joinToString(",").ifEmpty { "<all_urls>" }}")
-                }
+            if (all.isEmpty()) addText("No scripts saved.")
+            else all.forEach { sc ->
+                val isMatched = matched.contains(sc)
+                val mark = if (!sc.enabled) "⭕ disabled" else if (isMatched) "✅ matched" else "❌ no-match"
+                addText("• ${sc.name} [$mark] runAt=${sc.runAt} matches=${sc.matches.joinToString(",").ifEmpty { "<all_urls>" }}")
             }
-            addTitle("Last inject info")
-            addText(lastInjectInfo, true)
-
+            addTitle("Last inject info"); addText(lastInjectInfo, true)
             addTitle("Console logs (${consoleLogs.size})")
             val logsTv = android.widget.TextView(ctx).apply {
-                text = if (consoleLogs.isEmpty()) "No logs yet. Try Re-inject." else consoleLogs.takeLast(60).joinToString("\n")
+                text = if (consoleLogs.isEmpty()) "No logs yet." else consoleLogs.takeLast(60).joinToString("\n")
                 setTextColor(android.graphics.Color.parseColor("#FFE0E0E0"))
                 textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE
-                setTextIsSelectable(true)
-                setPadding(12, 12, 12, 12)
+                setTextIsSelectable(true); setPadding(12, 12, 12, 12)
                 setBackgroundColor(android.graphics.Color.parseColor("#FF0D0F1A"))
             }
             val logScroll = android.widget.ScrollView(ctx).apply {
@@ -433,34 +782,16 @@ class BrowserFragment : Fragment() {
             }
             container.addView(logScroll)
 
-            addTitle("Run custom JS (manual test)")
             val etJs = android.widget.EditText(ctx).apply {
                 hint = "e.g. document.title"
-                setText("document.getElementById('wtr-panel') ? 'WTR panel FOUND' : 'WTR panel NOT found – script not injected / error'")
-                setTextColor(android.graphics.Color.WHITE)
-                textSize = 11f
+                setText("document.getElementById('wtr-panel') ? 'WTR panel FOUND' : 'WTR panel NOT found'")
+                setTextColor(android.graphics.Color.WHITE); textSize = 11f
             }
             container.addView(etJs)
-
-            // --- buttons built BEFORE dialog creation to avoid crash after show() ---
             val btnReinject = com.google.android.material.button.MaterialButton(ctx).apply { text = "🔄 Re-inject NOW"; textSize = 11f }
-            val btnClear = com.google.android.material.button.MaterialButton(ctx).apply { text = "🧹 Clear logs"; textSize = 11f }
-            val btnCopy = com.google.android.material.button.MaterialButton(ctx).apply { text = "📋 Copy logs"; textSize = 11f }
-            val btnRun = com.google.android.material.button.MaterialButton(ctx).apply { text = "▶ Run custom JS"; textSize = 11f }
-            val btnCheck = com.google.android.material.button.MaterialButton(ctx).apply { text = "🔍 Check WTR panel"; textSize = 11f }
-            val btnFetch = com.google.android.material.button.MaterialButton(ctx).apply { text = "🌐 Test fetch"; textSize = 11f }
-            val btnForce = com.google.android.material.button.MaterialButton(ctx).apply { text = "⚡ Force inject (ignore @match)"; textSize = 11f }
-
             container.addView(btnReinject)
-            container.addView(btnForce)
-            container.addView(btnClear)
-            container.addView(btnCopy)
-            container.addView(btnRun)
-            container.addView(btnCheck)
-            container.addView(btnFetch)
 
             val scroll = android.widget.ScrollView(ctx).apply { addView(container) }
-
             val dlg = android.app.AlertDialog.Builder(ctx)
                 .setTitle("🧪 Script Tester")
                 .setView(scroll)
@@ -469,71 +800,11 @@ class BrowserFragment : Fragment() {
             dlg.show()
 
             btnReinject.setOnClickListener {
-                try {
-                    val url = wv.url ?: currentUrl
-                    lastInjectInfo = "Manual re-inject at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())} for $url"
-                    injectScripts(wv, url, "document_idle")
-                    logsTv.text = "Triggered inject for $url\nCheck logs after 1s…"
-                    wv.postDelayed({
-                        logsTv.text = consoleLogs.takeLast(60).joinToString("\n").ifEmpty { "Still no logs – check if script matched URL.\nMatched: ${matched.map { it.name }}" }
-                    }, 900)
-                } catch (e: Exception) { Toast.makeText(ctx, "Re-inject error: ${e.message}", Toast.LENGTH_LONG).show() }
-            }
-            btnClear.setOnClickListener {
-                consoleLogs.clear()
-                logsTv.text = "Cleared"
-                lastInjectInfo = "Logs cleared"
-            }
-            btnCopy.setOnClickListener {
-                try {
-                    val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", consoleLogs.joinToString("\n")))
-                    Toast.makeText(ctx, "Copied ${consoleLogs.size} lines", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
-            }
-            btnRun.setOnClickListener {
-                val code = etJs.text.toString()
-                if (code.isBlank()) return@setOnClickListener
-                try {
-                    wv.evaluateJavascript(code) { res ->
-                        val out = "Result: $res"
-                        consoleLogs.add(out)
-                        logsTv.text = consoleLogs.takeLast(60).joinToString("\n")
-                        Toast.makeText(ctx, out.take(200), Toast.LENGTH_LONG).show()
-                    }
-                } catch (e: Exception) { Toast.makeText(ctx, "JS error: ${e.message}", Toast.LENGTH_LONG).show() }
-            }
-            btnCheck.setOnClickListener {
-                try {
-                    wv.evaluateJavascript("(function(){ var p=document.getElementById('wtr-panel'); return p ? 'FOUND: '+p.outerHTML.slice(0,220) : 'NOT FOUND'; })();") { res ->
-                        val msg = "WTR check: $res"
-                        consoleLogs.add(msg)
-                        logsTv.text = "$msg\n" + consoleLogs.takeLast(40).joinToString("\n")
-                    }
-                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
-            }
-            btnFetch.setOnClickListener {
-                try {
-                    wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test',{method:'GET',credentials:'include'}).then(r=>r.text().then(t=> 'fetch ok '+r.status+' '+t.slice(0,120))).catch(e=>'fetch err '+e);") { res ->
-                        logsTv.text = "Fetch test callback: $res\n" + consoleLogs.takeLast(40).joinToString("\n")
-                    }
-                    wv.evaluateJavascript("fetch('https://wtr-lab.com/api/chapters/test').then(r=>console.log('fetch then '+r.status)).catch(e=>console.error('fetch catch '+e)); console.log('fetch sent');", null)
-                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
-            }
-            btnForce.setOnClickListener {
-                try {
-                    val allEnabled = all.filter { it.enabled }
-                    if (allEnabled.isEmpty()) { Toast.makeText(ctx, "No enabled scripts", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-                    var count = 0
-                    allEnabled.forEach { sc ->
-                        injectSingle(wv, sc)
-                        count++
-                    }
-                    val msg = "Force injected $count script(s) ignoring @match"
-                    consoleLogs.add(msg)
-                    logsTv.text = "$msg\n" + consoleLogs.takeLast(60).joinToString("\n")
-                    Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) { Toast.makeText(ctx, "Force inject error: ${e.message}", Toast.LENGTH_LONG).show() }
+                val url = wv.url ?: currentUrl
+                lastInjectInfo = "Manual re-inject at ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())} for $url"
+                injectScripts(wv, url, "document_idle")
+                logsTv.text = "Triggered inject for $url\nCheck logs after 1s…"
+                wv.postDelayed({ logsTv.text = consoleLogs.takeLast(60).joinToString("\n").ifEmpty { "Still no logs." } }, 900)
             }
         } catch (e: Exception) {
             Log.e(TAG, "showTestDialog crash", e)
@@ -541,247 +812,12 @@ class BrowserFragment : Fragment() {
         }
     }
 
-    private fun showMoreMenuSlideIn(anchor: View) {
-        val ctx = requireContext()
-        
-        // Inflate the slide-in menu layout
-        val menuView = LayoutInflater.from(ctx).inflate(R.layout.slidein_browser_menu, null)
-        
-        // Get references
-        val overlay = menuView.findViewById<View>(R.id.menuOverlay)
-        val panel = menuView.findViewById<LinearLayout>(R.id.menuPanel)
-        val recycler = menuView.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.menuRecycler)
-        
-        // Add to root view (activity's decor view)
-        val decorView = activity?.window?.decorView?.rootView as? ViewGroup
-        decorView?.addView(menuView)
-        
-        // Setup RecyclerView
-        recycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
-        
-        val menuItems = listOf(
-            MenuItemData("↻", "Refresh", R.drawable.ic_refresh, { binding.webView.reload(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("⭐", "Bookmark this page", R.drawable.ic_bookmark, { toggleBookmark(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("🧪", "Tester", R.drawable.ic_bug_report, { showTestDialog(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("📜", "Scripts", R.drawable.ic_code, { showScriptsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("⬇️", "Downloads", R.drawable.ic_download, { showDownloadsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("⚙️", "Settings", R.drawable.ic_settings, { showSettingsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("🕘", "History", R.drawable.ic_history, { showHistoryDialog(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("⭐", "Bookmarks", R.drawable.ic_bookmark, { showBookmarksDialog(); closeSlideInMenu(panel, overlay, decorView) }),
-            MenuItemData("🖥️", "Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", R.drawable.ic_desktop, { 
-                Prefs.desktopMode = !Prefs.desktopMode
-                Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
-                binding.webView.reload()
-                closeSlideInMenu(panel, overlay, decorView)
-            }),
-            MenuItemData("🧹", "Clear cache", R.drawable.ic_clear, { 
-                try {
-                    CookieManager.getInstance().removeAllCookies(null)
-                    android.webkit.WebStorage.getInstance().deleteAllData()
-                    ctx.cacheDir.deleteRecursively()
-                    Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
-                closeSlideInMenu(panel, overlay, decorView)
-            })
-        )
-        
-        recycler.adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<MenuViewHolder>() {
-            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MenuViewHolder {
-                val v = LayoutInflater.from(parent.context).inflate(R.layout.item_menu, parent, false)
-                return MenuViewHolder(v)
-            }
-            override fun onBindViewHolder(holder: MenuViewHolder, position: Int) {
-                val item = menuItems[position]
-                holder.icon.setImageResource(item.iconRes)
-                holder.title.text = item.title
-                holder.itemView.setOnClickListener {
-                    item.action.invoke()
-                }
-            }
-            override fun getItemCount() = menuItems.size
-        }
-        
-        // Animate in
-        animateSlideIn(panel, overlay)
-        
-        // Close on overlay click
-        overlay.setOnClickListener { closeSlideInMenu(panel, overlay, decorView) }
-    }
-    
-    private fun animateSlideIn(panel: LinearLayout, overlay: View) {
-        overlay.visibility = View.VISIBLE
-        overlay.animate().alpha(1f).setDuration(200).start()
-        panel.animate().translationX(0f).setDuration(250).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
-    }
-    
-    private fun closeSlideInMenu(panel: LinearLayout, overlay: View, decorView: ViewGroup?) {
-        val root = panel.parent as? View
-        panel.animate()
-            .translationX(panel.width.toFloat())
-            .setDuration(200)
-            .setInterpolator(android.view.animation.AccelerateInterpolator())
-            .withEndAction {
-                (root?.parent as? ViewGroup)?.removeView(root)
-            }
-            .start()
-        overlay.animate()
-            .alpha(0f)
-            .setDuration(200)
-            .withEndAction {
-                overlay.visibility = View.GONE
-            }
-            .start()
-    }
-
-    private fun showMoreMenuLegacy(anchor: View) {
-        try {
-            val ctx = requireContext()
-            val items = arrayOf("↻ Refresh", "⭐ Bookmark this page", "🧪 Tester", "📜 Scripts", "⬇️ Downloads", "⚙️ Settings", "🕘 History", "⭐ Bookmarks", "🖥️ Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", "🧹 Clear cache")
-            val dlg = com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
-                .setTitle("Menu")
-                .setItems(items) { _, which ->
-                    when (which) {
-                        0 -> binding.webView.reload()
-                        1 -> toggleBookmark()
-                        2 -> showTestDialog()
-                        3 -> showScriptsDialog()
-                        4 -> showDownloadsDialog()
-                        5 -> showSettingsDialog()
-                        6 -> showHistoryDialog()
-                        7 -> showBookmarksDialog()
-                        8 -> {
-                            Prefs.desktopMode = !Prefs.desktopMode
-                            Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
-                            binding.webView.reload()
-                        }
-                        9 -> {
-                            try {
-                                CookieManager.getInstance().removeAllCookies(null)
-                                android.webkit.WebStorage.getInstance().deleteAllData()
-                                ctx.cacheDir.deleteRecursively()
-                                Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
-                        }
-                    }
-                }
-                .create()
-            try { dlg.window?.setBackgroundDrawableResource(R.color.surface) } catch (_: Exception) {}
-            dlg.show()
-        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
-    }
-
-    data class MenuItemData(
-        val iconPrefix: String,
-        val title: String,
-        val iconRes: Int,
-        val action: () -> Unit
-    )
-
-    class MenuViewHolder(view: View) : androidx.recyclerview.widget.RecyclerView.ViewHolder(view) {
-        val icon: ImageView = view.findViewById(R.id.menuIcon)
-        val title: TextView = view.findViewById(R.id.menuTitle)
-    }
-
-    private fun showScriptsDialog() {
-        try { (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_scripts) } catch (_: Exception) {
-            Toast.makeText(requireContext(), "Scripts", Toast.LENGTH_SHORT).show()
-        }
-    }
-    private fun showDownloadsDialog() {
-        try { (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_downloads) } catch (_: Exception) {
-            Toast.makeText(requireContext(), "Downloads", Toast.LENGTH_SHORT).show()
-        }
-    }
-    private fun showSettingsDialog() {
-        try { (activity as? com.lightbrowser.MainActivity)?.switchToTab(R.id.nav_settings) } catch (_: Exception) {}
-    }
-
-    // Public for MainActivity to load url without recreation (cache retain)
-    fun loadUrl(url: String) {
-        try {
-            _binding?.webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
-            _binding?.urlBar?.setText(url)
-        } catch (_: Exception) {}
-    }
-
-    private fun updateBookmarkIcon(url: String) {
-        // toolbar bookmark star removed in Material3 clean-up – now in 3-dot menu, just log
-        try {
-            val marked = BookmarkStorage.isBookmarked(requireContext(), url)
-            Log.d(TAG, "bookmark $url marked=$marked")
-        } catch (_: Exception) {}
-    }
-
-    private fun toggleBookmark() {
-        try {
-            val wv = _binding?.webView ?: return
-            val url = wv.url ?: binding.urlBar.text.toString()
-            if (url.isBlank() || url.startsWith("about:")) return
-            val title = wv.title ?: url
-            val nowMarked = BookmarkStorage.toggle(requireContext(), url, title)
-            Toast.makeText(requireContext(), if (nowMarked) "★ Bookmarked" else "☆ Removed", Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_SHORT).show() }
-    }
-
-    fun showHistory() = showHistoryDialog()
-
-    fun showBookmarks() = showBookmarksDialog()
-
-    private fun showHistoryDialog() {
-        try {
-            val ctx = requireContext()
-            val list = HistoryStorage.all(ctx)
-            if (list.isEmpty()) { Toast.makeText(ctx, "No history yet", Toast.LENGTH_SHORT).show(); return }
-            val items = list.map { "${it.title}\n${it.url} (${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(it.time))})" }.toTypedArray()
-            android.app.AlertDialog.Builder(ctx)
-                .setTitle("History (${list.size})")
-                .setItems(items) { _, which ->
-                    val entry = list[which]
-                    loadUrl(entry.url)
-                }
-                .setPositiveButton("Close", null)
-                .setNeutralButton("Clear") { _, _ ->
-                    HistoryStorage.clear(ctx)
-                    Toast.makeText(ctx, "History cleared", Toast.LENGTH_SHORT).show()
-                }
-                .show()
-        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
-    }
-
-    private fun showBookmarksDialog() {
-        try {
-            val ctx = requireContext()
-            val list = BookmarkStorage.all(ctx)
-            if (list.isEmpty()) { Toast.makeText(ctx, "No bookmarks – tap ☆ to add", Toast.LENGTH_SHORT).show(); return }
-            val items = list.map { "${it.title}\n${it.url}" }.toTypedArray()
-            android.app.AlertDialog.Builder(ctx)
-                .setTitle("Bookmarks (${list.size}) – long-press History for this")
-                .setItems(items) { _, which -> loadUrl(list[which].url) }
-                .setPositiveButton("Close", null)
-                .setNeutralButton("Clear") { _, _ ->
-                    BookmarkStorage.clear(ctx)
-                    updateBookmarkIcon(binding.webView.url ?: "")
-                    Toast.makeText(ctx, "Bookmarks cleared", Toast.LENGTH_SHORT).show()
-                }
-                .show()
-        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
-    }
+    // ──── WebView lifecycle ──────────────────────────────────────────────────
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (hidden) BrowserProfile.onWebViewPause(_binding?.webView)
         else BrowserProfile.onWebViewResume(_binding?.webView)
-    }
-
-    private fun loadFromBar() {
-        var input = binding.urlBar.text.toString().trim()
-        if (input.isEmpty()) return
-        val url = when {
-            input.startsWith("http://") || input.startsWith("https://") -> input
-            input.contains(".") && !input.contains(" ") -> "https://$input"
-            else -> "https://www.google.com/search?q=" + Uri.encode(input)
-        }
-        binding.webView.loadUrl(url, mapOf("X-Requested-With" to ""))
     }
 
     fun canGoBack() = _binding?.webView?.canGoBack() == true
@@ -796,10 +832,10 @@ class BrowserFragment : Fragment() {
         super.onResume()
         BrowserProfile.onWebViewResume(_binding?.webView)
     }
+
     override fun onDestroyView() {
         _binding?.webView?.destroy()
         _binding = null
         super.onDestroyView()
     }
 }
-private object Uri { fun encode(s: String)=java.net.URLEncoder.encode(s,"UTF-8") }

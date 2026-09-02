@@ -6,36 +6,33 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.view.Gravity
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
-import android.widget.LinearLayout
 import android.widget.PopupMenu
-import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
-import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
-import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentFilemanagerBinding
-import com.lightbrowser.data.DownloadHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
+import java.text.DecimalFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -54,6 +51,13 @@ class FileManagerFragment : Fragment() {
 
     private val scope = CoroutineScope(Dispatchers.Main)
 
+    // Sort order: 0=name, 1=size, 2=date, 3=type
+    private var sortMode = 0
+    // View mode: 0=list, 1=grid
+    private var viewMode = 0
+    // Search query
+    private var searchQuery = ""
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
@@ -66,8 +70,6 @@ class FileManagerFragment : Fragment() {
                 if (uri != null && exportFile != null) try { exportFileToUri(exportFile!!, uri) } catch (_: Exception) {}
             }
         } catch (_: Exception) {}
-        
-        // Import folder picker
         try {
             importFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
                 if (uri != null) {
@@ -92,35 +94,57 @@ class FileManagerFragment : Fragment() {
 
     override fun onViewCreated(v: View, s: Bundle?) {
         try {
+            // Init dirs
             try {
-                val sd = try { File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) { try { File(requireContext().cacheDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) { null } }
-                sandboxDir = sd
-            } catch (_: Exception) {}
+                sandboxDir = File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() }
+            } catch (_: Exception) {
+                try { sandboxDir = File(requireContext().cacheDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) {}
+            }
             try {
                 downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            } catch (_: Exception) {
-                downloadsDir = sandboxDir
-            }
-            if (sandboxDir == null) try { sandboxDir = File(requireContext().cacheDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) {}
+            } catch (_: Exception) { downloadsDir = sandboxDir }
             if (downloadsDir == null) downloadsDir = sandboxDir
 
             val bb = _b ?: return
-            try { bb.recycler.layoutManager = LinearLayoutManager(requireContext()) } catch (_: Exception) {}
-            try { bb.btnUp.setOnClickListener { try { navigateUp() } catch (e: Exception) { safeToast(e.message) } } } catch (_: Exception) {}
-            try { bb.btnAppFiles.setOnClickListener { try { sandboxDir?.let { openDir(it) } } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnDownloads.setOnClickListener { try { downloadsDir?.let { openDir(it) } } catch (_: Exception) {} } } catch (_: Exception) {}
-            try {
-                bb.btnImport.setOnClickListener { try { importLauncher?.launch(arrayOf("*/*")) ?: safeToast("Import unavailable") } catch (e: Exception) { safeToast(e.message) } }
-            } catch (_: Exception) {}
-            try { bb.btnOverflow.setOnClickListener { try { showOverflowMenu() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.openDrawer() } } catch (_: Exception) {}
+            bb.recycler.layoutManager = LinearLayoutManager(requireContext())
 
-            // Ensure Downloads folder exists in sandbox
+            // Search watcher
+            bb.etSearch.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    searchQuery = s?.toString() ?: ""
+                    refresh()
+                }
+            })
+
+            bb.btnUp.setOnClickListener { navigateUp() }
+
+            bb.btnAppFiles.setOnClickListener { sandboxDir?.let { openDir(it) } }
+            bb.btnDownloads.setOnClickListener { downloadsDir?.let { openDir(it) } }
+            bb.btnImport.setOnClickListener {
+                try { importLauncher?.launch(arrayOf("*/*")) ?: safeToast("Import unavailable") } catch (e: Exception) { safeToast(e.message) }
+            }
+            bb.btnNewFolder.setOnClickListener { showNewFolderDialog() }
+
+            bb.btnViewToggle.setOnClickListener {
+                viewMode = if (viewMode == 0) 1 else 0
+                bb.btnViewToggle.text = if (viewMode == 0) "▦" else "☰"
+                bb.recycler.layoutManager = if (viewMode == 1)
+                    GridLayoutManager(requireContext(), 3)
+                else
+                    LinearLayoutManager(requireContext())
+                refresh()
+            }
+
+            bb.btnSort.setOnClickListener { showSortMenu() }
+            bb.btnOverflow.setOnClickListener { showOverflowMenu() }
+
             ensureSandboxDownloadsFolder()
-
-            try { sandboxDir?.let { openDir(it) } ?: run { bb.empty.visibility = View.VISIBLE; bb.empty.text = "Sandbox unavailable" } } catch (e: Exception) {
-                android.util.Log.e("FileManager", "openDir sandbox", e)
-                safeToast("Init error: ${e.message}")
+            sandboxDir?.let { openDir(it) } ?: run {
+                bb.emptyState.visibility = View.VISIBLE
+                bb.recycler.visibility = View.GONE
+                bb.empty.text = "Sandbox unavailable"
             }
         } catch (e: Exception) {
             android.util.Log.e("FileManager", "onViewCreated crash", e)
@@ -129,13 +153,28 @@ class FileManagerFragment : Fragment() {
     }
 
     private fun ensureSandboxDownloadsFolder() {
-        sandboxDir?.let { sd ->
-            File(sd, "Downloads").apply { if (!exists()) mkdirs() }
-        }
+        sandboxDir?.let { File(it, "Downloads").apply { if (!exists()) mkdirs() } }
     }
 
     private fun safeToast(msg: String?) {
         try { Toast.makeText(requireContext(), msg ?: "error", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+    }
+
+    private fun showSortMenu() {
+        try {
+            val bb = _b ?: return
+            val popup = PopupMenu(requireContext(), bb.btnSort)
+            popup.menu.add(0, 0, 0, "Sort by Name")
+            popup.menu.add(0, 1, 1, "Sort by Size")
+            popup.menu.add(0, 2, 2, "Sort by Date")
+            popup.menu.add(0, 3, 3, "Sort by Type")
+            popup.setOnMenuItemClickListener { item ->
+                sortMode = item.itemId
+                refresh()
+                true
+            }
+            popup.show()
+        } catch (e: Exception) { android.util.Log.e("FileManager", "sort menu", e) }
     }
 
     private fun showOverflowMenu() {
@@ -147,24 +186,12 @@ class FileManagerFragment : Fragment() {
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 try {
                     when (item.itemId) {
-                        R.id.menu_open_sandbox -> sandboxDir?.let { openDir(it) }
+                        R.id.menu_open_sandbox   -> sandboxDir?.let { openDir(it) }
                         R.id.menu_open_downloads -> downloadsDir?.let { openDir(it) }
-                        R.id.menu_import -> try { importLauncher?.launch(arrayOf("*/*")) } catch (e: Exception) { safeToast(e.message) }
-                        R.id.menu_import_folder -> importFolderLauncher?.launch(null)
-                        R.id.menu_export -> {
-                            val cur = currentDir
-                            val sd = sandboxDir
-                            if (cur != null && sd != null && (cur == sd || cur.absolutePath.startsWith(sd.absolutePath))) {
-                                safeToast("Long-press a file to Export")
-                            } else {
-                                safeToast("Go to Sandbox first")
-                                sd?.let { openDir(it) }
-                            }
-                        }
-                        R.id.menu_details -> {
-                            val cur = currentDir
-                            if (cur != null) showDetails(cur)
-                        }
+                        R.id.menu_import         -> try { importLauncher?.launch(arrayOf("*/*")) } catch (e: Exception) { safeToast(e.message) }
+                        R.id.menu_import_folder  -> importFolderLauncher?.launch(null)
+                        R.id.menu_export         -> safeToast("Long-press a file to export")
+                        R.id.menu_details        -> showDetails(currentDir)
                     }
                 } catch (_: Exception) {}
                 true
@@ -173,13 +200,37 @@ class FileManagerFragment : Fragment() {
         } catch (e: Exception) { android.util.Log.e("FileManager", "overflow menu", e) }
     }
 
+    private fun showNewFolderDialog() {
+        try {
+            val ctx = try { requireContext() } catch (_: Exception) { return }
+            val et = android.widget.EditText(ctx).apply { hint = "Folder name" }
+            android.app.AlertDialog.Builder(ctx)
+                .setTitle("New Folder")
+                .setView(et)
+                .setPositiveButton("Create") { _, _ ->
+                    val name = et.text.toString().trim()
+                    if (name.isNotEmpty()) {
+                        val f = File(currentDir, name)
+                        if (f.mkdirs()) { safeToast("Created $name"); refresh() }
+                        else safeToast("Failed to create folder")
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } catch (_: Exception) {}
+    }
+
     private fun openDir(dir: File) {
         try {
             val sd = sandboxDir ?: return
             val dd = downloadsDir ?: sd
-            val allowed = try { dir.absolutePath.startsWith(sd.absolutePath) || dir.absolutePath.startsWith(dd.absolutePath) || dir == sd || dir == dd } catch (_: Exception) { false }
+            val allowed = try {
+                dir.absolutePath.startsWith(sd.absolutePath) || dir.absolutePath.startsWith(dd.absolutePath) || dir == sd || dir == dd
+            } catch (_: Exception) { false }
             val target = try { if (allowed && dir.exists()) dir else sd } catch (_: Exception) { sd }
             currentDir = target
+            searchQuery = ""
+            _b?.etSearch?.text?.clear()
             refresh()
         } catch (_: Exception) { try { refresh() } catch (_: Exception) {} }
     }
@@ -189,17 +240,24 @@ class FileManagerFragment : Fragment() {
             val cur = currentDir
             val sd = sandboxDir ?: return
             val dd = downloadsDir ?: sd
-            if (cur == sd || cur == dd) {
-                safeToast("Already at root (Sandbox/Downloads only)")
-                return
-            }
+            if (cur == sd || cur == dd) { safeToast("Already at root"); return }
             val parent = cur.parentFile
             if (parent != null && try { parent.absolutePath.startsWith(sd.absolutePath) || parent.absolutePath.startsWith(dd.absolutePath) } catch (_: Exception) { false }) {
                 openDir(parent)
-            } else {
-                openDir(sd)
-            }
+            } else openDir(sd)
         } catch (e: Exception) { safeToast(e.message) }
+    }
+
+    private fun getSortedFiles(): List<File> {
+        val allFiles = try { currentDir.listFiles()?.toList() ?: emptyList() } catch (_: Exception) { emptyList() }
+        val filtered = if (searchQuery.isBlank()) allFiles
+        else allFiles.filter { it.name.contains(searchQuery, ignoreCase = true) }
+        return when (sortMode) {
+            1 -> filtered.sortedWith(compareBy({ !it.isDirectory }, { if (it.isFile) -it.length() else 0L }))
+            2 -> filtered.sortedWith(compareBy({ !it.isDirectory }, { -it.lastModified() }))
+            3 -> filtered.sortedWith(compareBy({ !it.isDirectory }, { it.extension.lowercase() }, { it.name.lowercase() }))
+            else -> filtered.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+        }
     }
 
     private fun refresh() {
@@ -207,39 +265,62 @@ class FileManagerFragment : Fragment() {
         val ctx = try { requireContext() } catch (_: Exception) { return }
         val sd = sandboxDir
         val dd = downloadsDir
-        if (sd == null || dd == null) return
-        try { bb.tvPath.text = try { currentDir.absolutePath.replace(ctx.filesDir.absolutePath, "[Sandbox]").replace(dd.absolutePath, "[Downloads]") } catch (_: Exception) { currentDir.name } } catch (_: Exception) {}
+        if (sd == null) return
 
+        try { bb.tvPath.text = currentDir.absolutePath } catch (_: Exception) {}
         updateBreadcrumb()
 
-        val files = try { currentDir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })) ?: emptyList() } catch (_: Exception) { emptyList() }
-        try { bb.tvCount.text = "${files.size} items" } catch (_: Exception) {}
-        try { bb.empty.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE } catch (_: Exception) {}
-        try { bb.recycler.visibility = if (files.isEmpty()) View.GONE else View.VISIBLE } catch (_: Exception) {}
-        try {
-            bb.recycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-                override fun onCreateViewHolder(p: ViewGroup, t: Int) =
-                    object : RecyclerView.ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_download, p, false)) {}
-                override fun onBindViewHolder(h: RecyclerView.ViewHolder, i: Int) {
-                    try {
-                        val f = files[i]
-                        val title = h.itemView.findViewById<TextView>(R.id.tvTitle)
-                        val status = h.itemView.findViewById<TextView>(R.id.tvStatus)
-                        val icon = h.itemView.findViewById<ImageView>(R.id.ivFileIcon)
-                        val isDir = f.isDirectory
-                        icon.setImageResource(getFileIconRes(f))
-                        icon.contentDescription = if (isDir) "Folder" else "File"
-                        title.text = f.name
-                        val size = if (isDir) "${f.listFiles()?.size ?: 0} items" else "${f.length()/1024} KB"
-                        val date = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(f.lastModified()))
-                        status.text = "$size • $date"
-                        h.itemView.setOnClickListener { try { if (isDir) openDir(f) else openFile(f) } catch (_: Exception) {} }
-                        h.itemView.setOnLongClickListener { try { showFileOptions(f) } catch (_: Exception) {}; true }
-                    } catch (_: Exception) {}
-                }
-                override fun getItemCount() = files.size
+        val files = getSortedFiles()
+        val hasFiles = files.isNotEmpty()
+        bb.emptyState.layoutParams.height = if (!hasFiles) 0 else ViewGroup.LayoutParams.MATCH_PARENT
+        bb.emptyState.visibility = if (!hasFiles) View.GONE else View.VISIBLE
+        bb.recycler.visibility = if (hasFiles) View.VISIBLE else View.GONE
+
+        if (hasFiles) {
+            bb.emptyState.visibility = View.GONE
+            bb.recycler.visibility = View.VISIBLE
+        } else {
+            bb.emptyState.visibility = View.VISIBLE
+            bb.recycler.visibility = View.GONE
+        }
+
+        bb.tvCount.text = "${files.size} items"
+
+        bb.recycler.adapter = object : RecyclerView.Adapter<FileViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FileViewHolder {
+                val v = LayoutInflater.from(parent.context).inflate(R.layout.item_file, parent, false)
+                return FileViewHolder(v)
             }
-        } catch (_: Exception) {}
+            override fun onBindViewHolder(holder: FileViewHolder, position: Int) {
+                val f = files[position]
+                val isDir = f.isDirectory
+                holder.icon.setImageResource(getFileIconRes(f))
+                holder.title.text = f.name
+                val sizeTxt = if (isDir) "${f.listFiles()?.size ?: 0} items" else formatSize(f.length())
+                val date = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()).format(Date(f.lastModified()))
+                holder.status.text = "$sizeTxt  •  $date"
+                holder.more.setOnClickListener { showFileOptions(f) }
+                holder.itemView.setOnClickListener { if (isDir) openDir(f) else openFile(f) }
+                holder.itemView.setOnLongClickListener { showFileOptions(f); true }
+            }
+            override fun getItemCount() = files.size
+        }
+    }
+
+    inner class FileViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val icon: ImageView = view.findViewById(R.id.ivFileIcon)
+        val title: TextView = view.findViewById(R.id.tvTitle)
+        val status: TextView = view.findViewById(R.id.tvStatus)
+        val more: TextView = view.findViewById(R.id.btnMore)
+    }
+
+    private fun formatSize(bytes: Long): String {
+        if (bytes < 1024) return "$bytes B"
+        val kb = bytes / 1024.0
+        if (kb < 1024) return "${DecimalFormat("#.#").format(kb)} KB"
+        val mb = kb / 1024.0
+        if (mb < 1024) return "${DecimalFormat("#.#").format(mb)} MB"
+        return "${DecimalFormat("#.#").format(mb / 1024.0)} GB"
     }
 
     private fun getFileIconRes(file: File): Int {
@@ -261,62 +342,56 @@ class FileManagerFragment : Fragment() {
     private fun updateBreadcrumb() {
         val bb = _b ?: return
         val breadcrumbContainer = bb.llBreadcrumb
-        val breadcrumbCard = bb.cardBreadcrumb
         val sd = sandboxDir
         val dd = downloadsDir
         if (sd == null || dd == null) return
 
         try {
             breadcrumbContainer.removeAllViews()
+            val ctx = requireContext()
+            val dp = ctx.resources.displayMetrics.density
 
             val isSandbox = currentDir.absolutePath.startsWith(sd.absolutePath)
-            val isDownloads = currentDir.absolutePath.startsWith(dd.absolutePath)
-            val rootName = if (isSandbox) "Sandbox" else if (isDownloads) "Downloads" else "Root"
-            val rootPath = if (isSandbox) sd else if (isDownloads) dd else currentDir
+            val isDownloads = !isSandbox && dd != null && currentDir.absolutePath.startsWith(dd.absolutePath)
+            val rootName = when { isSandbox -> "Sandbox"; isDownloads -> "Downloads"; else -> "Root" }
+            val rootPath = when { isSandbox -> sd; isDownloads -> dd!!; else -> currentDir }
 
             addBreadcrumbItem(breadcrumbContainer, rootName, rootPath, isRoot = true)
 
             if (currentDir != rootPath) {
                 val relPath = currentDir.absolutePath.substring(rootPath.absolutePath.length).trimStart('/')
                 if (relPath.isNotEmpty()) {
-                    val segments = relPath.split("/")
-                    var currentPath = rootPath
-                    for (segment in segments) {
-                        currentPath = File(currentPath, segment)
-                        addBreadcrumbItem(breadcrumbContainer, segment, currentPath, isRoot = false)
+                    var path = rootPath
+                    relPath.split("/").forEach { seg ->
+                        path = File(path, seg)
+                        addBreadcrumbItem(breadcrumbContainer, seg, path, isRoot = false)
                     }
                 }
             }
-
-            breadcrumbCard.visibility = View.VISIBLE
-        } catch (_: Exception) {
-            breadcrumbCard.visibility = View.GONE
-        }
+        } catch (_: Exception) {}
     }
 
     private fun addBreadcrumbItem(container: ViewGroup, name: String, path: File, isRoot: Boolean) {
         val ctx = container.context
-
         if (!isRoot) {
-            val separator = TextView(ctx).apply {
+            val sep = TextView(ctx).apply {
                 text = " / "
-                setTextColor(0xFF94A3B8.toInt())
+                setTextColor(0xFF475569.toInt())
                 textSize = 12f
             }
-            container.addView(separator)
+            container.addView(sep)
         }
-
         val btn = MaterialButton(ctx).apply {
             text = name
             textSize = 12f
             isAllCaps = false
-            setPaddingRelative(8, 4, 8, 4)
+            setPaddingRelative(8, 2, 8, 2)
             setMinWidth(0)
             insetTop = 0
             insetBottom = 0
             cornerRadius = 8
             setBackgroundColor(Color.TRANSPARENT)
-            setTextColor(ColorStateList.valueOf(if (path == currentDir) 0xFFFFFFFF.toInt() else 0xFF94A3B8.toInt()))
+            setTextColor(ColorStateList.valueOf(if (path == currentDir) 0xFFE2E8F0.toInt() else 0xFF64748B.toInt()))
             setOnClickListener { openDir(path) }
         }
         container.addView(btn)
@@ -340,22 +415,30 @@ class FileManagerFragment : Fragment() {
             val ctx = try { requireContext() } catch (_: Exception) { return }
             val sd = sandboxDir
             val isInSandbox = try { sd != null && f.absolutePath.startsWith(sd.absolutePath) } catch (_: Exception) { false }
-            val opts = if (isInSandbox) arrayOf("Open", "Share", "Export (SAF)", "Rename", "Delete", "Details") else arrayOf("Open", "Share", "Copy to Sandbox", "Details")
+            val opts = if (isInSandbox)
+                arrayOf("📂 Open", "📤 Share", "💾 Export (SAF)", "✏️ Rename", "📋 Copy path", "🗑️ Delete", "ℹ️ Details")
+            else
+                arrayOf("📂 Open", "📤 Share", "📁 Copy to Sandbox", "ℹ️ Details")
             android.app.AlertDialog.Builder(ctx)
                 .setTitle(f.name)
                 .setItems(opts) { _, which ->
                     try {
                         when (opts[which]) {
-                            "Open" -> openFile(f)
-                            "Share" -> shareFile(f)
-                            "Export (SAF)" -> {
+                            "📂 Open"         -> openFile(f)
+                            "📤 Share"        -> shareFile(f)
+                            "💾 Export (SAF)" -> {
                                 exportFile = f
                                 try { exportLauncher?.launch(f.name) ?: safeToast("Export unavailable") } catch (e: Exception) { safeToast(e.message) }
                             }
-                            "Copy to Sandbox" -> copyToSandbox(f)
-                            "Rename" -> renameFile(f)
-                            "Delete" -> deleteFile(f)
-                            "Details" -> showDetails(f)
+                            "📁 Copy to Sandbox" -> copyToSandbox(f)
+                            "✏️ Rename"        -> renameFile(f)
+                            "📋 Copy path"     -> {
+                                val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("path", f.absolutePath))
+                                safeToast("Path copied")
+                            }
+                            "🗑️ Delete"       -> deleteFile(f)
+                            "ℹ️ Details"      -> showDetails(f)
                         }
                     } catch (_: Exception) {}
                 }.show()
@@ -371,7 +454,7 @@ class FileManagerFragment : Fragment() {
             val outFile = File(sd, name)
             FileOutputStream(outFile).use { out -> input.copyTo(out) }
             input.close()
-            safeToast("Imported to Sandbox/$name")
+            safeToast("Imported: $name")
             openDir(sd)
         } catch (e: Exception) { safeToast("Import failed: ${e.message}") }
     }
@@ -389,11 +472,9 @@ class FileManagerFragment : Fragment() {
     private fun exportFileToUri(file: File, uri: Uri) {
         try {
             val ctx = try { requireContext() } catch (_: Exception) { return }
-            val input = file.inputStream()
-            val out = ctx.contentResolver.openOutputStream(uri) ?: return
-            input.copyTo(out)
-            input.close()
-            out.close()
+            file.inputStream().use { input ->
+                ctx.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out) }
+            }
             safeToast("Exported ${file.name}")
         } catch (e: Exception) { safeToast("Export failed: ${e.message}") }
     }
@@ -424,7 +505,8 @@ class FileManagerFragment : Fragment() {
         try {
             val ctx = try { requireContext() } catch (_: Exception) { return }
             android.app.AlertDialog.Builder(ctx)
-                .setTitle("Delete ${f.name}?")
+                .setTitle("Delete "${f.name}"?")
+                .setMessage(if (f.isDirectory) "This will delete the folder and all its contents." else "This action cannot be undone.")
                 .setPositiveButton("Delete") { _, _ ->
                     val ok = try { if (f.isDirectory) f.deleteRecursively() else f.delete() } catch (_: Exception) { false }
                     safeToast(if (ok) "Deleted" else "Failed")
@@ -455,63 +537,55 @@ class FileManagerFragment : Fragment() {
     private fun showDetails(f: File) {
         try {
             val ctx = try { requireContext() } catch (_: Exception) { return }
-            val info = "Name: ${f.name}\nPath: ${f.absolutePath}\nSize: ${f.length()} bytes\nDir: ${f.isDirectory}\nModified: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(f.lastModified()))}"
-            android.app.AlertDialog.Builder(ctx).setTitle("Details").setMessage(info).setPositiveButton("OK", null).show()
+            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+            val size = if (f.isDirectory) "${f.walkTopDown().count { it.isFile }} files" else formatSize(f.length())
+            val info = buildString {
+                appendLine("Name:     ${f.name}")
+                appendLine("Path:     ${f.absolutePath}")
+                appendLine("Size:     $size")
+                appendLine("Type:     ${if (f.isDirectory) "Folder" else f.extension.uppercase().ifEmpty { "File" }}")
+                appendLine("Modified: ${sdf.format(Date(f.lastModified()))}")
+            }
+            android.app.AlertDialog.Builder(ctx)
+                .setTitle("Details")
+                .setMessage(info.trim())
+                .setPositiveButton("OK", null)
+                .show()
         } catch (_: Exception) {}
     }
 
-    // Import folder from external storage to sandbox
     private fun copyFolderToSandbox(sourceUri: Uri) {
         try {
-            val sandboxDir = this.sandboxDir ?: return
+            val sandbox = this.sandboxDir ?: return
             val sourceDoc = androidx.documentfile.provider.DocumentFile.fromTreeUri(requireContext(), sourceUri) ?: return
-            
-            val progressDialog = android.app.ProgressDialog(requireContext()).apply {
-                setTitle("Importing Folder")
-                setMessage("Copying files to sandbox...")
-                setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
-                setCancelable(false)
-                show()
-            }
-
+            safeToast("Importing folder…")
             scope.launch(Dispatchers.IO) {
                 try {
-                    val copiedCount = copyDocumentTreeRecursive(sourceDoc, sandboxDir, progressDialog)
+                    val count = copyDocumentTreeRecursive(sourceDoc, sandbox)
                     withContext(Dispatchers.Main) {
-                        progressDialog.dismiss()
-                        safeToast("Imported $copiedCount file(s) to sandbox")
+                        safeToast("Imported $count file(s) to sandbox")
                         refresh()
                     }
                 } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        progressDialog.dismiss()
-                        safeToast("Import failed: ${e.message}")
-                    }
+                    withContext(Dispatchers.Main) { safeToast("Import failed: ${e.message}") }
                 }
             }
-        } catch (e: Exception) {
-            safeToast("Import failed: ${e.message}")
-        }
+        } catch (e: Exception) { safeToast("Import failed: ${e.message}") }
     }
 
-    private suspend fun copyDocumentTreeRecursive(sourceDoc: androidx.documentfile.provider.DocumentFile, destDir: File, progressDialog: android.app.ProgressDialog): Int {
+    private suspend fun copyDocumentTreeRecursive(sourceDoc: androidx.documentfile.provider.DocumentFile, destDir: File): Int {
         var count = 0
         sourceDoc.listFiles()?.forEach { item ->
             if (item.isDirectory) {
                 val subDir = File(destDir, item.name ?: "folder").apply { mkdirs() }
-                count += copyDocumentTreeRecursive(item, subDir, progressDialog)
+                count += copyDocumentTreeRecursive(item, subDir)
             } else if (item.isFile) {
                 try {
                     val destFile = File(destDir, item.name ?: "file_${System.currentTimeMillis()}")
                     requireContext().contentResolver.openInputStream(item.uri)?.use { input ->
-                        FileOutputStream(destFile).use { output ->
-                            input.copyTo(output)
-                        }
+                        FileOutputStream(destFile).use { output -> input.copyTo(output) }
                     }
                     count++
-                    withContext(Dispatchers.Main) {
-                        progressDialog.incrementProgressBy(1)
-                    }
                 } catch (_: Exception) {}
             }
         }

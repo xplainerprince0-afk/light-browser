@@ -1,7 +1,6 @@
 package com.lightbrowser.ui
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -33,9 +32,34 @@ class SettingsFragment : Fragment() {
         b.swAdblock.isChecked = Prefs.adBlock
         b.swSaveSiteData.isChecked = Prefs.saveSiteData
         b.swCache.isChecked = Prefs.cacheEnabled
-        
+
         val isDarkMode = isDarkModeEnabled()
         b.swDarkMode.isChecked = isDarkMode
+
+        // Wire up search engine chip group
+        val engineChipMap = mapOf(
+            "google"     to b.chipGoogle,
+            "bing"       to b.chipBing,
+            "duckduckgo" to b.chipDDG,
+            "brave"      to b.chipBrave,
+            "yahoo"      to b.chipYahoo,
+            "ecosia"     to b.chipEcosia,
+        )
+        // Set current selection
+        engineChipMap[Prefs.searchEngine]?.isChecked = true
+
+        b.chipGroupSearch.setOnCheckedStateChangeListener { _, checkedIds ->
+            val engine = when (checkedIds.firstOrNull()) {
+                b.chipBing.id   -> "bing"
+                b.chipDDG.id    -> "duckduckgo"
+                b.chipBrave.id  -> "brave"
+                b.chipYahoo.id  -> "yahoo"
+                b.chipEcosia.id -> "ecosia"
+                else             -> "google"
+            }
+            Prefs.searchEngine = engine
+            Toast.makeText(requireContext(), "Search: $engine", Toast.LENGTH_SHORT).show()
+        }
 
         b.etHome.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) {
@@ -54,7 +78,7 @@ class SettingsFragment : Fragment() {
             Prefs.cacheEnabled = c
             Toast.makeText(requireContext(), if (c) "Cache enabled" else "Cache disabled – reload browser tab", Toast.LENGTH_SHORT).show()
         }
-        
+
         b.swDarkMode.setOnCheckedChangeListener { _, isChecked ->
             setDarkMode(isChecked)
             Toast.makeText(requireContext(), if (isChecked) "Dark mode enabled" else "Light mode enabled", Toast.LENGTH_SHORT).show()
@@ -91,8 +115,6 @@ class SettingsFragment : Fragment() {
         val mode = if (enabled) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
         prefs.edit().putInt("theme_mode", mode).apply()
         AppCompatDelegate.setDefaultNightMode(mode)
-        
-        // Notify activity to recreate
         (activity as? com.lightbrowser.MainActivity)?.recreate()
     }
 

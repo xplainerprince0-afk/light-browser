@@ -7,13 +7,14 @@
     android:background="@color/bg_dark"
     android:fitsSystemWindows="false">
 
+    <!-- Chrome-style toolbar card -->
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/toolbarCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginHorizontal="12dp"
-        android:layout_marginTop="8dp"
-        android:layout_marginBottom="4dp"
+        android:layout_marginHorizontal="8dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="3dp"
         app:cardCornerRadius="28dp"
         app:cardBackgroundColor="@color/surface"
         app:strokeColor="#14FFFFFF"
@@ -28,20 +29,10 @@
             android:paddingVertical="4dp"
             android:gravity="center_vertical">
 
-            <TextView
-                android:id="@+id/btnDrawer"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:gravity="center"
-                android:text="☰"
-                android:textColor="@color/teal_200"
-                android:textSize="20sp"
-                android:contentDescription="@string/open_drawer"
-                android:background="?attr/selectableItemBackgroundBorderless"/>
-
+            <!-- Back button -->
             <TextView
                 android:id="@+id/btnBack"
-                android:layout_width="36dp"
+                android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:gravity="center"
                 android:text="‹"
@@ -51,6 +42,7 @@
                 android:contentDescription="@string/action_back"
                 android:background="?attr/selectableItemBackgroundBorderless"/>
 
+            <!-- Forward button -->
             <TextView
                 android:id="@+id/btnForward"
                 android:layout_width="36dp"
@@ -63,35 +55,91 @@
                 android:contentDescription="@string/action_forward"
                 android:background="?attr/selectableItemBackgroundBorderless"/>
 
-            <EditText
-                android:id="@+id/urlBar"
+            <!-- URL bar: collapsed = shows domain + lock, expanded = full URL -->
+            <FrameLayout
                 android:layout_width="0dp"
                 android:layout_height="40dp"
                 android:layout_weight="1"
-                android:layout_marginHorizontal="6dp"
-                android:background="@drawable/bg_url_bar"
-                android:hint="@string/hint_url"
-                android:textColor="@color/white"
-                android:textColorHint="#66FFFFFF"
-                android:paddingHorizontal="16dp"
-                android:singleLine="true"
-                android:imeOptions="actionGo"
-                android:inputType="textUri"
-                android:textSize="13sp"
-                android:fontFamily="sans-serif"
-                android:elevation="0dp"/>
+                android:layout_marginHorizontal="4dp">
 
+                <!-- Collapsed pill (domain + lock icon) — shown when not focused -->
+                <LinearLayout
+                    android:id="@+id/urlCollapsed"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:background="@drawable/bg_url_bar"
+                    android:paddingHorizontal="12dp"
+                    android:clickable="true"
+                    android:focusable="true">
+
+                    <TextView
+                        android:id="@+id/tvLock"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🔒"
+                        android:textSize="12sp"
+                        android:paddingEnd="4dp" />
+
+                    <TextView
+                        android:id="@+id/tvDomain"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Search or enter URL"
+                        android:textColor="#CCFFFFFF"
+                        android:textSize="13sp"
+                        android:singleLine="true"
+                        android:ellipsize="end"
+                        android:maxWidth="220dp" />
+                </LinearLayout>
+
+                <!-- Expanded EditText (full URL editable) — shown when focused -->
+                <EditText
+                    android:id="@+id/urlBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/bg_url_bar"
+                    android:hint="@string/hint_url"
+                    android:textColor="@color/white"
+                    android:textColorHint="#66FFFFFF"
+                    android:paddingHorizontal="14dp"
+                    android:singleLine="true"
+                    android:imeOptions="actionGo"
+                    android:inputType="textUri"
+                    android:textSize="13sp"
+                    android:fontFamily="sans-serif"
+                    android:visibility="gone"
+                    android:elevation="0dp"/>
+            </FrameLayout>
+
+            <!-- Reload / Stop button -->
             <TextView
                 android:id="@+id/btnGo"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:gravity="center"
-                android:text="→"
+                android:text="↻"
                 android:textColor="@color/white"
                 android:background="@drawable/bg_btn_go"
-                android:textSize="16sp"
+                android:textSize="18sp"
                 android:contentDescription="@string/action_go"/>
 
+            <!-- Tab count badge -->
+            <TextView
+                android:id="@+id/btnTabCount"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="1"
+                android:textColor="@color/onSurface"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:background="@drawable/bg_badge"
+                android:contentDescription="Tabs"
+                android:layout_marginStart="2dp"/>
+
+            <!-- Three-dot overflow menu -->
             <TextView
                 android:id="@+id/btnMore"
                 android:layout_width="40dp"
@@ -109,7 +157,7 @@
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="3dp"
-        android:layout_marginHorizontal="12dp"
+        android:layout_marginHorizontal="8dp"
         android:max="100"
         android:progressTint="@color/teal_500"
         android:progressBackgroundTint="#0DFFFFFF"
@@ -122,4 +170,5 @@
         android:layout_weight="1"
         android:background="@color/bg_dark"
         android:fitsSystemWindows="false"/>
+
 </LinearLayout>

@@ -2,15 +2,19 @@ package com.lightbrowser.ui
 
 import android.graphics.Color
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.view.KeyEvent
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import com.google.android.material.button.MaterialButton
 import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.data.AlpineEnv
@@ -37,6 +41,39 @@ class TerminalFragment : Fragment() {
     private var currentDir: File? = null
     private var alpineInstalled = false
 
+    // Sticky modifier state: null = none, else the queued modifier text
+    private var stickyModifier: String? = null
+
+    // Extra-key definitions: label → what gets inserted/prepended
+    private val extraKeys = listOf(
+        ExtraKey("CTRL",  null,  sticky = true),
+        ExtraKey("ALT",   null,  sticky = true),
+        ExtraKey("ESC",   "\u001B", sticky = false),
+        ExtraKey("TAB",   "\t",  sticky = false),
+        ExtraKey("▲",     null,  sticky = false, histUp = true),
+        ExtraKey("▼",     null,  sticky = false, histDown = true),
+        ExtraKey("◄",     null,  sticky = false, cursorLeft = true),
+        ExtraKey("►",     null,  sticky = false, cursorRight = true),
+        ExtraKey("-",     "-",   sticky = false),
+        ExtraKey("/",     "/",   sticky = false),
+        ExtraKey("|",     "|",   sticky = false),
+        ExtraKey("~",     "~",   sticky = false),
+        ExtraKey("HOME",  null,  sticky = false, home = true),
+        ExtraKey("END",   null,  sticky = false, end = true),
+    )
+
+    data class ExtraKey(
+        val label: String,
+        val insert: String?,
+        val sticky: Boolean,
+        val histUp: Boolean = false,
+        val histDown: Boolean = false,
+        val cursorLeft: Boolean = false,
+        val cursorRight: Boolean = false,
+        val home: Boolean = false,
+        val end: Boolean = false,
+    )
+
     override fun onCreateView(inflater: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
         return try {
             _b = FragmentTerminalBinding.inflate(inflater, c, false)
@@ -52,6 +89,7 @@ class TerminalFragment : Fragment() {
             val bb = _b ?: return
             initSandbox()
             updatePrompt()
+            buildExtraKeys()
 
             bb.etInput.setOnEditorActionListener { _, actionId, _ ->
                 if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
@@ -93,6 +131,117 @@ class TerminalFragment : Fragment() {
         } catch (e: Exception) {
             Log.e("Terminal", "onViewCreated", e)
             Toast.makeText(requireContext(), "Terminal error: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // Build the scrollable Termux-style extra-keys row
+    private fun buildExtraKeys() {
+        val bb = _b ?: return
+        val container = bb.llExtraKeys
+        container.removeAllViews()
+        val ctx = requireContext()
+        val dp = ctx.resources.displayMetrics.density
+
+        for (key in extraKeys) {
+            val btn = TextView(ctx).apply {
+                text = key.label
+                textSize = 12f
+                setTextColor(if (key.sticky) Color.parseColor("#5EEAD4") else Color.parseColor("#D4D4D4"))
+                setPadding((10 * dp).toInt(), 0, (10 * dp).toInt(), 0)
+                minWidth = (40 * dp).toInt()
+                height = (36 * dp).toInt()
+                gravity = android.view.Gravity.CENTER
+                background = ctx.getDrawable(R.drawable.bg_extra_key)
+                isClickable = true
+                isFocusable = true
+                tag = key
+            }
+
+            // Long-press on modifier keys → sticky
+            if (key.sticky) {
+                btn.setOnLongClickListener {
+                    activateSticky(key.label, btn)
+                    true
+                }
+            }
+
+            btn.setOnClickListener {
+                handleExtraKey(key, btn)
+            }
+
+            container.addView(btn)
+
+            // Spacer
+            val spacer = View(ctx).apply {
+                layoutParams = ViewGroup.LayoutParams((4 * dp).toInt(), (4 * dp).toInt())
+            }
+            container.addView(spacer)
+        }
+    }
+
+    private fun activateSticky(label: String, btn: TextView) {
+        if (stickyModifier == label) {
+            // Toggle off
+            stickyModifier = null
+            btn.setTextColor(Color.parseColor("#5EEAD4"))
+            btn.setBackgroundColor(Color.TRANSPARENT)
+            try { btn.background = requireContext().getDrawable(R.drawable.bg_extra_key) } catch (_: Exception) {}
+        } else {
+            // Clear previous sticky visual
+            clearStickyVisual()
+            stickyModifier = label
+            btn.setTextColor(Color.parseColor("#00FF41"))
+            btn.setBackgroundColor(Color.parseColor("#1A00FF41"))
+        }
+    }
+
+    private fun clearStickyVisual() {
+        val bb = _b ?: return
+        val ctx = try { requireContext() } catch (_: Exception) { return }
+        val container = bb.llExtraKeys
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i) as? TextView ?: continue
+            val key = child.tag as? ExtraKey ?: continue
+            if (key.sticky) {
+                child.setTextColor(Color.parseColor("#5EEAD4"))
+                try { child.background = ctx.getDrawable(R.drawable.bg_extra_key) } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun handleExtraKey(key: ExtraKey, btn: TextView) {
+        val bb = _b ?: return
+        val et = bb.etInput
+
+        when {
+            key.histUp -> historyUp()
+            key.histDown -> historyDown()
+            key.cursorLeft -> {
+                val sel = et.selectionStart
+                if (sel > 0) et.setSelection(sel - 1)
+            }
+            key.cursorRight -> {
+                val sel = et.selectionEnd
+                if (sel < et.length()) et.setSelection(sel + 1)
+            }
+            key.home -> et.setSelection(0)
+            key.end -> et.setSelection(et.length())
+            key.sticky -> activateSticky(key.label, btn)
+            key.insert != null -> {
+                val mod = stickyModifier
+                if (mod != null) {
+                    // Apply sticky modifier: e.g. CTRL+C
+                    val current = et.text.toString()
+                    val combined = "^${key.insert}" // CTRL notation
+                    et.text?.insert(et.selectionStart, combined)
+                    // Clear sticky after use
+                    stickyModifier = null
+                    clearStickyVisual()
+                } else {
+                    et.text?.insert(et.selectionStart, key.insert)
+                }
+                et.requestFocus()
+            }
         }
     }
 
@@ -287,6 +436,7 @@ class TerminalFragment : Fragment() {
             |  sh <cmd>          – run shell in sandbox
             |  ping  curl  echo  js <code>  history  cache
             |
+            |Extra keys row: CTRL/ALT = sticky modifier (long-press to lock)
             |Sandbox: ${sandboxDir?.absolutePath}
             |All commands restricted to sandbox.
         """.trimMargin())
