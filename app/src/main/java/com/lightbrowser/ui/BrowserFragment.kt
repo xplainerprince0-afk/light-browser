@@ -656,16 +656,16 @@ class BrowserFragment : Fragment() {
                     5 -> showBookmarksDialog()
                     6 -> {
                         Prefs.desktopMode = !Prefs.desktopMode
-                        Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx2, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
                         binding.webView.reload()
                     }
                     7 -> {
                         try {
                             android.webkit.CookieManager.getInstance().removeAllCookies(null)
                             android.webkit.WebStorage.getInstance().deleteAllData()
-                            ctx.cacheDir.deleteRecursively()
-                            Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+                            ctx2.cacheDir.deleteRecursively()
+                            Toast.makeText(ctx2, "Cache cleared", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) { Toast.makeText(ctx2, e.message, Toast.LENGTH_LONG).show() }
                     }
                 }
                 true
