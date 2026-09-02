@@ -41,6 +41,20 @@
                 android:textColor="#4ADE80"
                 android:textSize="11sp"
                 android:fontFamily="monospace" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnOverflow"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:text="⋮"
+                android:textSize="20sp"
+                android:textColor="?attr/colorOnSurface"
+                style="@style/Widget.Material3.Button.TextButton"
+                app:cornerRadius="12dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp" />
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
@@ -112,7 +126,11 @@
             android:layout_marginStart="8dp"
             android:text="▶"
             android:textSize="14sp"
-            app:cornerRadius="12dp" />
+            android:textColor="?attr/colorOnPrimary"
+            style="@style/Widget.Material3.Button"
+            app:cornerRadius="12dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
     </LinearLayout>
 
     <LinearLayout
@@ -129,8 +147,11 @@
             android:layout_height="36dp"
             android:text="Clear"
             android:textSize="11sp"
-            style="@style/Widget.Material3.Button.TonalButton"
-            app:cornerRadius="12dp" />
+            android:textColor="?attr/colorOnPrimaryContainer"
+            style="@style/Widget.Material3.Button"
+            app:cornerRadius="12dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
 
         <View android:layout_width="8dp" android:layout_height="0dp" />
 
@@ -141,8 +162,11 @@
             android:layout_height="36dp"
             android:text="Copy"
             android:textSize="11sp"
-            style="@style/Widget.Material3.Button.TonalButton"
-            app:cornerRadius="12dp" />
+            android:textColor="?attr/colorOnPrimaryContainer"
+            style="@style/Widget.Material3.Button"
+            app:cornerRadius="12dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
 
         <View android:layout_width="8dp" android:layout_height="0dp" />
 
@@ -153,8 +177,11 @@
             android:layout_height="36dp"
             android:text="Scripts"
             android:textSize="11sp"
-            style="@style/Widget.Material3.Button.TonalButton"
-            app:cornerRadius="12dp" />
+            android:textColor="?attr/colorOnPrimaryContainer"
+            style="@style/Widget.Material3.Button"
+            app:cornerRadius="12dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
     </LinearLayout>
 
 </LinearLayout>

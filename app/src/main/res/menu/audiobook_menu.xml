@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <group android:id="@+id/grp_library" android:checkableBehavior="none">
+        <item
+            android:id="@+id/menu_pick_library"
+            android:icon="@android:drawable/ic_menu_archive"
+            android:title="Pick Library Folder" />
+        <item
+            android:id="@+id/menu_switch_novel"
+            android:icon="@android:drawable/ic_menu_sort_by_size"
+            android:title="Switch Novel" />
+    </group>
+
+    <group android:id="@+id/grp_playback" android:checkableBehavior="none">
+        <item
+            android:id="@+id/menu_seek_back"
+            android:icon="@android:drawable/ic_media_previous"
+            android:title="Seek -10s" />
+        <item
+            android:id="@+id/menu_seek_forward"
+            android:icon="@android:drawable/ic_media_next"
+            android:title="Seek +10s" />
+    </group>
+
+    <group android:id="@+id/grp_tools" android:checkableBehavior="none">
+        <item
+            android:id="@+id/menu_scan"
+            android:icon="@android:drawable/ic_popup_sync"
+            android:title="Rescan Library" />
+        <item
+            android:id="@+id/menu_stop"
+            android:icon="@android:drawable/ic_media_pause"
+            android:title="Stop Playback" />
+    </group>
+
+</menu>

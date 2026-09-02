@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <group android:id="@+id/grp_navigation" android:checkableBehavior="none">
+        <item
+            android:id="@+id/menu_open_sandbox"
+            android:icon="@android:drawable/ic_menu_gallery"
+            android:title="Open Sandbox" />
+        <item
+            android:id="@+id/menu_open_downloads"
+            android:icon="@android:drawable/ic_menu_archive"
+            android:title="Open Downloads" />
+    </group>
+
+    <group android:id="@+id/grp_actions" android:checkableBehavior="none">
+        <item
+            android:id="@+id/menu_import"
+            android:icon="@android:drawable/ic_menu_upload"
+            android:title="Import File (SAF)" />
+        <item
+            android:id="@+id/menu_export"
+            android:icon="@android:drawable/ic_menu_save"
+            android:title="Export File (SAF)" />
+    </group>
+
+    <group android:id="@+id/grp_settings" android:checkableBehavior="none">
+        <item
+            android:id="@+id/menu_details"
+            android:icon="@android:drawable/ic_menu_info_details"
+            android:title="Show Details" />
+    </group>
+
+</menu>

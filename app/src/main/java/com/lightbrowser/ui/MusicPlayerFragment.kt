@@ -5,12 +5,15 @@ import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.LayoutInflater
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.PopupMenu
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -20,21 +23,43 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.menu.MaterialMenuInflater
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentMusicBinding
 import java.io.File
+import java.util.Comparator
 
 class MusicPlayerFragment : Fragment() {
+
     private var _b: FragmentMusicBinding? = null
     private val b get() = _b!!
+
     private var player: MediaPlayer? = null
-    private var queue: List<File> = emptyList()
-    private var currentIndex = -1
+    private var chapters: List<Chapter> = emptyList()
+    private var currentChapterIndex = -1
     private val handler = Handler(Looper.getMainLooper())
     private var isSeeking = false
-    private var customFolders: MutableList<File> = mutableListOf()
+
+    // Audiobook library structure
+    private var libraryUri: Uri? = null
+    private var novels: List<Novel> = emptyList()
+    private var currentNovelIndex = -1
 
     private var folderPicker: ActivityResultLauncher<Uri?>? = null
+
+    data class Novel(
+        val name: String,
+        val directory: DocumentFile,
+        val cover: DocumentFile?,
+        val chapters: List<Chapter>
+    )
+
+    data class Chapter(
+        val title: String,
+        val file: DocumentFile,
+        val index: Int,
+        val novel: Novel
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,11 +67,9 @@ class MusicPlayerFragment : Fragment() {
             folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
                 if (uri != null) {
                     try {
-                        try { requireContext().contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-                        val docFile = DocumentFile.fromTreeUri(requireContext(), uri)
-                        val name = docFile?.name ?: "custom"
-                        Toast.makeText(requireContext(), "Added $name – scanning…", Toast.LENGTH_SHORT).show()
-                        scanWithSaf(uri)
+                        requireContext().contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        libraryUri = uri
+                        scanLibrary(uri)
                     } catch (e: Exception) { safeToast(e.message) }
                 }
             }
@@ -78,21 +101,24 @@ class MusicPlayerFragment : Fragment() {
             _b = FragmentMusicBinding.inflate(inflater, c, false)
             b.root
         } catch (e: Exception) {
-            android.util.Log.e("Music", "onCreateView", e)
-            TextView(requireContext()).apply { text = "Music unavailable: ${e.message}" }
+            Log.e("Audiobook", "onCreateView", e)
+            TextView(requireContext()).apply { text = "Audiobook unavailable: ${e.message}" }
         }
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
         try {
             val bb = _b ?: return
-            try { bb.recycler.layoutManager = LinearLayoutManager(requireContext()) } catch (e: Exception) { android.util.Log.e("Music", "layoutManager", e) }
-            try { bb.btnScan.setOnClickListener { try { scan() } catch (e: Exception) { safeToast(e.message) } } } catch (_: Exception) {}
-            try { bb.btnAddFolder.setOnClickListener { try { folderPicker?.launch(null) ?: safeToast("Folder picker unavailable") } catch (e: Exception) { safeToast(e.message) } } } catch (_: Exception) {}
+            try { bb.recycler.layoutManager = LinearLayoutManager(requireContext()) } catch (e: Exception) { Log.e("Audiobook", "layoutManager", e) }
+            try { bb.btnPickLibrary.setOnClickListener { try { folderPicker?.launch(null) ?: safeToast("Folder picker unavailable") } catch (e: Exception) { safeToast(e.message) } } } catch (_: Exception) {}
+            try { bb.btnSwitchNovel.setOnClickListener { try { showNovelSwitcher() } catch (e: Exception) { safeToast(e.message) } } } catch (_: Exception) {}
             try { bb.btnStop.setOnClickListener { try { stop() } catch (_: Exception) {} } } catch (_: Exception) {}
+            try { bb.btnOverflow.setOnClickListener { try { showOverflowMenu() } catch (_: Exception) {} } } catch (_: Exception) {}
             try { bb.btnPlay.setOnClickListener { try { toggle() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnPrev.setOnClickListener { try { prev() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnNext.setOnClickListener { try { next() } catch (_: Exception) {} } } catch (_: Exception) {}
+            try { bb.btnPrev.setOnClickListener { try { prevChapter() } catch (_: Exception) {} } } catch (_: Exception) {}
+            try { bb.btnNext.setOnClickListener { try { nextChapter() } catch (_: Exception) {} } } catch (_: Exception) {}
+            try { bb.btnSeekBack.setOnClickListener { try { seekRelative(-10000) } catch (_: Exception) {} } } catch (_: Exception) {}
+            try { bb.btnSeekForward.setOnClickListener { try { seekRelative(10000) } catch (_: Exception) {} } } catch (_: Exception) {}
             try {
                 bb.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { if (fromUser) try { bb.tvCurrent.text = fmt(p) } catch (_: Exception) {} }
@@ -100,120 +126,157 @@ class MusicPlayerFragment : Fragment() {
                     override fun onStopTrackingTouch(sb: SeekBar?) { isSeeking = false; try { player?.seekTo(sb?.progress ?: 0) } catch (_: Exception) {} }
                 })
             } catch (_: Exception) {}
-            try { scan() } catch (e: Exception) { android.util.Log.e("Music", "scan init", e) }
             try { handler.post(updateRunnable) } catch (_: Exception) {}
+            // Load persisted library URI if available
+            loadPersistedLibrary()
         } catch (e: Exception) {
-            android.util.Log.e("Music", "onViewCreated crash", e)
-            safeToast("Music error: ${e.message}")
+            Log.e("Audiobook", "onViewCreated crash", e)
+            safeToast("Audiobook error: ${e.message}")
         }
     }
 
-    private fun scan() {
-        val bb = _b ?: return
-        val downloads = try { Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) } catch (_: Exception) { null }
-        val baseFiles = try {
-            downloads?.listFiles()?.filter { it.isFile && it.extension.lowercase() in setOf("mp3","m4a","aac","ogg","wav","flac","opus") }?.sortedBy { it.name.lowercase() } ?: emptyList()
-        } catch (_: Exception) { emptyList<File>() }
-        val sandboxMusic = try { File(requireContext().filesDir, "sandbox/music").apply { if (!exists()) mkdirs() } } catch (_: Exception) { try { File(requireContext().cacheDir, "sandbox/music").apply { if (!exists()) mkdirs() } } catch (_: Exception) { null } }
-        val sandboxFiles = try { sandboxMusic?.listFiles()?.filter { it.extension.lowercase() in setOf("mp3","m4a","aac","ogg","wav","flac") } ?: emptyList() } catch (_: Exception) { emptyList() }
-        val all = try {
-            (baseFiles + sandboxFiles + customFolders.flatMap { dir ->
-                try { dir.listFiles()?.filter { it.extension.lowercase() in setOf("mp3","m4a","aac","ogg","wav","flac") } ?: emptyList() } catch (_: Exception) { emptyList() }
-            }).distinctBy { it.absolutePath }.sortedBy { it.name.lowercase() }
-        } catch (_: Exception) { emptyList() }
+    private fun loadPersistedLibrary() {
+        // Could load from SharedPreferences if needed
+    }
 
-        queue = all
-        try { bb.empty.visibility = if (all.isEmpty()) View.VISIBLE else View.GONE } catch (_: Exception) {}
-        try { bb.recycler.visibility = if (all.isEmpty()) View.GONE else View.VISIBLE } catch (_: Exception) {}
+    private fun scanLibrary(treeUri: Uri) {
+        try {
+            val ctx = requireContext()
+            val docTree = DocumentFile.fromTreeUri(ctx, treeUri) ?: return
+            val novelList = mutableListOf<Novel>()
+
+            docTree.listFiles()?.forEach { novelDir ->
+                if (novelDir.isDirectory) {
+                    val novelName = novelDir.name ?: "Unknown Novel"
+                    val chapterList = mutableListOf<Chapter>()
+                    var coverFile: DocumentFile? = null
+
+                    novelDir.listFiles()?.forEach { file ->
+                        if (file.isFile) {
+                            val name = file.name?.lowercase() ?: ""
+                            if (name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".opus") || name.endsWith(".ogg")) {
+                                val chapterTitle = file.nameWithoutExtension
+                                val index = extractChapterNumber(chapterTitle)
+                                chapterList.add(Chapter(chapterTitle, file, index, null!!)) // novel will be set after
+                            } else if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp")) {
+                                if (coverFile == null) coverFile = file
+                            }
+                        }
+                    }
+
+                    // Sort chapters numerically
+                    chapterList.sortWith(Comparator.compareBy<Chapter> { it.index }.thenBy { it.title.lowercase() })
+                    
+                    // Update novel reference in chapters
+                    val novel = Novel(novelName, novelDir, coverFile, chapterList.map { it.copy(novel = Novel(novelName, novelDir, coverFile, emptyList())) })
+                    novelList.add(novel)
+                }
+            }
+
+            // Sort novels by name
+            novelList.sortBy { it.name.lowercase() }
+
+            novels = novelList
+            if (novels.isNotEmpty() && currentNovelIndex == -1) {
+                selectNovel(0)
+            } else {
+                updateNovelList()
+            }
+            safeToast("Found ${novels.size} novels in library")
+        } catch (e: Exception) {
+            Log.e("Audiobook", "scanLibrary", e)
+            safeToast("Scan failed: ${e.message}")
+        }
+    }
+
+    private fun extractChapterNumber(title: String): Int {
+        // Extract leading number for sorting (e.g., "001 Chapter One" -> 1, "Chapter 5" -> 5)
+        val pattern = "\\d+".toRegex()
+        val match = pattern.find(title)
+        return match?.value?.toIntOrNull() ?: Int.MAX_VALUE
+    }
+
+    private fun selectNovel(index: Int) {
+        if (index < 0 || index >= novels.size) return
+        currentNovelIndex = index
+        val novel = novels[index]
+        chapters = novel.chapters
+        currentChapterIndex = -1
+        updateNovelUI(novel)
+        updateChapterList()
+        safeToast("Loaded: ${novel.name} (${chapters.size} chapters)")
+    }
+
+    private fun updateNovelUI(novel: Novel) {
+        val bb = _b ?: return
+        try { bb.tvNovelTitle.text = novel.name } catch (_: Exception) {}
+        try { bb.tvChapterTitle.text = "Select a chapter" } catch (_: Exception) {}
+        // Load cover image
+        novel.cover?.let { cover ->
+            try {
+                val input = requireContext().contentResolver.openInputStream(cover.uri)
+                input?.use { stream ->
+                    val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                    bb.imgCover.setImageBitmap(bitmap)
+                    bb.imgCover.visibility = View.VISIBLE
+                }
+            } catch (_: Exception) { try { bb.imgCover.visibility = View.GONE } catch (_: Exception) {} }
+        } ?: run { try { bb.imgCover.visibility = View.GONE } catch (_: Exception) {} }
+    }
+
+    private fun updateNovelList() {
+        // Could show a list of novels in a dialog
+    }
+
+    private fun updateChapterList() {
+        val bb = _b ?: return
+        try { bb.empty.visibility = if (chapters.isEmpty()) View.VISIBLE else View.GONE } catch (_: Exception) {}
+        try { bb.recycler.visibility = if (chapters.isEmpty()) View.GONE else View.VISIBLE } catch (_: Exception) {}
         try {
             bb.recycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
                 override fun onCreateViewHolder(p: ViewGroup, t: Int) =
                     object : RecyclerView.ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_download, p, false)) {}
                 override fun onBindViewHolder(h: RecyclerView.ViewHolder, i: Int) {
                     try {
-                        val f = all[i]
-                        val (title, artist) = getId3(f)
-                        h.itemView.findViewById<TextView>(R.id.tvTitle).text = title ?: f.nameWithoutExtension
-                        h.itemView.findViewById<TextView>(R.id.tvStatus).text = "${artist ?: f.parentFile?.name ?: "Unknown"} • ${f.length()/1024} KB • ${if (i == currentIndex) "▶ Playing" else "Tap"}"
-                        h.itemView.alpha = if (i == currentIndex) 1f else 0.85f
-                        h.itemView.setOnClickListener { try { playAt(i) } catch (_: Exception) {} }
+                        val ch = chapters[i]
+                        val title = h.itemView.findViewById<TextView>(R.id.tvTitle)
+                        val status = h.itemView.findViewById<TextView>(R.id.tvStatus)
+                        val icon = h.itemView.findViewById<ImageView>(R.id.ivFileIcon)
+                        icon.setImageResource(R.drawable.ic_audio)
+                        icon.contentDescription = "Audio"
+                        title.text = "${ch.index}. ${ch.title}"
+                        status.text = "Chapter ${ch.index} • Tap to play"
+                        h.itemView.alpha = if (i == currentChapterIndex) 1f else 0.85f
+                        h.itemView.setOnClickListener { try { playChapter(i) } catch (_: Exception) {} }
                     } catch (_: Exception) {}
                 }
-                override fun getItemCount() = all.size
+                override fun getItemCount() = chapters.size
             }
         } catch (_: Exception) {}
-        try { if (all.isNotEmpty() && currentIndex == -1) bb.tvTitle.text = "${all.size} tracks" } catch (_: Exception) {}
     }
 
-    private fun scanWithSaf(treeUri: Uri) {
-        try {
-            val ctx = try { requireContext() } catch (_: Exception) { return }
-            val docTree = DocumentFile.fromTreeUri(ctx, treeUri) ?: return
-            val destDir = try { File(ctx.filesDir, "sandbox/music").apply { mkdirs() } } catch (_: Exception) { return }
-            val files = mutableListOf<File>()
-            docTree.listFiles().forEach { doc ->
-                if (doc.isFile && doc.name?.lowercase()?.endsWith(".mp3") == true) {
-                    try {
-                        val dest = File(destDir, doc.name ?: "track_${System.currentTimeMillis()}.mp3")
-                        ctx.contentResolver.openInputStream(doc.uri)?.use { input ->
-                            dest.outputStream().use { input.copyTo(it) }
-                        }
-                        files.add(dest)
-                    } catch (_: Exception) {}
-                }
-            }
-            safeToast("Imported ${files.size} tracks to sandbox")
-            try { scan() } catch (_: Exception) {}
-        } catch (e: Exception) { safeToast(e.message) }
-    }
-
-    private fun getId3(file: File): Pair<String?, String?> {
-        return try {
-            val mmr = MediaMetadataRetriever()
-            try { mmr.setDataSource(file.absolutePath) } catch (e: Exception) { try { mmr.release() } catch (_: Exception) {}; return Pair(null, null) }
-            val title = try { mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) } catch (_: Exception) { null }
-            val artist = try { mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) } catch (_: Exception) { null }
-            val hasArt = try { mmr.embeddedPicture } catch (_: Exception) { null }
-            if (hasArt != null && currentIndex != -1 && queue.getOrNull(currentIndex) == file) {
-                try {
-                    val bb = _b
-                    if (bb != null) {
-                        val bmp = android.graphics.BitmapFactory.decodeByteArray(hasArt, 0, hasArt.size)
-                        bb.imgArt.setImageBitmap(bmp)
-                        bb.imgArt.visibility = View.VISIBLE
-                    }
-                } catch (_: Exception) { try { _b?.imgArt?.visibility = View.GONE } catch (_: Exception) {} }
-            }
-            try { mmr.release() } catch (_: Exception) {}
-            Pair(title, artist)
-        } catch (_: Exception) { Pair(null, null) }
-    }
-
-    private fun playAt(idx: Int) {
-        if (idx < 0 || idx >= queue.size) return
+    private fun playChapter(idx: Int) {
+        if (idx < 0 || idx >= chapters.size) return
         try {
             stopPlayer()
-            currentIndex = idx
-            val f = queue[idx]
-            val (title, artist) = getId3(f)
-            val ctx = try { requireContext() } catch (_: Exception) { return }
+            currentChapterIndex = idx
+            val ch = chapters[idx]
+            val ctx = requireContext()
             player = MediaPlayer().apply {
-                try { setDataSource(ctx, Uri.fromFile(f)) } catch (e: Exception) { safeToast("Play failed: ${e.message}"); return }
+                try { setDataSource(ctx, ch.file.uri) } catch (e: Exception) { safeToast("Play failed: ${e.message}"); return@apply }
                 setOnPreparedListener {
                     try { start() } catch (_: Exception) {}
-                    _b?.let { bb ->
+                    bb?.let { bb ->
                         try { bb.btnPlay.text = "⏸" } catch (_: Exception) {}
-                        try { bb.tvTitle.text = title ?: f.nameWithoutExtension } catch (_: Exception) {}
-                        try { bb.tvArtist.text = artist ?: f.parentFile?.name ?: "Downloads" } catch (_: Exception) {}
+                        try { bb.tvChapterTitle.text = "${ch.index}. ${ch.title}" } catch (_: Exception) {}
                         try { bb.tvDuration.text = fmt(duration) } catch (_: Exception) {}
-                        try { if (bb.imgArt.visibility != View.VISIBLE) { val (t2,a2)=getId3(f); if(t2!=null) bb.tvTitle.text=t2; if(a2!=null) bb.tvArtist.text=a2 } } catch (_: Exception) {}
                     }
                 }
-                setOnCompletionListener { try { next() } catch (_: Exception) {} }
+                setOnCompletionListener { try { nextChapter() } catch (_: Exception) {} }
                 setOnErrorListener { _, what, extra -> safeToast("Error $what/$extra"); true }
                 try { prepareAsync() } catch (e: Exception) { safeToast(e.message) }
             }
-            try { _b?.recycler?.adapter?.notifyDataSetChanged() } catch (_: Exception) {}
+            try { bb?.recycler?.adapter?.notifyDataSetChanged() } catch (_: Exception) {}
         } catch (e: Exception) { safeToast("Play failed: ${e.message}") }
     }
 
@@ -221,7 +284,7 @@ class MusicPlayerFragment : Fragment() {
         try {
             val p = player
             if (p == null) {
-                if (queue.isNotEmpty()) playAt(0) else safeToast("Scan or Add Folder")
+                if (chapters.isNotEmpty()) playChapter(0) else safeToast("Select a novel first")
                 return
             }
             if (try { p.isPlaying } catch (_: Exception) { false }) { try { p.pause() } catch (_: Exception) {}; try { _b?.btnPlay?.text = "▶" } catch (_: Exception) {} }
@@ -229,19 +292,63 @@ class MusicPlayerFragment : Fragment() {
         } catch (_: Exception) {}
     }
 
-    private fun prev() { if (queue.isEmpty()) return; try { playAt(if (currentIndex <= 0) queue.size - 1 else currentIndex - 1) } catch (_: Exception) {} }
-    private fun next() { if (queue.isEmpty()) return; try { playAt(if (currentIndex >= queue.size - 1) 0 else currentIndex + 1) } catch (_: Exception) {} }
+    private fun prevChapter() { if (chapters.isEmpty()) return; try { playChapter(if (currentChapterIndex <= 0) chapters.size - 1 else currentChapterIndex - 1) } catch (_: Exception) {} }
+    private fun nextChapter() { if (chapters.isEmpty()) return; try { playChapter(if (currentChapterIndex >= chapters.size - 1) 0 else currentChapterIndex + 1) } catch (_: Exception) {} }
+
     private fun stop() {
         try { stopPlayer() } catch (_: Exception) {}
         try { _b?.btnPlay?.text = "▶" } catch (_: Exception) {}
-        try { _b?.tvTitle?.text = "Stopped" } catch (_: Exception) {}
-        try { _b?.tvArtist?.text = "—" } catch (_: Exception) {}
-        try { _b?.imgArt?.visibility = View.GONE } catch (_: Exception) {}
+        try { _b?.tvChapterTitle?.text = "Stopped" } catch (_: Exception) {}
         try { _b?.seekBar?.progress = 0 } catch (_: Exception) {}
         try { _b?.tvCurrent?.text = "0:00" } catch (_: Exception) {}
-        currentIndex = -1
+        currentChapterIndex = -1
         try { _b?.recycler?.adapter?.notifyDataSetChanged() } catch (_: Exception) {}
     }
+
+    private fun showOverflowMenu() {
+        try {
+            val bb = _b ?: return
+            val ctx = requireContext()
+            val popup = PopupMenu(ctx, bb.btnOverflow)
+            MaterialMenuInflater(ctx).inflate(R.menu.audiobook_menu, popup.menu)
+            popup.setOnMenuItemClickListener { item: MenuItem ->
+                try {
+                    when (item.itemId) {
+                        R.id.menu_pick_library -> folderPicker?.launch(null)
+                        R.id.menu_switch_novel -> showNovelSwitcher()
+                        R.id.menu_seek_back -> seekRelative(-10000)
+                        R.id.menu_seek_forward -> seekRelative(10000)
+                        R.id.menu_scan -> libraryUri?.let { scanLibrary(it) }
+                        R.id.menu_stop -> stop()
+                    }
+                } catch (_: Exception) {}
+                true
+            }
+            popup.show()
+        } catch (e: Exception) { Log.e("Audiobook", "overflow menu", e) }
+    }
+
+    private fun seekRelative(ms: Int) {
+        try {
+            val p = player ?: return
+            val newPos = (p.currentPosition + ms).coerceIn(0, p.duration)
+            p.seekTo(newPos)
+        } catch (_: Exception) {}
+    }
+
+    private fun showNovelSwitcher() {
+        if (novels.isEmpty()) { safeToast("No novels loaded"); return }
+        val items = novels.map { it.name }.toTypedArray()
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("Switch Novel")
+            .setSingleChoiceItems(items, currentNovelIndex) { _, which ->
+                selectNovel(which)
+                it.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun stopPlayer() { try { player?.stop(); player?.release() } catch (_: Exception) {}; player = null }
     private fun fmt(ms: Int): String { if (ms <= 0) return "0:00"; val s = ms / 1000; return String.format("%d:%02d", s / 60, s % 60) }
 
