@@ -23,7 +23,6 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.menu.MaterialMenuInflater
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentFilemanagerBinding
 import java.io.File
@@ -110,7 +109,7 @@ class FileManagerFragment : Fragment() {
             val bb = _b ?: return
             val ctx = try { requireContext() } catch (_: Exception) { return }
             val popup = PopupMenu(ctx, bb.btnOverflow)
-            MaterialMenuInflater(ctx).inflate(R.menu.filemanager_menu, popup.menu)
+            popup.menuInflater.inflate(R.menu.filemanager_menu, popup.menu)
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 try {
                     when (item.itemId) {
@@ -277,10 +276,10 @@ class FileManagerFragment : Fragment() {
             textSize = 12f
             isAllCaps = false
             setPaddingRelative(8, 4, 8, 4)
-            isMinWidth = false
+            setMinWidth(0)
             insetTop = 0
             insetBottom = 0
-            cornerRadius = 8f
+            cornerRadius = 8
             setBackgroundColor(Color.TRANSPARENT)
             setTextColor(ColorStateList.valueOf(if (path == currentDir) 0xFFFFFFFF.toInt() else 0xFF94A3B8.toInt()))
             setOnClickListener { openDir(path) }

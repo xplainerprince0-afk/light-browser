@@ -23,10 +23,10 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.menu.MaterialMenuInflater
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentMusicBinding
-import java.util.Comparator
+import kotlin.Comparator
+import kotlin.comparisons.compareBy
 
 class MusicPlayerFragment : Fragment() {
 
@@ -152,7 +152,7 @@ class MusicPlayerFragment : Fragment() {
                         if (file.isFile) {
                             val name = file.name?.lowercase() ?: ""
                             if (name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".opus") || name.endsWith(".ogg")) {
-                                val chapterTitle = file.nameWithoutExtension
+                                val chapterTitle = file.name?.substringBeforeLast(".") ?: file.name ?: "Unknown"
                                 val index = extractChapterNumber(chapterTitle)
                                 chapterList.add(Chapter(chapterTitle, file, index, novelName))
                             } else if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp")) {
@@ -162,7 +162,7 @@ class MusicPlayerFragment : Fragment() {
                     }
 
                     // Sort chapters numerically
-                    chapterList.sortWith(Comparator.compareBy<Chapter> { it.index }.thenBy { it.title.lowercase() })
+                    chapterList.sortWith(compareBy<Chapter> { it.index }.thenBy { it.title.lowercase() })
 
                     val novel = Novel(novelName, novelDir, coverFile, chapterList)
                     novelList.add(novel)
@@ -304,7 +304,7 @@ class MusicPlayerFragment : Fragment() {
             val bb = _b ?: return
             val ctx = requireContext()
             val popup = PopupMenu(ctx, bb.btnOverflow)
-            MaterialMenuInflater(ctx).inflate(R.menu.audiobook_menu, popup.menu)
+            popup.menuInflater.inflate(R.menu.audiobook_menu, popup.menu)
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 try {
                     when (item.itemId) {
@@ -335,9 +335,9 @@ class MusicPlayerFragment : Fragment() {
         val items = novels.map { it.name }.toTypedArray()
         android.app.AlertDialog.Builder(requireContext())
             .setTitle("Switch Novel")
-            .setSingleChoiceItems(items, currentNovelIndex) { _, which ->
+            .setSingleChoiceItems(items, currentNovelIndex) { dialog, which ->
                 selectNovel(which)
-                it.dismiss()
+                dialog.dismiss()
             }
             .setNegativeButton("Cancel", null)
             .show()
