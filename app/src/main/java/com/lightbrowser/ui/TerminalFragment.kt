@@ -13,7 +13,7 @@ import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
-import com.google.android.material.menu.MaterialMenuInflater
+import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.ScriptStorage
@@ -484,7 +484,7 @@ class TerminalFragment : Fragment() {
             val bb = _b ?: return
             val ctx = requireContext()
             val popup = PopupMenu(ctx, bb.btnDrawer)
-            MaterialMenuInflater(ctx).inflate(R.menu.terminal_menu, popup.menu)
+            popup.menuInflater.inflate(R.menu.terminal_menu, popup.menu)
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 try {
                     when (item.itemId) {

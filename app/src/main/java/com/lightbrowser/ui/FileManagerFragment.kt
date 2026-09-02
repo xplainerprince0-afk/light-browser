@@ -25,6 +25,7 @@ import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
+import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentFilemanagerBinding
 import com.lightbrowser.data.DownloadHelper
