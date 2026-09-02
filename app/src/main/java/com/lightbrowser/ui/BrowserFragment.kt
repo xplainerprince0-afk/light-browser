@@ -22,6 +22,7 @@ import com.lightbrowser.MainActivity
 import com.lightbrowser.R
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.BookmarkStorage
+import com.lightbrowser.data.BrowserProfile
 import com.lightbrowser.data.DownloadHelper
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.Prefs
@@ -67,41 +68,10 @@ class BrowserFragment : Fragment() {
         } catch (e: Exception) { Log.w(TAG, "ServiceWorker sw failed", e) }
 
         val wv = binding.webView
-        // Wibgar uses HARDWARE (2) but fixed panels (WTR) flicker on some GPUs – use SOFTWARE for wtr-lab, HARDWARE otherwise
-        // We'll set to SOFTWARE initially to avoid flicker, can toggle via settings if needed
-        wv.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-
-        val s = wv.settings
-        // === Wibgar fq1:595-730 exact WebSettings ===
+        BrowserProfile.configure(requireContext(), wv)
         try {
-            s.javaScriptEnabled = Prefs.jsEnabled
-            s.domStorageEnabled = true // localStorage for WTR
-            s.databaseEnabled = true // IndexedDB for WTR
-            s.allowFileAccess = true // !isIncognito – WTR Worker via blob needs true
-            s.allowContentAccess = true
-            try { @Suppress("DEPRECATION") s.databasePath = requireContext().getDir("databases", 0).path } catch (_: Exception) {}
-            s.setSupportZoom(true)
-            s.builtInZoomControls = true
-            s.displayZoomControls = false
-            s.useWideViewPort = true
-            s.loadWithOverviewMode = true
-            s.setSupportMultipleWindows(true) // target="_blank" + blob downloads
-            s.cacheMode = WebSettings.LOAD_DEFAULT
-            @Suppress("DEPRECATION") s.layoutAlgorithm = WebSettings.LayoutAlgorithm.NARROW_COLUMNS
-            s.javaScriptCanOpenWindowsAutomatically = true
-            s.mediaPlaybackRequiresUserGesture = false
-            s.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW // 0 – WTR fetch http from https
-            s.setGeolocationEnabled(false)
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                try { s.safeBrowsingEnabled = true } catch (_: Exception) {}
-            }
-            if (Prefs.desktopMode) {
-                s.userAgentString = DESKTOP_UA
-            }
-        } catch (e: Exception) { Log.e(TAG, "WebSettings fail", e) }
-
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+            if (Prefs.desktopMode) wv.settings.userAgentString = DESKTOP_UA
+        } catch (e: Exception) { Log.e(TAG, "UA fail", e) }
 
         // === Wibgar fq1:581 BlobDownloader bridge ===
         wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "BlobDownloader")
@@ -263,16 +233,7 @@ class BrowserFragment : Fragment() {
             false
         }
 
-        // Phase 1 fix: container now provides top inset, so toolbarCard hack removed (was doubling and unreliable).
-        try {
-            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.webView) { v, insets ->
-                val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
-                val bottom = ime.bottom
-                v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, bottom)
-                insets
-            }
-            androidx.core.view.ViewCompat.requestApplyInsets(binding.webView)
-        } catch (_: Exception) {}
+        // Keyboard handled by MainActivity container insets – bottom nav stays fixed
 
         binding.btnGo.setOnClickListener { loadFromBar() }
         binding.urlBar.setOnEditorActionListener { _, id, _ ->
@@ -808,7 +769,8 @@ class BrowserFragment : Fragment() {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        if (hidden) _binding?.webView?.onPause() else _binding?.webView?.onResume()
+        if (hidden) BrowserProfile.onWebViewPause(_binding?.webView)
+        else BrowserProfile.onWebViewResume(_binding?.webView)
     }
 
     private fun loadFromBar() {
@@ -825,8 +787,15 @@ class BrowserFragment : Fragment() {
     fun canGoBack() = _binding?.webView?.canGoBack() == true
     fun goBack() { _binding?.webView?.goBack() }
 
-    override fun onPause() { super.onPause(); _binding?.webView?.onPause() }
-    override fun onResume() { super.onResume(); _binding?.webView?.onResume() }
+    override fun onPause() {
+        super.onPause()
+        BrowserProfile.onWebViewPause(_binding?.webView)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        BrowserProfile.onWebViewResume(_binding?.webView)
+    }
     override fun onDestroyView() {
         _binding?.webView?.destroy()
         _binding = null

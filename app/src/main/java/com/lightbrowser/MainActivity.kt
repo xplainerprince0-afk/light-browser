@@ -84,11 +84,15 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        // Bottom nav stays fixed; only content area responds to keyboard IME
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
-            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            binding.container.updatePadding(top = statusBars.top, bottom = navBars.bottom)
-            binding.bottomNav.updatePadding(bottom = navBars.bottom)
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            binding.container.updatePadding(
+                top = systemBars.top,
+                bottom = ime.bottom
+            )
+            binding.bottomNav.updatePadding(bottom = systemBars.bottom)
             insets
         }
         ViewCompat.requestApplyInsets(binding.root)
@@ -165,6 +169,7 @@ class MainActivity : AppCompatActivity() {
             if (currentId == id && fragments.containsKey(id) && fragments[id]?.isAdded == true) return
             if (supportFragmentManager.isStateSaved) {
                 val tx2 = supportFragmentManager.beginTransaction()
+                    .setCustomAnimations(R.anim.fade_in, R.anim.fade_out, R.anim.fade_in, R.anim.fade_out)
                 fragments[currentId]?.let { if (it.isAdded) try { tx2.hide(it) } catch (_: Exception) {} }
                 val n2 = getFrag(id)
                 if (n2.isAdded) try { tx2.show(n2) } catch (_: Exception) {} else try { tx2.add(R.id.container, n2, id.toString()) } catch (_: Exception) {}
@@ -174,6 +179,7 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             val tx = supportFragmentManager.beginTransaction()
+                .setCustomAnimations(R.anim.fade_in, R.anim.fade_out, R.anim.fade_in, R.anim.fade_out)
             fragments[currentId]?.let { if (it.isAdded) try { tx.hide(it) } catch (_: Exception) {} }
             val next = getFrag(id)
             try {
@@ -192,8 +198,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncBottomNav(id: Int) {
         val bottomNavIds = setOf(
-            R.id.nav_browser, R.id.nav_filemanager, R.id.nav_music,
-            R.id.nav_terminal, R.id.nav_settings
+            R.id.nav_browser, R.id.nav_filemanager, R.id.nav_music, R.id.nav_terminal
         )
         try {
             if (id in bottomNavIds) {
@@ -232,9 +237,9 @@ class MainActivity : AppCompatActivity() {
         android.app.AlertDialog.Builder(this)
             .setTitle("About LightBrowser")
             .setMessage(
-                "LightBrowser v2.1\n\n" +
-                "A lightweight browser with sandbox file manager, terminal, and audiobook player.\n\n" +
-                "Built with Material 3 and Kotlin."
+                "LightBrowser v2.3\n\n" +
+                "Browser · Sandbox · Terminal (Alpine) · Player\n\n" +
+                "Material 3 · Kotlin"
             )
             .setPositiveButton("OK", null)
             .show()

@@ -94,6 +94,22 @@
                     android:layout_marginTop="8dp"
                     android:text="Dark mode"
                     android:textColor="@color/onSurface" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swSaveSiteData"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Save site data (stay logged in)"
+                    android:textColor="@color/onSurface" />
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/swCache"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Cache pages for faster loading"
+                    android:textColor="@color/onSurface" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -138,6 +154,6 @@
             android:gravity="center"
             android:textColor="@color/onSurfaceVariant"
             android:textSize="11sp"
-            android:text="LightBrowser v2.1 — Material 3, WebView-based" />
+            android:text="LightBrowser v2.3 — Material 3, Alpine terminal" />
     </LinearLayout>
 </ScrollView>

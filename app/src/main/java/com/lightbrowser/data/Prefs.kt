@@ -22,9 +22,18 @@ object Prefs {
     var adBlock: Boolean
         get() = p(AppCtx.ctx).getBoolean("adblock", false)
         set(v) { p(AppCtx.ctx).edit().putBoolean("adblock", v).apply() }
+
+    /** Persist cookies & localStorage so logins survive app restarts. */
+    var saveSiteData: Boolean
+        get() = p(AppCtx.ctx).getBoolean("save_site_data", true)
+        set(v) { p(AppCtx.ctx).edit().putBoolean("save_site_data", v).apply() }
+
+    /** Enable HTTP cache for faster revisits. */
+    var cacheEnabled: Boolean
+        get() = p(AppCtx.ctx).getBoolean("cache_enabled", true)
+        set(v) { p(AppCtx.ctx).edit().putBoolean("cache_enabled", v).apply() }
 }
 
-// tiny app context holder to avoid passing context everywhere for Prefs
 object AppCtx {
     lateinit var ctx: Context
     fun init(c: Context) { ctx = c.applicationContext }

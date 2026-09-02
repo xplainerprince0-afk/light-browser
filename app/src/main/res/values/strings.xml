@@ -19,5 +19,5 @@
     <string name="close_drawer">Close navigation drawer</string>
 
     <!-- Terminal welcome message -->
-    <string name="terminal_welcome">Welcome to LightBrowser Terminal\nSandbox: /data/user/0/com.lightbrowser/files/sandbox\nType \'help\' for commands.\nAll commands run inside sandbox.</string>
+    <string name="terminal_welcome">LightBrowser Terminal (Alpine sandbox)\nType \'help\' for commands · ▲▼ for history\nSandbox: files/sandbox</string>
 </resources>

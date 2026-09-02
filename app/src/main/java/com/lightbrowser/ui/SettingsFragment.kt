@@ -31,8 +31,9 @@ class SettingsFragment : Fragment() {
         b.swJs.isChecked = Prefs.jsEnabled
         b.swDesktop.isChecked = Prefs.desktopMode
         b.swAdblock.isChecked = Prefs.adBlock
+        b.swSaveSiteData.isChecked = Prefs.saveSiteData
+        b.swCache.isChecked = Prefs.cacheEnabled
         
-        // Dark/Light mode
         val isDarkMode = isDarkModeEnabled()
         b.swDarkMode.isChecked = isDarkMode
 
@@ -45,6 +46,14 @@ class SettingsFragment : Fragment() {
         b.swJs.setOnCheckedChangeListener { _, c -> Prefs.jsEnabled = c }
         b.swDesktop.setOnCheckedChangeListener { _, c -> Prefs.desktopMode = c; Toast.makeText(requireContext(), if(c) "Desktop mode ON (restart browser tab)" else "Desktop OFF", Toast.LENGTH_SHORT).show() }
         b.swAdblock.setOnCheckedChangeListener { _, c -> Prefs.adBlock = c }
+        b.swSaveSiteData.setOnCheckedChangeListener { _, c ->
+            Prefs.saveSiteData = c
+            Toast.makeText(requireContext(), if (c) "Login data will be saved" else "Site data won't persist", Toast.LENGTH_SHORT).show()
+        }
+        b.swCache.setOnCheckedChangeListener { _, c ->
+            Prefs.cacheEnabled = c
+            Toast.makeText(requireContext(), if (c) "Cache enabled" else "Cache disabled – reload browser tab", Toast.LENGTH_SHORT).show()
+        }
         
         b.swDarkMode.setOnCheckedChangeListener { _, isChecked ->
             setDarkMode(isChecked)

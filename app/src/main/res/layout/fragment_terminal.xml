@@ -5,16 +5,19 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:background="@color/terminal_bg"
-    android:fitsSystemWindows="true">
+    android:fitsSystemWindows="false">
 
-    <!-- Terminal output area - full screen scrollable -->
+    <!-- Scrollable terminal output – tap/drag to place cursor & select anywhere -->
     <androidx.core.widget.NestedScrollView
         android:id="@+id/svLogs"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:fillViewport="true"
-        android:padding="16dp"
+        android:scrollbars="vertical"
+        android:fadeScrollbars="false"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="8dp"
         android:clipToPadding="false">
 
         <TextView
@@ -22,31 +25,34 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textColor="@color/terminal_text"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:fontFamily="monospace"
             android:textIsSelectable="true"
-            android:lineSpacingExtra="4dp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:lineSpacingExtra="2dp"
             android:text="@string/terminal_welcome" />
     </androidx.core.widget.NestedScrollView>
 
-    <!-- Input line with prompt -->
+    <!-- Input row – Termux-style prompt -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:padding="12dp"
-        android:paddingBottom="8dp">
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="6dp"
+        android:background="#0A0A0A">
 
         <TextView
             android:id="@+id/tvPrompt"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="$ "
-            android:textColor="@color/terminal_text"
-            android:textSize="16sp"
+            android:text="~ $ "
+            android:textColor="@color/terminal_prompt"
+            android:textSize="14sp"
             android:fontFamily="monospace"
-            android:paddingEnd="8dp" />
+            android:paddingEnd="4dp" />
 
         <EditText
             android:id="@+id/etInput"
@@ -54,26 +60,45 @@
             android:layout_weight="1"
             android:layout_height="wrap_content"
             android:background="@android:color/transparent"
-            android:hint="Type command..."
+            android:hint=""
             android:textColor="@color/terminal_text"
             android:textColorHint="#44FF44"
-            android:paddingVertical="12dp"
+            android:paddingVertical="10dp"
             android:singleLine="true"
             android:imeOptions="actionSend"
-            android:inputType="text"
-            android:textSize="16sp"
+            android:inputType="textNoSuggestions"
+            android:textSize="14sp"
             android:fontFamily="monospace" />
 
+        <TextView
+            android:id="@+id/btnHistUp"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="▲"
+            android:textColor="@color/terminal_text_dim"
+            android:textSize="12sp"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <TextView
+            android:id="@+id/btnHistDown"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="▼"
+            android:textColor="@color/terminal_text_dim"
+            android:textSize="12sp"
+            android:background="?attr/selectableItemBackgroundBorderless" />
     </LinearLayout>
 
-    <!-- Bottom toolbar -->
+    <!-- Bottom toolbar: Clear | Copy | Scripts -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="48dp"
         android:orientation="horizontal"
         android:gravity="center"
-        android:padding="12dp"
-        android:background="#11000000">
+        android:background="#111111"
+        android:paddingHorizontal="8dp">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnClear"
@@ -81,14 +106,12 @@
             android:layout_weight="1"
             android:layout_height="40dp"
             android:text="Clear"
-            android:textSize="12sp"
+            android:textSize="13sp"
             android:textColor="@color/terminal_text"
             style="@style/Widget.Material3.Button.TextButton"
             app:cornerRadius="8dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
-
-        <View android:layout_width="12dp" android:layout_height="0dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCopy"
@@ -96,14 +119,12 @@
             android:layout_weight="1"
             android:layout_height="40dp"
             android:text="Copy"
-            android:textSize="12sp"
+            android:textSize="13sp"
             android:textColor="@color/terminal_text"
             style="@style/Widget.Material3.Button.TextButton"
             app:cornerRadius="8dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
-
-        <View android:layout_width="12dp" android:layout_height="0dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnScripts"
@@ -111,28 +132,11 @@
             android:layout_weight="1"
             android:layout_height="40dp"
             android:text="Scripts"
-            android:textSize="12sp"
+            android:textSize="13sp"
             android:textColor="@color/terminal_text"
             style="@style/Widget.Material3.Button.TextButton"
             app:cornerRadius="8dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
-
-        <View android:layout_width="12dp" android:layout_height="0dp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnDrawer"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:text="☰"
-            android:textSize="20sp"
-            android:textColor="@color/terminal_text"
-            style="@style/Widget.Material3.Button.TextButton"
-            app:cornerRadius="8dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
-
     </LinearLayout>
-
 </LinearLayout>

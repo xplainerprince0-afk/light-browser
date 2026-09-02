@@ -43,9 +43,10 @@
 
     <!-- Terminal colors -->
     <color name="terminal_bg">#000000</color>
-    <color name="terminal_text">#00FF00</color>
-    <color name="terminal_text_dim">#88FF88</color>
-    <color name="terminal_cursor">#00FF00</color>
+    <color name="terminal_text">#00FF41</color>
+    <color name="terminal_text_dim">#88CC88</color>
+    <color name="terminal_prompt">#FFFFFF</color>
+    <color name="terminal_cursor">#00FF41</color>
 
     <!-- Info icon -->
     <color name="info_blue">#3B82F6</color>
