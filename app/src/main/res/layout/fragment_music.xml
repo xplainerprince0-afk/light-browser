@@ -1,43 +1,76 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg_dark"
-    android:padding="12dp">
+    android:background="@color/bg_dark">
 
-    <!-- Cover Art & Title Card -->
-    <com.google.android.material.card.MaterialCardView
+    <!-- Novel List View (shown when no novel is selected) -->
+    <FrameLayout
+        android:id="@+id/novelListContainer"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        app:cardCornerRadius="20dp"
-        app:cardBackgroundColor="@color/surface"
-        app:strokeColor="#1AFFFFFF"
-        app:strokeWidth="1dp"
-        app:cardElevation="2dp">
+        android:layout_height="match_parent"
+        android:visibility="visible">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/novelRecycler"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="12dp" />
+
+        <TextView
+            android:id="@+id/novelEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="No audiobooks found\nTap 'Pick Library' to select a folder\nStructure: Library/Novel/audio/*.mp3 + cover.jpg"
+            android:textColor="#66FFFFFF"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- Full-screen Player View (shown when novel is selected) -->
+    <FrameLayout
+        android:id="@+id/playerContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <!-- Cover Art Background -->
+        <ImageView
+            android:id="@+id/playerCoverBg"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:alpha="0.15" />
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:orientation="vertical"
-            android:padding="16dp"
-            android:gravity="center">
+            android:padding="16dp">
 
+            <!-- Cover Art -->
             <ImageView
-                android:id="@+id/imgCover"
-                android:layout_width="180dp"
-                android:layout_height="180dp"
+                android:id="@+id/playerCover"
+                android:layout_width="200dp"
+                android:layout_height="200dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="24dp"
                 android:layout_marginBottom="16dp"
                 android:background="@drawable/bg_url_bar"
-                android:scaleType="centerCrop"
-                android:visibility="visible" />
+                android:scaleType="centerCrop" />
 
+            <!-- Novel Title -->
             <TextView
-                android:id="@+id/tvNovelTitle"
+                android:id="@+id/playerNovelTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Select a Novel"
+                android:layout_marginTop="8dp"
+                android:text="Novel Title"
                 android:textColor="@color/white"
                 android:textSize="18sp"
                 android:textStyle="bold"
@@ -45,36 +78,61 @@
                 android:ellipsize="marquee"
                 android:singleLine="true" />
 
+            <!-- Chapter Title -->
             <TextView
-                android:id="@+id/tvChapterTitle"
+                android:id="@+id/playerChapterTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="—"
+                android:layout_marginTop="4dp"
+                android:text="Chapter Title"
                 android:textColor="#99FFFFFF"
                 android:textSize="14sp"
                 android:gravity="center"
                 android:ellipsize="marquee"
                 android:singleLine="true" />
 
-            <SeekBar
-                android:id="@+id/seekBar"
+            <!-- Progress Info -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="20dp"
-                android:thumbTint="@color/purple_500"
-                android:progressTint="@color/purple_500"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:paddingHorizontal="24dp">
+
+                <TextView
+                    android:id="@+id/playerProgress"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="0% • 0:00:00 / 0:00:00"
+                    android:textColor="#99FFFFFF"
+                    android:textSize="12sp"
+                    android:gravity="center" />
+
+            </LinearLayout>
+
+            <!-- Seek Bar -->
+            <SeekBar
+                android:id="@+id/playerSeekBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:thumbTint="@color/teal_500"
+                android:progressTint="@color/teal_500"
                 android:progressBackgroundTint="#1AFFFFFF" />
 
+            <!-- Time Labels -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:layout_marginTop="8dp">
+                android:layout_marginTop="4dp"
+                android:paddingHorizontal="8dp">
 
                 <TextView
-                    android:id="@+id/tvCurrent"
+                    android:id="@+id/playerCurrentTime"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0:00"
@@ -88,7 +146,7 @@
                     android:layout_weight="1" />
 
                 <TextView
-                    android:id="@+id/tvDuration"
+                    android:id="@+id/playerDuration"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="0:00"
@@ -97,181 +155,102 @@
                     android:fontFamily="monospace" />
             </LinearLayout>
 
-            <!-- Playback Controls with Seek Buttons -->
+            <!-- Playback Controls -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center"
-                android:layout_marginTop="16dp">
+                android:layout_marginTop="24dp"
+                android:layout_marginBottom="16dp">
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSeekBack"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginEnd="8dp"
-                    android:text="-10s"
-                    android:textSize="12sp"
-                    android:textColor="?attr/colorOnSurface"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    app:cornerRadius="12dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPrev"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginEnd="8dp"
+                    android:id="@+id/playerBtnPrev"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_marginEnd="16dp"
                     android:text="⏮"
-                    android:textSize="16sp"
+                    android:textSize="20sp"
                     android:textColor="?attr/colorOnSurface"
                     style="@style/Widget.Material3.Button.OutlinedButton"
-                    app:cornerRadius="12dp"
+                    app:cornerRadius="28dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnPlay"
-                    android:layout_width="64dp"
-                    android:layout_height="64dp"
-                    android:layout_marginHorizontal="12dp"
+                    android:id="@+id/playerBtnPlay"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
+                    android:layout_marginHorizontal="16dp"
                     android:text="▶"
-                    android:textSize="20sp"
+                    android:textSize="24sp"
                     android:textColor="?attr/colorOnPrimary"
                     style="@style/Widget.Material3.Button"
-                    app:cornerRadius="32dp"
+                    app:cornerRadius="36dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp" />
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnNext"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginStart="8dp"
+                    android:id="@+id/playerBtnNext"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_marginStart="16dp"
                     android:text="⏭"
-                    android:textSize="16sp"
+                    android:textSize="20sp"
                     android:textColor="?attr/colorOnSurface"
                     style="@style/Widget.Material3.Button.OutlinedButton"
-                    app:cornerRadius="12dp"
+                    app:cornerRadius="28dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSeekForward"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginStart="8dp"
-                    android:text="+10s"
-                    android:textSize="12sp"
-                    android:textColor="?attr/colorOnSurface"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    app:cornerRadius="12dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp" />
             </LinearLayout>
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
 
-    <!-- Library Controls -->
+            <!-- Chapter List Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/playerBtnChapters"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="16dp"
+                android:text="Chapters"
+                android:textSize="14sp"
+                android:textColor="?attr/colorOnSurface"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                app:cornerRadius="24dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp" />
+
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- Top Bar with Library Picker -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:layout_marginTop="12dp">
+        android:padding="12dp"
+        android:background="@color/surface">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnOverflow"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginEnd="8dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:text="⋮"
-            android:textSize="20sp"
-            android:textColor="?attr/colorOnSurface"
-            style="@style/Widget.Material3.Button.TextButton"
-            app:cornerRadius="12dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Audiobooks"
+            android:textColor="@color/white"
+            android:textSize="18sp"
+            android:textStyle="bold" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPickLibrary"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
             android:text="Pick Library"
-            android:textSize="11sp"
+            android:textSize="12sp"
             android:textColor="?attr/colorOnPrimaryContainer"
             style="@style/Widget.Material3.Button"
             app:cornerRadius="12dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
 
-        <View android:layout_width="8dp" android:layout_height="0dp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSwitchNovel"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:text="Switch Novel"
-            android:textSize="11sp"
-            android:textColor="?attr/colorOnPrimaryContainer"
-            style="@style/Widget.Material3.Button"
-            app:cornerRadius="12dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
-
-        <View android:layout_width="8dp" android:layout_height="0dp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnStop"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:text="Stop"
-            android:textSize="11sp"
-            android:textColor="?attr/colorOnPrimaryContainer"
-            style="@style/Widget.Material3.Button"
-            app:cornerRadius="12dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
     </LinearLayout>
-
-    <!-- Chapters List -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:layout_marginBottom="4dp"
-        android:text="Chapters"
-        android:textColor="@color/white"
-        android:textSize="14sp"
-        android:textStyle="bold" />
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/recycler"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:layout_marginTop="4dp"
-        android:clipToPadding="false"
-        android:padding="4dp" />
-
-    <TextView
-        android:id="@+id/empty"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:text="No audiobook library selected\nTap 'Pick Library' to choose a folder\nStructure: Library/Novel/Chapters.mp3 + cover.jpg"
-        android:textColor="#66FFFFFF"
-        android:visibility="gone" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Audiobook Player • MediaPlayer • Numeric chapter sorting • Pauses when hidden"
-        android:textColor="#44FFFFFF"
-        android:textSize="10sp"
-        android:gravity="center" />
 </LinearLayout>

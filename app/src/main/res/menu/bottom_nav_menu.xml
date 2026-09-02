@@ -3,5 +3,6 @@
     <item android:id="@+id/nav_browser" android:title="Browser" android:icon="@drawable/ic_web"/>
     <item android:id="@+id/nav_filemanager" android:title="Sandbox" android:icon="@drawable/ic_folder"/>
     <item android:id="@+id/nav_music" android:title="Player" android:icon="@drawable/ic_audio"/>
+    <item android:id="@+id/nav_terminal" android:title="Terminal" android:icon="@drawable/ic_terminal"/>
     <item android:id="@+id/nav_settings" android:title="Settings" android:icon="@drawable/ic_settings"/>
 </menu>

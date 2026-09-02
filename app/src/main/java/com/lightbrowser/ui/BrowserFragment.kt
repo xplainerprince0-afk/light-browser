@@ -276,7 +276,7 @@ class BrowserFragment : Fragment() {
         }
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
-        binding.btnMore.setOnClickListener { showMoreMenuBottomSheet(it) }
+        binding.btnMore.setOnClickListener { showMoreMenuSlideIn(it) }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
@@ -575,64 +575,95 @@ class BrowserFragment : Fragment() {
         }
     }
 
-    private fun showMoreMenuBottomSheet(anchor: View) {
-        try {
-            val ctx = requireContext()
-            val bottomSheet = com.google.android.material.bottomsheet.BottomSheetDialog(ctx, com.google.android.material.R.style.Widget_Material3_BottomSheet_Modal)
-            
-            val view = LayoutInflater.from(ctx).inflate(R.layout.bottomsheet_browser_menu, null)
-            bottomSheet.setContentView(view)
-            
-            val recycler = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.menuRecycler)
-            recycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
-            
-            val menuItems = listOf(
-                MenuItemData("↻", "Refresh", R.drawable.ic_refresh, { binding.webView.reload() }),
-                MenuItemData("⭐", "Bookmark this page", R.drawable.ic_bookmark, { toggleBookmark() }),
-                MenuItemData("🧪", "Tester", R.drawable.ic_bug_report, { showTestDialog() }),
-                MenuItemData("📜", "Scripts", R.drawable.ic_code, { showScriptsDialog() }),
-                MenuItemData("⬇️", "Downloads", R.drawable.ic_download, { showDownloadsDialog() }),
-                MenuItemData("⚙️", "Settings", R.drawable.ic_settings, { showSettingsDialog() }),
-                MenuItemData("🕘", "History", R.drawable.ic_history, { showHistoryDialog() }),
-                MenuItemData("⭐", "Bookmarks", R.drawable.ic_bookmark, { showBookmarksDialog() }),
-                MenuItemData("🖥️", "Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", R.drawable.ic_desktop, { 
-                    Prefs.desktopMode = !Prefs.desktopMode
-                    Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
-                    binding.webView.reload()
-                }),
-                MenuItemData("🧹", "Clear cache", R.drawable.ic_clear, { 
-                    try {
-                        CookieManager.getInstance().removeAllCookies(null)
-                        android.webkit.WebStorage.getInstance().deleteAllData()
-                        ctx.cacheDir.deleteRecursively()
-                        Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
-                })
-            )
-            
-            recycler.adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<MenuViewHolder>() {
-                override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MenuViewHolder {
-                    val v = LayoutInflater.from(parent.context).inflate(R.layout.item_menu, parent, false)
-                    return MenuViewHolder(v)
-                }
-                override fun onBindViewHolder(holder: MenuViewHolder, position: Int) {
-                    val item = menuItems[position]
-                    holder.icon.setImageResource(item.iconRes)
-                    holder.title.text = item.title
-                    holder.itemView.setOnClickListener {
-                        item.action.invoke()
-                        bottomSheet.dismiss()
-                    }
-                }
-                override fun getItemCount() = menuItems.size
-            }
-            
-            bottomSheet.show()
-            return
-        } catch (_: Exception) {}
+    private fun showMoreMenuSlideIn(anchor: View) {
+        val ctx = requireContext()
         
-        // Fallback to old menu if bottom sheet fails
-        showMoreMenuLegacy(anchor)
+        // Inflate the slide-in menu layout
+        val menuView = LayoutInflater.from(ctx).inflate(R.layout.slidein_browser_menu, null)
+        
+        // Get references
+        val overlay = menuView.findViewById<View>(R.id.menuOverlay)
+        val panel = menuView.findViewById<LinearLayout>(R.id.menuPanel)
+        val recycler = menuView.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.menuRecycler)
+        
+        // Add to root view (activity's decor view)
+        val decorView = activity?.window?.decorView?.rootView as? ViewGroup
+        decorView?.addView(menuView)
+        
+        // Setup RecyclerView
+        recycler.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(ctx)
+        
+        val menuItems = listOf(
+            MenuItemData("↻", "Refresh", R.drawable.ic_refresh, { binding.webView.reload(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⭐", "Bookmark this page", R.drawable.ic_bookmark, { toggleBookmark(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("🧪", "Tester", R.drawable.ic_bug_report, { showTestDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("📜", "Scripts", R.drawable.ic_code, { showScriptsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⬇️", "Downloads", R.drawable.ic_download, { showDownloadsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⚙️", "Settings", R.drawable.ic_settings, { showSettingsDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("🕘", "History", R.drawable.ic_history, { showHistoryDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("⭐", "Bookmarks", R.drawable.ic_bookmark, { showBookmarksDialog(); closeSlideInMenu(panel, overlay, decorView) }),
+            MenuItemData("🖥️", "Desktop: ${if (Prefs.desktopMode) "ON" else "OFF"}", R.drawable.ic_desktop, { 
+                Prefs.desktopMode = !Prefs.desktopMode
+                Toast.makeText(ctx, if (Prefs.desktopMode) "Desktop ON – reload" else "Desktop OFF – reload", Toast.LENGTH_SHORT).show()
+                binding.webView.reload()
+                closeSlideInMenu(panel, overlay, decorView)
+            }),
+            MenuItemData("🧹", "Clear cache", R.drawable.ic_clear, { 
+                try {
+                    CookieManager.getInstance().removeAllCookies(null)
+                    android.webkit.WebStorage.getInstance().deleteAllData()
+                    ctx.cacheDir.deleteRecursively()
+                    Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
+                closeSlideInMenu(panel, overlay, decorView)
+            })
+        )
+        
+        recycler.adapter = object : androidx.recyclerview.widget.RecyclerView.Adapter<MenuViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MenuViewHolder {
+                val v = LayoutInflater.from(parent.context).inflate(R.layout.item_menu, parent, false)
+                return MenuViewHolder(v)
+            }
+            override fun onBindViewHolder(holder: MenuViewHolder, position: Int) {
+                val item = menuItems[position]
+                holder.icon.setImageResource(item.iconRes)
+                holder.title.text = item.title
+                holder.itemView.setOnClickListener {
+                    item.action.invoke()
+                }
+            }
+            override fun getItemCount() = menuItems.size
+        }
+        
+        // Animate in
+        animateSlideIn(panel, overlay)
+        
+        // Close on overlay click
+        overlay.setOnClickListener { closeSlideInMenu(panel, overlay, decorView) }
+    }
+    
+    private fun animateSlideIn(panel: LinearLayout, overlay: View) {
+        overlay.visibility = View.VISIBLE
+        overlay.animate().alpha(1f).setDuration(200).start()
+        panel.animate().translationX(0f).setDuration(250).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+    }
+    
+    private fun closeSlideInMenu(panel: LinearLayout, overlay: View, decorView: ViewGroup?) {
+        panel.animate()
+            .translationX(panel.width.toFloat())
+            .setDuration(200)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction {
+                decorView?.removeView(panel.parent as? View)
+            }
+            .start()
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(200)
+            .withEndAction {
+                overlay.visibility = View.GONE
+            }
+            .start()
     }
 
     private fun showMoreMenuLegacy(anchor: View) {

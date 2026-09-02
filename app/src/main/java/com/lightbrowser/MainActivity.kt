@@ -13,6 +13,7 @@ import com.lightbrowser.ui.BrowserFragment
 import com.lightbrowser.ui.FileManagerFragment
 import com.lightbrowser.ui.MusicPlayerFragment
 import com.lightbrowser.ui.SettingsFragment
+import com.lightbrowser.ui.TerminalFragment
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -26,6 +27,7 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_browser -> BrowserFragment()
             R.id.nav_filemanager -> FileManagerFragment()
             R.id.nav_music -> MusicPlayerFragment()
+            R.id.nav_terminal -> TerminalFragment()
             R.id.nav_settings -> SettingsFragment()
             else -> BrowserFragment()
         }
@@ -58,6 +60,7 @@ class MainActivity : AppCompatActivity() {
                     is BrowserFragment -> R.id.nav_browser
                     is FileManagerFragment -> R.id.nav_filemanager
                     is MusicPlayerFragment -> R.id.nav_music
+                    is TerminalFragment -> R.id.nav_terminal
                     else -> null
                 }
                 if (id != null) fragments[id] = f
@@ -110,7 +113,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncBottomNav(id: Int) {
-        if (id != R.id.nav_browser && id != R.id.nav_filemanager && id != R.id.nav_music && id != R.id.nav_settings) return
+        if (id != R.id.nav_browser && id != R.id.nav_filemanager && id != R.id.nav_music && id != R.id.nav_terminal && id != R.id.nav_settings) return
         try {
             if (binding.bottomNav.selectedItemId == id) return
             isNavSyncing = true

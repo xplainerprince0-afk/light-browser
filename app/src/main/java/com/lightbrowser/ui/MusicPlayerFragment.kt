@@ -24,6 +24,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentMusicBinding
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,7 @@ class MusicPlayerFragment : Fragment() {
     private var libraryUri: Uri? = null
     private var novels: List<Novel> = emptyList()
     private var currentNovelIndex = -1
+    private var isPlayerViewVisible = false
 
     private var folderPicker: ActivityResultLauncher<Uri?>? = null
     private var importFolderPicker: ActivityResultLauncher<Uri?>? = null
@@ -60,19 +62,42 @@ class MusicPlayerFragment : Fragment() {
         val name: String,
         val directory: DocumentFile,
         val cover: DocumentFile?,
-        val chapters: List<Chapter>
-    )
+        val chapters: List<Chapter>,
+        val totalDuration: Long = 0,
+        val playedDuration: Long = 0
+    ) {
+        val progressPercent: Int
+            get() = if (totalDuration > 0) ((playedDuration * 100) / totalDuration).toInt() else 0
+        val formattedTotalDuration: String
+            get() = formatDuration(totalDuration)
+    }
 
     data class Chapter(
         val title: String,
         val file: DocumentFile,
         val index: Int,
-        val novelName: String
-    )
+        val novelName: String,
+        val duration: Long = 0
+    ) {
+        val formattedDuration: String
+            get() = formatDuration(duration)
+    }
+
+    companion object {
+        fun formatDuration(ms: Long): String {
+            if (ms <= 0) return "0:00"
+            val s = ms / 1000
+            val h = s / 3600
+            val m = (s % 3600) / 60
+            val sec = s % 60
+            return if (h > 0) String.format("%d:%02d:%02d", h, m, sec)
+            else String.format("%d:%02d", m, sec)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         // Restricted folder picker - only allows picking from sandbox
         try {
             folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
@@ -109,10 +134,25 @@ class MusicPlayerFragment : Fragment() {
                 if (bb != null && p != null && try { p.isPlaying } catch (_: Exception) { false } && !isSeeking) {
                     val pos = try { p.currentPosition } catch (_: Exception) { 0 }
                     val dur = try { p.duration } catch (_: Exception) { 0 }
-                    try { bb.seekBar.max = if (dur > 0) dur else 100 } catch (_: Exception) {}
-                    try { bb.seekBar.progress = pos } catch (_: Exception) {}
-                    try { bb.tvCurrent.text = fmt(pos) } catch (_: Exception) {}
-                    try { bb.tvDuration.text = fmt(dur) } catch (_: Exception) {}
+                    try { bb.playerSeekBar.max = if (dur > 0) dur else 100 } catch (_: Exception) {}
+                    try { bb.playerSeekBar.progress = pos } catch (_: Exception) {}
+                    try { bb.playerCurrentTime.text = companion.formatDuration(pos.toLong()) } catch (_: Exception) {}
+                    try { bb.playerDuration.text = companion.formatDuration(dur.toLong()) } catch (_: Exception) {}
+                    
+                    // Update chapter progress in novel list
+                    if (currentNovelIndex >= 0 && currentNovelIndex < novels.size) {
+                        val novel = novels[currentNovelIndex]
+                        val updatedChapters = novel.chapters.toMutableList()
+                        if (currentChapterIndex >= 0 && currentChapterIndex < updatedChapters.size) {
+                            val currentChapter = updatedChapters[currentChapterIndex]
+                            val playedMs = pos.toLong() + updatedChapters.take(currentChapterIndex).sumOf { it.duration }
+                            val updatedNovel = novel.copy(
+                                playedDuration = playedMs
+                            )
+                            novels = novels.toMutableList().apply { this[currentNovelIndex] = updatedNovel }
+                            runOnUiThread { updateNovelList() }
+                        }
+                    }
                 }
                 handler.postDelayed(this, 500)
             } catch (_: Exception) { try { handler.postDelayed(this, 500) } catch (_: Exception) {} }
@@ -132,25 +172,32 @@ class MusicPlayerFragment : Fragment() {
     override fun onViewCreated(v: View, s: Bundle?) {
         try {
             val bb = _b ?: return
-            try { bb.recycler.layoutManager = LinearLayoutManager(requireContext()) } catch (e: Exception) { Log.e("Audiobook", "layoutManager", e) }
-            try { bb.btnPickLibrary.setOnClickListener { try { pickLibraryFromSandbox() } catch (e: Exception) { safeToast(e.message) } } } catch (_: Exception) {}
-            try { bb.btnSwitchNovel.setOnClickListener { try { showNovelSwitcher() } catch (e: Exception) { safeToast(e.message) } } } catch (_: Exception) {}
-            try { bb.btnStop.setOnClickListener { try { stop() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnOverflow.setOnClickListener { try { showOverflowMenu() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnPlay.setOnClickListener { try { toggle() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnPrev.setOnClickListener { try { prevChapter() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnNext.setOnClickListener { try { nextChapter() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnSeekBack.setOnClickListener { try { seekRelative(-10000) } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnSeekForward.setOnClickListener { try { seekRelative(10000) } catch (_: Exception) {} } } catch (_: Exception) {}
-            try {
-                bb.seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { if (fromUser) try { bb.tvCurrent.text = fmt(p) } catch (_: Exception) {} }
-                    override fun onStartTrackingTouch(sb: SeekBar?) { isSeeking = true }
-                    override fun onStopTrackingTouch(sb: SeekBar?) { isSeeking = false; try { player?.seekTo(sb?.progress ?: 0) } catch (_: Exception) {} }
-                })
-            } catch (_: Exception) {}
+            
+            // Setup novel list recycler
+            bb.novelRecycler.layoutManager = LinearLayoutManager(requireContext())
+            bb.novelRecycler.adapter = NovelAdapter()
+            
+            // Setup player view
+            bb.playerSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) { 
+                    if (fromUser) try { bb.playerCurrentTime.text = companion.formatDuration(p.toLong()) } catch (_: Exception) {} 
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) { isSeeking = true }
+                override fun onStopTrackingTouch(sb: SeekBar?) { isSeeking = false; try { player?.seekTo(sb?.progress ?: 0) } catch (_: Exception) {} }
+            })
+
+            // Button listeners
+            bb.btnPickLibrary.setOnClickListener { try { pickLibraryFromSandbox() } catch (e: Exception) { safeToast(e.message) } }
+            bb.playerBtnPlay.setOnClickListener { try { toggle() } catch (_: Exception) {} }
+            bb.playerBtnPrev.setOnClickListener { try { prevChapter() } catch (_: Exception) {} }
+            bb.playerBtnNext.setOnClickListener { try { nextChapter() } catch (_: Exception) {} }
+            bb.playerBtnChapters.setOnClickListener { showChaptersBottomSheet() }
+            
             try { handler.post(updateRunnable) } catch (_: Exception) {}
             loadPersistedLibrary()
+            
+            // Show appropriate view
+            showNovelList()
         } catch (e: Exception) {
             Log.e("Audiobook", "onViewCreated crash", e)
             safeToast("Audiobook error: ${e.message}")
@@ -167,11 +214,6 @@ class MusicPlayerFragment : Fragment() {
             safeToast("Sandbox unavailable")
             return
         }
-
-        // Create a document tree URI for the sandbox
-        val sandboxUri = Uri.fromFile(sandboxDir)
-        
-        // Show a custom dialog to pick from sandbox subdirectories
         showSandboxLibraryPicker(sandboxDir)
     }
 
@@ -232,7 +274,6 @@ class MusicPlayerFragment : Fragment() {
 
             libraryRoot.listFiles()?.forEach { novelDir ->
                 if (novelDir.isDirectory) {
-                    // Check if this directory has an 'audio' subfolder
                     var audioDir: DocumentFile? = null
                     var coverFile: DocumentFile? = null
                     var hasAudioFilesDirectly = false
@@ -250,13 +291,12 @@ class MusicPlayerFragment : Fragment() {
                         }
                     }
 
-                    // Edge case 1: User picked the novel folder itself (has audio/ subfolder)
-                    // Edge case 2: User picked the audio/ folder directly
                     val chapterSource = audioDir ?: if (hasAudioFilesDirectly) novelDir else null
                     
                     if (chapterSource != null) {
                         val novelName = novelDir.name ?: "Unknown Novel"
                         val chapterList = mutableListOf<Chapter>()
+                        var totalDuration = 0L
 
                         chapterSource.listFiles()?.forEach { file ->
                             if (file.isFile) {
@@ -264,33 +304,31 @@ class MusicPlayerFragment : Fragment() {
                                 if (name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".opus") || name.endsWith(".ogg")) {
                                     val chapterTitle = file.name?.substringBeforeLast(".") ?: file.name ?: "Unknown"
                                     val index = extractChapterNumber(chapterTitle)
-                                    chapterList.add(Chapter(chapterTitle, file, index, novelName))
+                                    val duration = getAudioDuration(file)
+                                    chapterList.add(Chapter(chapterTitle, file, index, novelName, duration))
+                                    totalDuration += duration
                                 }
                             }
                         }
 
                         if (chapterList.isNotEmpty()) {
-                            // Sort chapters numerically
                             chapterList.sortWith(compareBy<Chapter> { it.index }.thenBy { it.title.lowercase() })
-
-                            val novel = Novel(novelName, novelDir, coverFile, chapterList)
+                            val novel = Novel(novelName, novelDir, coverFile, chapterList, totalDuration, 0L)
                             novelList.add(novel)
                         }
                     }
                 }
             }
 
-            // Edge case: If user picked the audio/ folder directly (parent is novel folder)
             if (novelList.isEmpty()) {
-                // Check if libraryRoot.name is "audio" - if so, use its parent directory's name
                 val parentName = if (libraryRoot.name?.lowercase() == "audio") {
-                    // Need to get parent DocumentFile - we can't directly, so use the libraryUri path
                     "Unknown Novel"
                 } else {
                     libraryRoot.name ?: "Unknown Novel"
                 }
                 val chapterList = mutableListOf<Chapter>()
                 var coverFile: DocumentFile? = null
+                var totalDuration = 0L
 
                 libraryRoot.listFiles()?.forEach { file ->
                     if (file.isFile) {
@@ -298,7 +336,9 @@ class MusicPlayerFragment : Fragment() {
                         if (name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".opus") || name.endsWith(".ogg")) {
                             val chapterTitle = file.name?.substringBeforeLast(".") ?: file.name ?: "Unknown"
                             val index = extractChapterNumber(chapterTitle)
-                            chapterList.add(Chapter(chapterTitle, file, index, parentName))
+                            val duration = getAudioDuration(file)
+                            chapterList.add(Chapter(chapterTitle, file, index, parentName, duration))
+                            totalDuration += duration
                         } else if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp")) {
                             if (coverFile == null) coverFile = file
                         }
@@ -307,24 +347,37 @@ class MusicPlayerFragment : Fragment() {
 
                 if (chapterList.isNotEmpty()) {
                     chapterList.sortWith(compareBy<Chapter> { it.index }.thenBy { it.title.lowercase() })
-                    val novel = Novel(parentName, libraryRoot, coverFile, chapterList)
+                    val novel = Novel(parentName, libraryRoot, coverFile, chapterList, totalDuration, 0L)
                     novelList.add(novel)
                 }
             }
 
-            // Sort novels by name
             novelList.sortBy { it.name.lowercase() }
-
             novels = novelList
-            if (novels.isNotEmpty() && currentNovelIndex == -1) {
-                selectNovel(0)
-            } else {
+            
+            runOnUiThread {
                 updateNovelList()
+                if (novels.isNotEmpty() && currentNovelIndex == -1) {
+                    // Don't auto-select, let user choose
+                    showNovelList()
+                }
             }
             safeToast("Found ${novels.size} novel(s) in library")
         } catch (e: Exception) {
             Log.e("Audiobook", "scanLibraryFromDocumentFile", e)
             safeToast("Scan failed: ${e.message}")
+        }
+    }
+
+    private fun getAudioDuration(file: DocumentFile): Long {
+        try {
+            val mmr = MediaMetadataRetriever()
+            mmr.setDataSource(requireContext(), file.uri)
+            val durationStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            mmr.release()
+            return durationStr?.toLongOrNull() ?: 0L
+        } catch (_: Exception) {
+            return 0L
         }
     }
 
@@ -340,56 +393,94 @@ class MusicPlayerFragment : Fragment() {
         val novel = novels[index]
         chapters = novel.chapters
         currentChapterIndex = -1
-        updateNovelUI(novel)
-        updateChapterList()
+        showPlayerView(novel)
         safeToast("Loaded: ${novel.name} (${chapters.size} chapters)")
     }
 
-    private fun updateNovelUI(novel: Novel) {
+    private fun showNovelList() {
+        isPlayerViewVisible = false
         val bb = _b ?: return
-        try { bb.tvNovelTitle.text = novel.name } catch (_: Exception) {}
-        try { bb.tvChapterTitle.text = "Select a chapter" } catch (_: Exception) {}
+        bb.novelListContainer.visibility = View.VISIBLE
+        bb.playerContainer.visibility = View.GONE
+        updateNovelList()
+    }
+
+    private fun showPlayerView(novel: Novel) {
+        isPlayerViewVisible = true
+        val bb = _b ?: return
+        bb.novelListContainer.visibility = View.GONE
+        bb.playerContainer.visibility = View.VISIBLE
+        
+        // Load cover
         novel.cover?.let { cover ->
             try {
                 val input = requireContext().contentResolver.openInputStream(cover.uri)
                 input?.use { stream ->
                     val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
-                    bb.imgCover.setImageBitmap(bitmap)
-                    bb.imgCover.visibility = View.VISIBLE
+                    bb.playerCover.setImageBitmap(bitmap)
+                    bb.playerCoverBg.setImageBitmap(bitmap)
                 }
-            } catch (_: Exception) { try { bb.imgCover.visibility = View.GONE } catch (_: Exception) {} }
-        } ?: run { try { bb.imgCover.visibility = View.GONE } catch (_: Exception) {} }
+            } catch (_: Exception) { 
+                bb.playerCover.setImageResource(R.drawable.bg_url_bar)
+                bb.playerCoverBg.setImageResource(R.drawable.bg_url_bar)
+            }
+        } ?: run { 
+            bb.playerCover.setImageResource(R.drawable.bg_url_bar)
+            bb.playerCoverBg.setImageResource(R.drawable.bg_url_bar)
+        }
+        
+        bb.playerNovelTitle.text = novel.name
+        bb.playerChapterTitle.text = "Tap a chapter to play"
+        bb.playerProgress.text = "${novel.progressPercent}% • ${novel.formattedTotalDuration}"
+        bb.playerSeekBar.max = 100
+        bb.playerSeekBar.progress = novel.progressPercent
     }
 
     private fun updateNovelList() {
-        // Could show a list of novels in a dialog
+        val bb = _b ?: return
+        bb.novelEmpty.visibility = if (novels.isEmpty()) View.VISIBLE else View.GONE
+        bb.novelRecycler.visibility = if (novels.isEmpty()) View.GONE else View.VISIBLE
+        (bb.novelRecycler.adapter as? NovelAdapter)?.notifyDataSetChanged()
+    }
+
+    inner class NovelAdapter : RecyclerView.Adapter<NovelViewHolder>() {
+        override fun onCreateViewHolder(p: ViewGroup, t: Int): NovelViewHolder {
+            val v = LayoutInflater.from(p.context).inflate(R.layout.item_novel, p, false)
+            return NovelViewHolder(v)
+        }
+        override fun onBindViewHolder(h: NovelViewHolder, i: Int) {
+            val novel = novels[i]
+            h.title.text = novel.name
+            h.duration.text = novel.formattedTotalDuration
+            h.progressText.text = "${novel.progressPercent}%"
+            h.progressBar.progress = novel.progressPercent
+            
+            // Load cover thumbnail
+            novel.cover?.let { cover ->
+                try {
+                    val input = requireContext().contentResolver.openInputStream(cover.uri)
+                    input?.use { stream ->
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                        h.cover.setImageBitmap(bitmap)
+                    }
+                } catch (_: Exception) { h.cover.setImageResource(R.drawable.bg_url_bar) }
+            } ?: run { h.cover.setImageResource(R.drawable.bg_url_bar) }
+            
+            h.itemView.setOnClickListener { selectNovel(i) }
+        }
+        override fun getItemCount() = novels.size
+    }
+
+    inner class NovelViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val title: TextView = view.findViewById(R.id.novelTitle)
+        val duration: TextView = view.findViewById(R.id.novelDuration)
+        val progressText: TextView = view.findViewById(R.id.novelProgressText)
+        val progressBar: ProgressBar = view.findViewById(R.id.novelProgressBar)
+        val cover: ImageView = view.findViewById(R.id.novelCover)
     }
 
     private fun updateChapterList() {
-        val bb = _b ?: return
-        try { bb.empty.visibility = if (chapters.isEmpty()) View.VISIBLE else View.GONE } catch (_: Exception) {}
-        try { bb.recycler.visibility = if (chapters.isEmpty()) View.GONE else View.VISIBLE } catch (_: Exception) {}
-        try {
-            bb.recycler.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-                override fun onCreateViewHolder(p: ViewGroup, t: Int) =
-                    object : RecyclerView.ViewHolder(LayoutInflater.from(p.context).inflate(R.layout.item_download, p, false)) {}
-                override fun onBindViewHolder(h: RecyclerView.ViewHolder, i: Int) {
-                    try {
-                        val ch = chapters[i]
-                        val title = h.itemView.findViewById<TextView>(R.id.tvTitle)
-                        val status = h.itemView.findViewById<TextView>(R.id.tvStatus)
-                        val icon = h.itemView.findViewById<ImageView>(R.id.ivFileIcon)
-                        icon.setImageResource(R.drawable.ic_audio)
-                        icon.contentDescription = "Audio"
-                        title.text = "${ch.index}. ${ch.title}"
-                        status.text = "Chapter ${ch.index} • Tap to play"
-                        h.itemView.alpha = if (i == currentChapterIndex) 1f else 0.85f
-                        h.itemView.setOnClickListener { try { playChapter(i) } catch (_: Exception) {} }
-                    } catch (_: Exception) {}
-                }
-                override fun getItemCount() = chapters.size
-            }
-        } catch (_: Exception) {}
+        // Called when player is visible - update chapter list in bottom sheet
     }
 
     private fun playChapter(idx: Int) {
@@ -405,16 +496,17 @@ class MusicPlayerFragment : Fragment() {
                     try { start() } catch (_: Exception) {}
                     val bb = _b
                     bb?.let {
-                        try { it.btnPlay.text = "⏸" } catch (_: Exception) {}
-                        try { it.tvChapterTitle.text = "${ch.index}. ${ch.title}" } catch (_: Exception) {}
-                        try { it.tvDuration.text = fmt(duration) } catch (_: Exception) {}
+                        try { it.playerBtnPlay.text = "⏸" } catch (_: Exception) {}
+                        try { it.playerChapterTitle.text = "${ch.index}. ${ch.title}" } catch (_: Exception) {}
+                        try { it.playerDuration.text = ch.formattedDuration } catch (_: Exception) {}
+                        try { it.playerSeekBar.max = ch.duration.toInt() } catch (_: Exception) {}
                     }
                 }
                 setOnCompletionListener { try { nextChapter() } catch (_: Exception) {} }
                 setOnErrorListener { _, what, extra -> safeToast("Error $what/$extra"); true }
                 try { prepareAsync() } catch (e: Exception) { safeToast(e.message) }
             }
-            try { _b?.recycler?.adapter?.notifyDataSetChanged() } catch (_: Exception) {}
+            try { (bb.novelRecycler.adapter as? NovelAdapter)?.notifyDataSetChanged() } catch (_: Exception) {}
         } catch (e: Exception) { safeToast("Play failed: ${e.message}") }
     }
 
@@ -422,11 +514,11 @@ class MusicPlayerFragment : Fragment() {
         try {
             val p = player
             if (p == null) {
-                if (chapters.isNotEmpty()) playChapter(0) else safeToast("Select a novel first")
+                if (chapters.isNotEmpty()) playChapter(0) else safeToast("Select a chapter")
                 return
             }
-            if (try { p.isPlaying } catch (_: Exception) { false }) { try { p.pause() } catch (_: Exception) {}; try { _b?.btnPlay?.text = "▶" } catch (_: Exception) {} }
-            else { try { p.start() } catch (_: Exception) {}; try { _b?.btnPlay?.text = "⏸" } catch (_: Exception) {} }
+            if (try { p.isPlaying } catch (_: Exception) { false }) { try { p.pause() } catch (_: Exception) {}; try { _b?.playerBtnPlay?.text = "▶" } catch (_: Exception) {} }
+            else { try { p.start() } catch (_: Exception) {}; try { _b?.playerBtnPlay?.text = "⏸" } catch (_: Exception) {} }
         } catch (_: Exception) {}
     }
 
@@ -435,25 +527,24 @@ class MusicPlayerFragment : Fragment() {
 
     private fun stop() {
         try { stopPlayer() } catch (_: Exception) {}
-        try { _b?.btnPlay?.text = "▶" } catch (_: Exception) {}
-        try { _b?.tvChapterTitle?.text = "Stopped" } catch (_: Exception) {}
-        try { _b?.seekBar?.progress = 0 } catch (_: Exception) {}
-        try { _b?.tvCurrent?.text = "0:00" } catch (_: Exception) {}
+        try { _b?.playerBtnPlay?.text = "▶" } catch (_: Exception) {}
+        try { _b?.playerChapterTitle?.text = "Stopped" } catch (_: Exception) {}
+        try { _b?.playerSeekBar?.progress = 0 } catch (_: Exception) {}
+        try { _b?.playerCurrentTime?.text = "0:00" } catch (_: Exception) {}
         currentChapterIndex = -1
-        try { _b?.recycler?.adapter?.notifyDataSetChanged() } catch (_: Exception) {}
     }
 
     private fun showOverflowMenu() {
         try {
             val bb = _b ?: return
             val ctx = requireContext()
-            val popup = PopupMenu(ctx, bb.btnOverflow)
+            val popup = PopupMenu(ctx, bb.playerBtnChapters) // Using chapters button as anchor
             popup.menuInflater.inflate(R.menu.audiobook_menu, popup.menu)
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 try {
                     when (item.itemId) {
                         R.id.menu_pick_library -> pickLibraryFromSandbox()
-                        R.id.menu_switch_novel -> showNovelSwitcher()
+                        R.id.menu_switch_novel -> showNovelList()
                         R.id.menu_seek_back -> seekRelative(-10000)
                         R.id.menu_seek_forward -> seekRelative(10000)
                         R.id.menu_scan -> libraryUri?.let { scanLibrary(it) }
@@ -474,17 +565,43 @@ class MusicPlayerFragment : Fragment() {
         } catch (_: Exception) {}
     }
 
-    private fun showNovelSwitcher() {
-        if (novels.isEmpty()) { safeToast("No novels loaded"); return }
-        val items = novels.map { it.name }.toTypedArray()
-        android.app.AlertDialog.Builder(requireContext())
-            .setTitle("Switch Novel")
-            .setSingleChoiceItems(items, currentNovelIndex) { dialog, which ->
-                selectNovel(which)
-                dialog.dismiss()
+    private fun showChaptersBottomSheet() {
+        if (chapters.isEmpty()) { safeToast("No chapters loaded"); return }
+        
+        val bottomSheet = BottomSheetDialog(requireContext())
+        val view = LayoutInflater.from(requireContext()).inflate(R.layout.bottomsheet_chapters, null)
+        bottomSheet.setContentView(view)
+        
+        val recycler = view.findViewById<RecyclerView>(R.id.chapterRecycler)
+        recycler.layoutManager = LinearLayoutManager(requireContext())
+        
+        recycler.adapter = object : RecyclerView.Adapter<ChapterViewHolder>() {
+            override fun onCreateViewHolder(p: ViewGroup, t: Int): ChapterViewHolder {
+                val v = LayoutInflater.from(p.context).inflate(R.layout.item_chapter, p, false)
+                return ChapterViewHolder(v)
             }
-            .setNegativeButton("Cancel", null)
-            .show()
+            override fun onBindViewHolder(h: ChapterViewHolder, i: Int) {
+                val ch = chapters[i]
+                h.number.text = "%03d".format(ch.index)
+                h.title.text = ch.title
+                h.duration.text = ch.formattedDuration
+                h.playingIndicator.visibility = if (i == currentChapterIndex) View.VISIBLE else View.GONE
+                h.itemView.setOnClickListener {
+                    playChapter(i)
+                    bottomSheet.dismiss()
+                }
+            }
+            override fun getItemCount() = chapters.size
+        }
+        
+        bottomSheet.show()
+    }
+
+    inner class ChapterViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val number: TextView = view.findViewById(R.id.chapterNumber)
+        val title: TextView = view.findViewById(R.id.chapterTitle)
+        val duration: TextView = view.findViewById(R.id.chapterDuration)
+        val playingIndicator: ImageView = view.findViewById(R.id.chapterPlayingIndicator)
     }
 
     private fun stopPlayer() { try { player?.stop(); player?.release() } catch (_: Exception) {}; player = null }
@@ -549,7 +666,7 @@ class MusicPlayerFragment : Fragment() {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        try { if (hidden && try { player?.isPlaying == true } catch (_: Exception) { false }) { try { player?.pause() } catch (_: Exception) {}; try { _b?.btnPlay?.text = "▶" } catch (_: Exception) {} } } catch (_: Exception) {}
+        try { if (hidden && try { player?.isPlaying == true } catch (_: Exception) { false }) { try { player?.pause() } catch (_: Exception) {}; try { _b?.playerBtnPlay?.text = "▶" } catch (_: Exception) {} } } catch (_: Exception) {}
     }
     override fun onDestroyView() { try { handler.removeCallbacks(updateRunnable) } catch (_: Exception) {}; try { stopPlayer() } catch (_: Exception) {}; _b = null; super.onDestroyView() }
 }
