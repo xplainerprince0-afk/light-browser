@@ -113,7 +113,7 @@ class FileManagerFragment : Fragment() {
                 bb.btnImport.setOnClickListener { try { importLauncher?.launch(arrayOf("*/*")) ?: safeToast("Import unavailable") } catch (e: Exception) { safeToast(e.message) } }
             } catch (_: Exception) {}
             try { bb.btnOverflow.setOnClickListener { try { showOverflowMenu() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try { bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START) } } catch (_: Exception) {}
+            try { bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.openDrawer() } } catch (_: Exception) {}
 
             // Ensure Downloads folder exists in sandbox
             ensureSandboxDownloadsFolder()

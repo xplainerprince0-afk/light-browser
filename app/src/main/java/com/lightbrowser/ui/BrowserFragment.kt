@@ -279,9 +279,7 @@ class BrowserFragment : Fragment() {
         }
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
-        binding.btnMore.setOnClickListener { 
-            (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START)
-        }
+        binding.btnMore.setOnClickListener { (activity as? MainActivity)?.openDrawer() }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {

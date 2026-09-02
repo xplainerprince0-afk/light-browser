@@ -75,7 +75,7 @@ class TerminalFragment : Fragment() {
                 } catch (e: Exception) { append("copy error: ${e.message}") }
             }
             bb.btnScripts.setOnClickListener { try { execCmd("scripts") } catch (e: Exception) { append(e.message ?: "error") } }
-            bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START) }
+            bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.openDrawer() }
 
             appendWelcome()
         } catch (e: Exception) {
