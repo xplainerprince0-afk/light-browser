@@ -1,6 +1,5 @@
 package com.lightbrowser.ui
 
-import android.app.AppCompatDelegate
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Bundle

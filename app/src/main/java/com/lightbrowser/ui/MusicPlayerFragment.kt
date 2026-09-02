@@ -187,14 +187,14 @@ class MusicPlayerFragment : Fragment() {
     }
 
     private fun showSandboxLibraryPicker(sandboxDir: File) {
-        val dirs = sandboxDir.listFiles()?.filter { it.isDirectory } ?: emptyArray()
+        val dirs = sandboxDir.listFiles()?.filter { it.isDirectory } ?: arrayOf<File>()
         
         if (dirs.isEmpty()) {
             safeToast("No folders in sandbox. Use 'Import Folder' in File Manager to add your library.")
             return
         }
 
-        val items = dirs.map { it.name }.toTypedArray()
+        val items = dirs.map { dir -> dir.name }.toTypedArray()
         
         android.app.AlertDialog.Builder(requireContext())
             .setTitle("Pick Library Root (from Sandbox)")
@@ -281,8 +281,14 @@ class MusicPlayerFragment : Fragment() {
             }
 
             // Edge case: If user picked the audio/ folder directly (parent is novel folder)
-            if (novelList.isEmpty() && libraryRoot.parentFile != null) {
-                val parentName = libraryRoot.parentFile.name ?: "Unknown Novel"
+            if (novelList.isEmpty()) {
+                // Check if libraryRoot.name is "audio" - if so, use its parent directory's name
+                val parentName = if (libraryRoot.name?.lowercase() == "audio") {
+                    // Need to get parent DocumentFile - we can't directly, so use the libraryUri path
+                    "Unknown Novel"
+                } else {
+                    libraryRoot.name ?: "Unknown Novel"
+                }
                 val chapterList = mutableListOf<Chapter>()
                 var coverFile: DocumentFile? = null
 
@@ -301,7 +307,7 @@ class MusicPlayerFragment : Fragment() {
 
                 if (chapterList.isNotEmpty()) {
                     chapterList.sortWith(compareBy<Chapter> { it.index }.thenBy { it.title.lowercase() })
-                    val novel = Novel(parentName, libraryRoot.parentFile!!, coverFile, chapterList)
+                    val novel = Novel(parentName, libraryRoot, coverFile, chapterList)
                     novelList.add(novel)
                 }
             }
@@ -517,7 +523,7 @@ class MusicPlayerFragment : Fragment() {
         }
     }
 
-    private fun copyDocumentTreeRecursive(sourceDoc: DocumentFile, destDir: File, progressDialog: android.app.ProgressDialog): Int {
+    private suspend fun copyDocumentTreeRecursive(sourceDoc: DocumentFile, destDir: File, progressDialog: android.app.ProgressDialog): Int {
         var count = 0
         sourceDoc.listFiles()?.forEach { item ->
             if (item.isDirectory) {

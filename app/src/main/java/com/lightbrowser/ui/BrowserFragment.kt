@@ -10,8 +10,11 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.webkit.*
+import android.widget.ImageView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.recyclerview.widget.RecyclerView
 import com.lightbrowser.R
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.BookmarkStorage
@@ -20,6 +23,7 @@ import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.Prefs
 import com.lightbrowser.data.ScriptStorage
 import com.lightbrowser.databinding.FragmentBrowserBinding
+import com.google.android.material.bottomsheet.BottomSheetDialog
 
 class BrowserFragment : Fragment() {
     private var _binding: FragmentBrowserBinding? = null

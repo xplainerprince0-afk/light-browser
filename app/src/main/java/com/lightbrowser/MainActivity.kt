@@ -57,7 +57,6 @@ class MainActivity : AppCompatActivity() {
                 val id = when (f) {
                     is BrowserFragment -> R.id.nav_browser
                     is FileManagerFragment -> R.id.nav_filemanager
-                    is TerminalFragment -> R.id.nav_terminal
                     is MusicPlayerFragment -> R.id.nav_music
                     else -> null
                 }

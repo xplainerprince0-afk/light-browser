@@ -491,7 +491,7 @@ class FileManagerFragment : Fragment() {
         }
     }
 
-    private fun copyDocumentTreeRecursive(sourceDoc: androidx.documentfile.provider.DocumentFile, destDir: File, progressDialog: android.app.ProgressDialog): Int {
+    private suspend fun copyDocumentTreeRecursive(sourceDoc: androidx.documentfile.provider.DocumentFile, destDir: File, progressDialog: android.app.ProgressDialog): Int {
         var count = 0
         sourceDoc.listFiles()?.forEach { item ->
             if (item.isDirectory) {
