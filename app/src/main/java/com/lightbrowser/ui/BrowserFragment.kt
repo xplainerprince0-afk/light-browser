@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Message
 import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -14,6 +15,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.RecyclerView
 import com.lightbrowser.R
@@ -277,7 +279,9 @@ class BrowserFragment : Fragment() {
         }
         binding.btnBack.setOnClickListener { if (wv.canGoBack()) wv.goBack() }
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
-        binding.btnMore.setOnClickListener { showMoreMenuSlideIn(it) }
+        binding.btnMore.setOnClickListener { 
+            (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START)
+        }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {

@@ -58,6 +58,20 @@
                 android:textSize="11sp" />
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnDrawer"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:text="☰"
+                android:textSize="20sp"
+                android:textColor="?attr/colorOnSurface"
+                style="@style/Widget.Material3.Button.TextButton"
+                app:cornerRadius="12dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnOverflow"
                 android:layout_width="40dp"
                 android:layout_height="40dp"

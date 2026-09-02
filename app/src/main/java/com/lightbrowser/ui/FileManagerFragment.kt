@@ -20,6 +20,7 @@ import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
+import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -111,6 +112,7 @@ class FileManagerFragment : Fragment() {
                 bb.btnImport.setOnClickListener { try { importLauncher?.launch(arrayOf("*/*")) ?: safeToast("Import unavailable") } catch (e: Exception) { safeToast(e.message) } }
             } catch (_: Exception) {}
             try { bb.btnOverflow.setOnClickListener { try { showOverflowMenu() } catch (_: Exception) {} } } catch (_: Exception) {}
+            try { bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START) } } catch (_: Exception) {}
 
             // Ensure Downloads folder exists in sandbox
             ensureSandboxDownloadsFolder()

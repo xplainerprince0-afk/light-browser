@@ -4,102 +4,47 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg_dark"
-    android:padding="12dp">
+    android:background="@color/terminal_bg"
+    android:fitsSystemWindows="true">
 
-    <com.google.android.material.card.MaterialCardView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        app:cardCornerRadius="16dp"
-        app:cardBackgroundColor="@color/surface"
-        app:strokeColor="#1AFFFFFF"
-        app:strokeWidth="1dp"
-        app:cardElevation="2dp">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="12dp"
-            android:gravity="center_vertical">
-
-            <TextView
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:text="Terminal"
-                android:textColor="@color/white"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:fontFamily="monospace" />
-
-            <TextView
-                android:id="@+id/tvStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="● idle"
-                android:textColor="#4ADE80"
-                android:textSize="11sp"
-                android:fontFamily="monospace" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnOverflow"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginStart="8dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:text="⋮"
-                android:textSize="20sp"
-                android:textColor="?attr/colorOnSurface"
-                style="@style/Widget.Material3.Button.TextButton"
-                app:cornerRadius="12dp"
-                android:insetTop="0dp"
-                android:insetBottom="0dp" />
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
-
-    <com.google.android.material.card.MaterialCardView
+    <!-- Terminal output area - full screen scrollable -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/svLogs"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="12dp"
-        app:cardCornerRadius="16dp"
-        app:cardBackgroundColor="#0D0F1A"
-        app:strokeColor="#1AFFFFFF"
-        app:strokeWidth="1dp">
+        android:fillViewport="true"
+        android:padding="16dp"
+        android:clipToPadding="false">
 
-        <ScrollView
-            android:id="@+id/svLogs"
+        <TextView
+            android:id="@+id/tvLogs"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:padding="12dp">
+            android:layout_height="wrap_content"
+            android:textColor="@color/terminal_text"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:lineSpacingExtra="4dp"
+            android:text="@string/terminal_welcome" />
+    </androidx.core.widget.NestedScrollView>
 
-            <TextView
-                android:id="@+id/tvLogs"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textColor="#C8CDF3"
-                android:textSize="11sp"
-                android:fontFamily="monospace"
-                android:textIsSelectable="true"
-                android:lineSpacingExtra="2dp"
-                android:text="Welcome to LightBrowser Terminal\nType 'help' for commands\n" />
-        </ScrollView>
-    </com.google.android.material.card.MaterialCardView>
-
+    <!-- Input line with prompt -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:layout_marginTop="12dp">
+        android:padding="12dp"
+        android:paddingBottom="8dp">
 
         <TextView
+            android:id="@+id/tvPrompt"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="$"
-            android:textColor="#A78BFA"
-            android:textSize="14sp"
+            android:text="$ "
+            android:textColor="@color/terminal_text"
+            android:textSize="16sp"
             android:fontFamily="monospace"
             android:paddingEnd="8dp" />
 
@@ -107,81 +52,87 @@
             android:id="@+id/etInput"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="48dp"
-            android:background="@drawable/bg_url_bar"
-            android:hint="help, clear, scripts, history, js &lt;code&gt;"
-            android:textColor="@color/white"
-            android:textColorHint="#66FFFFFF"
-            android:paddingHorizontal="14dp"
+            android:layout_height="wrap_content"
+            android:background="@android:color/transparent"
+            android:hint="Type command..."
+            android:textColor="@color/terminal_text"
+            android:textColorHint="#44FF44"
+            android:paddingVertical="12dp"
             android:singleLine="true"
             android:imeOptions="actionSend"
             android:inputType="text"
-            android:textSize="13sp"
+            android:textSize="16sp"
             android:fontFamily="monospace" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnSend"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginStart="8dp"
-            android:text="▶"
-            android:textSize="14sp"
-            android:textColor="?attr/colorOnPrimary"
-            style="@style/Widget.Material3.Button"
-            app:cornerRadius="12dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
     </LinearLayout>
 
+    <!-- Bottom toolbar -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:layout_marginTop="8dp"
-        android:gravity="center">
+        android:gravity="center"
+        android:padding="12dp"
+        android:background="#11000000">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnClear"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="36dp"
+            android:layout_height="40dp"
             android:text="Clear"
-            android:textSize="11sp"
-            android:textColor="?attr/colorOnPrimaryContainer"
-            style="@style/Widget.Material3.Button"
-            app:cornerRadius="12dp"
+            android:textSize="12sp"
+            android:textColor="@color/terminal_text"
+            style="@style/Widget.Material3.Button.TextButton"
+            app:cornerRadius="8dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
 
-        <View android:layout_width="8dp" android:layout_height="0dp" />
+        <View android:layout_width="12dp" android:layout_height="0dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCopy"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="36dp"
+            android:layout_height="40dp"
             android:text="Copy"
-            android:textSize="11sp"
-            android:textColor="?attr/colorOnPrimaryContainer"
-            style="@style/Widget.Material3.Button"
-            app:cornerRadius="12dp"
+            android:textSize="12sp"
+            android:textColor="@color/terminal_text"
+            style="@style/Widget.Material3.Button.TextButton"
+            app:cornerRadius="8dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
 
-        <View android:layout_width="8dp" android:layout_height="0dp" />
+        <View android:layout_width="12dp" android:layout_height="0dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnScripts"
             android:layout_width="0dp"
             android:layout_weight="1"
-            android:layout_height="36dp"
+            android:layout_height="40dp"
             android:text="Scripts"
-            android:textSize="11sp"
-            android:textColor="?attr/colorOnPrimaryContainer"
-            style="@style/Widget.Material3.Button"
-            app:cornerRadius="12dp"
+            android:textSize="12sp"
+            android:textColor="@color/terminal_text"
+            style="@style/Widget.Material3.Button.TextButton"
+            app:cornerRadius="8dp"
             android:insetTop="0dp"
             android:insetBottom="0dp" />
+
+        <View android:layout_width="12dp" android:layout_height="0dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnDrawer"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:text="☰"
+            android:textSize="20sp"
+            android:textColor="@color/terminal_text"
+            style="@style/Widget.Material3.Button.TextButton"
+            app:cornerRadius="8dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
+
     </LinearLayout>
 
 </LinearLayout>

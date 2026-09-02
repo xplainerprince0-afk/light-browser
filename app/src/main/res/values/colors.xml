@@ -34,4 +34,19 @@
     <!-- Bottom nav color selectors for light theme -->
     <color name="bottom_nav_active_light">#0F766E</color>
     <color name="bottom_nav_inactive_light">#64748B</color>
+
+    <!-- Navigation drawer colors -->
+    <color name="nav_drawer_active">#5EEAD4</color>
+    <color name="nav_drawer_inactive">#94A3B8</color>
+    <color name="nav_drawer_active_light">#0F766E</color>
+    <color name="nav_drawer_inactive_light">#64748B</color>
+
+    <!-- Terminal colors -->
+    <color name="terminal_bg">#000000</color>
+    <color name="terminal_text">#00FF00</color>
+    <color name="terminal_text_dim">#88FF88</color>
+    <color name="terminal_cursor">#00FF00</color>
+
+    <!-- Info icon -->
+    <color name="info_blue">#3B82F6</color>
 </resources>

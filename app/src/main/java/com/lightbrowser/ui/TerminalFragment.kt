@@ -1,13 +1,19 @@
 package com.lightbrowser.ui
 
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
+import android.util.Log
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.PopupMenu
 import android.widget.Toast
+import androidx.core.view.GravityCompat
 import androidx.fragment.app.Fragment
+import com.google.android.material.menu.MaterialMenuInflater
 import com.lightbrowser.R
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.ScriptStorage
@@ -41,7 +47,7 @@ class TerminalFragment : Fragment() {
             _b = FragmentTerminalBinding.inflate(inflater, c, false)
             b.root
         } catch (e: Exception) {
-            android.util.Log.e("Terminal", "onCreateView", e)
+            Log.e("Terminal", "onCreateView", e)
             android.widget.TextView(requireContext()).apply { text = "Terminal unavailable: ${e.message}" }
         }
     }
@@ -50,29 +56,36 @@ class TerminalFragment : Fragment() {
         try {
             val bb = _b ?: return
             initSandbox()
-            try { bb.btnSend.setOnClickListener { try { exec() } catch (e: Exception) { append("error: ${e.message}") } } } catch (_: Exception) {}
-            try { bb.etInput.setOnEditorActionListener { _, _, _ -> try { exec() } catch (_: Exception) {}; true } } catch (_: Exception) {}
-            try { bb.btnClear.setOnClickListener { try { logs.clear(); bb.tvLogs.text = "Cleared.\n"; scrollBottom() } catch (_: Exception) {} } } catch (_: Exception) {}
-            try {
-                bb.btnCopy.setOnClickListener {
-                    try {
-                        val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", bb.tvLogs.text))
-                        Toast.makeText(requireContext(), "Copied", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) { append("copy error: ${e.message}") }
-                }
-            } catch (_: Exception) {}
-            try { bb.btnScripts.setOnClickListener { try { execCmd("scripts") } catch (e: Exception) { append(e.message ?: "error") } } } catch (_: Exception) {}
-            try { bb.btnOverflow.setOnClickListener { try { showOverflowMenu() } catch (_: Exception) {} } } catch (_: Exception) {}
+            
+            // Setup input
+            bb.etInput.setOnEditorActionListener { _, actionId, _ ->
+                if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND) {
+                    exec()
+                    true
+                } else false
+            }
+            
+            // Bottom toolbar
+            bb.btnClear.setOnClickListener { try { logs.clear(); bb.tvLogs.text = ""; appendWelcome() } catch (_: Exception) {} }
+            bb.btnCopy.setOnClickListener {
+                try {
+                    val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", bb.tvLogs.text))
+                    Toast.makeText(requireContext(), "Copied", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) { append("copy error: ${e.message}") }
+            }
+            bb.btnScripts.setOnClickListener { try { execCmd("scripts") } catch (e: Exception) { append(e.message ?: "error") } }
+            bb.btnDrawer.setOnClickListener { (activity as? MainActivity)?.binding?.drawerLayout?.openDrawer(GravityCompat.START) }
 
-            append("LightBrowser Terminal v3 – Sandboxed Shell + Python Bootstrap")
-            append("Sandbox: ${sandboxDir?.absolutePath ?: "unavailable"}")
-            append("Type 'help' for commands. Type 'install-python' to bootstrap Python runtime.")
-            append("Tip: All shell commands run inside sandbox. Outside access is blocked.")
+            appendWelcome()
         } catch (e: Exception) {
-            android.util.Log.e("Terminal", "onViewCreated", e)
+            Log.e("Terminal", "onViewCreated", e)
             try { Toast.makeText(requireContext(), "Terminal error: ${e.message}", Toast.LENGTH_LONG).show() } catch (_: Exception) {}
         }
+    }
+
+    private fun appendWelcome() {
+        append(getString(R.string.terminal_welcome))
     }
 
     private fun initSandbox() {
@@ -121,7 +134,7 @@ class TerminalFragment : Fragment() {
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> showHelp()
-                "clear" -> { logs.clear(); try { _b?.tvLogs?.text = "" } catch (_: Exception) {} }
+                "clear" -> { logs.clear(); try { _b?.tvLogs?.text = "" } catch (_: Exception) {}; appendWelcome() }
                 "scripts" -> {
                     val list = try { ScriptStorage.all(requireContext()) } catch (_: Exception) { emptyList() }
                     if (list.isEmpty()) append("No scripts.") else list.forEach { append("• ${it.name} [${if (it.enabled) "ON" else "OFF"}] ${it.matches.joinToString(",")} @${it.runAt}") }
@@ -374,11 +387,10 @@ class TerminalFragment : Fragment() {
             input.close()
             output.close()
 
-            // Extract tar.xz using shell
             val extractResult = runShellSync("cd \"${destDir.absolutePath}\" && tar -xf python.tar.xz 2>&1")
             return extractResult.contains("error").not() || extractResult.isEmpty()
         } catch (e: Exception) {
-            android.util.Log.e("Terminal", "download failed", e)
+            Log.e("Terminal", "download failed", e)
             return false
         }
     }
@@ -428,16 +440,55 @@ class TerminalFragment : Fragment() {
         }
     }
 
+    private fun append(line: String) {
+        try {
+            logs.add(line)
+            if (logs.size > 1000) logs.removeAt(0)
+            val bb = _b
+            if (bb != null) {
+                val sb = SpannableStringBuilder()
+                logs.forEach { logLine ->
+                    sb.append(logLine).append("\n")
+                }
+                bb.tvLogs.text = sb
+                scrollBottom()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun appendColored(line: String, color: Int) {
+        try {
+            val sb = SpannableStringBuilder()
+            logs.forEach { logLine ->
+                sb.append(logLine).append("\n")
+            }
+            val start = sb.length
+            sb.append(line).append("\n")
+            sb.setSpan(ForegroundColorSpan(color), start, sb.length, 0)
+            logs.add(line)
+            if (logs.size > 1000) logs.removeAt(0)
+            val bb = _b
+            if (bb != null) {
+                bb.tvLogs.text = sb
+                scrollBottom()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun scrollBottom() {
+        try { _b?.svLogs?.post { try { _b?.svLogs?.fullScroll(View.FOCUS_DOWN) } catch (_: Exception) {} } } catch (_: Exception) {}
+    }
+
     private fun showOverflowMenu() {
         try {
             val bb = _b ?: return
             val ctx = requireContext()
-            val popup = PopupMenu(ctx, bb.btnOverflow)
-            popup.menuInflater.inflate(R.menu.terminal_menu, popup.menu)
+            val popup = PopupMenu(ctx, bb.btnDrawer)
+            MaterialMenuInflater(ctx).inflate(R.menu.terminal_menu, popup.menu)
             popup.setOnMenuItemClickListener { item: MenuItem ->
                 try {
                     when (item.itemId) {
-                        R.id.menu_clear -> { logs.clear(); try { _b?.tvLogs?.text = "" } catch (_: Exception) {} }
+                        R.id.menu_clear -> { logs.clear(); try { _b?.tvLogs?.text = "" } catch (_: Exception) {}; appendWelcome() }
                         R.id.menu_copy -> {
                             val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                             cm.setPrimaryClip(android.content.ClipData.newPlainText("logs", _b?.tvLogs?.text ?: ""))
@@ -450,7 +501,7 @@ class TerminalFragment : Fragment() {
                 true
             }
             popup.show()
-        } catch (e: Exception) { android.util.Log.e("Terminal", "overflow menu", e) }
+        } catch (e: Exception) { Log.e("Terminal", "overflow menu", e) }
     }
 
     private fun findBrowser(): BrowserFragment? {
@@ -460,19 +511,6 @@ class TerminalFragment : Fragment() {
             fm.fragments.find { it is BrowserFragment } as? BrowserFragment
                 ?: fm.findFragmentByTag(R.id.nav_browser.toString()) as? BrowserFragment
         } catch (_: Exception) { null }
-    }
-
-    private fun append(line: String) {
-        try {
-            logs.add(line)
-            if (logs.size > 600) logs.removeAt(0)
-            _b?.tvLogs?.text = logs.joinToString("\n")
-            scrollBottom()
-        } catch (_: Exception) {}
-    }
-
-    private fun scrollBottom() {
-        try { _b?.svLogs?.post { try { _b?.svLogs?.fullScroll(View.FOCUS_DOWN) } catch (_: Exception) {} } } catch (_: Exception) {}
     }
 
     override fun onDestroyView() { _b = null; super.onDestroyView() }

@@ -2,11 +2,15 @@ package com.lightbrowser
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.ActionBarDrawerToggle
+import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.Fragment
+import com.google.android.material.navigation.NavigationView
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.databinding.ActivityMainBinding
 import com.lightbrowser.ui.BrowserFragment
@@ -16,9 +20,11 @@ import com.lightbrowser.ui.SettingsFragment
 import com.lightbrowser.ui.TerminalFragment
 
 class MainActivity : AppCompatActivity() {
+
     private lateinit var binding: ActivityMainBinding
     private var currentId: Int = R.id.nav_browser
     private var isNavSyncing = false
+    private lateinit var drawerToggle: ActionBarDrawerToggle
 
     private val fragments = mutableMapOf<Int, Fragment>()
 
@@ -35,18 +41,49 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Phase 1: edge-to-edge with proper insets – status bar not overlapped, nav bar handled
+        // Edge-to-edge with proper insets
         WindowCompat.setDecorFitsSystemWindows(window, false)
         AppCtx.init(this)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Phase 1 fix: Edge-to-edge – container must sit BELOW status bar.
+        // Setup drawer toggle
+        drawerToggle = ActionBarDrawerToggle(
+            this, binding.drawerLayout, null,
+            R.string.open_drawer, R.string.close_drawer
+        )
+        binding.drawerLayout.addDrawerListener(drawerToggle)
+        drawerToggle.syncState()
+
+        // Handle navigation item clicks
+        binding.navView.setNavigationItemSelectedListener { item ->
+            when (item.itemId) {
+                R.id.nav_drawer_browser -> switchTab(R.id.nav_browser)
+                R.id.nav_drawer_sandbox -> switchTab(R.id.nav_filemanager)
+                R.id.nav_drawer_player -> switchTab(R.id.nav_music)
+                R.id.nav_drawer_terminal -> switchTab(R.id.nav_terminal)
+                R.id.nav_drawer_settings -> switchTab(R.id.nav_settings)
+                R.id.nav_drawer_scripts -> switchTab(R.id.nav_scripts)
+                R.id.nav_drawer_downloads -> switchTab(R.id.nav_downloads)
+                R.id.nav_drawer_history -> switchTab(R.id.nav_history)
+                R.id.nav_drawer_bookmarks -> switchTab(R.id.nav_bookmarks)
+                R.id.nav_drawer_about -> showAboutDialog()
+            }
+            binding.drawerLayout.closeDrawer(GravityCompat.START)
+            true
+        }
+
+        // Handle window insets for edge-to-edge and keyboard
+        // adjustResize in manifest handles keyboard, we just manage status/nav bars
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            binding.container.updatePadding(top = statusBars.top, bottom = if (ime.bottom > 0) 0 else navBars.bottom)
+            
+            // Container: top padding for status bar, bottom padding for bottom nav
+            binding.container.updatePadding(
+                top = statusBars.top,
+                bottom = navBars.bottom
+            )
             binding.bottomNav.updatePadding(bottom = navBars.bottom)
             insets
         }
@@ -66,7 +103,6 @@ class MainActivity : AppCompatActivity() {
                 if (id != null) fragments[id] = f
             }
             fragments.entries.find { it.value.isVisible }?.let { currentId = it.key }
-            // ensure bottom nav reflects current
             try { binding.bottomNav.selectedItemId = currentId } catch (_: Exception) {}
         }
 
@@ -84,10 +120,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPostCreate(savedInstanceState: Bundle?) {
+        super.onPostCreate(savedInstanceState)
+        drawerToggle.syncState()
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        drawerToggle.onConfigurationChanged(newConfig)
+    }
+
     fun switchTab(id: Int) {
         try {
             if (currentId == id && fragments.containsKey(id) && fragments[id]?.isAdded == true) return
-            // Prevent re-entrant add of same fragment before commit (bottomNav sync triggers listener)
             if (currentId == id && fragments.containsKey(id)) return
             if (supportFragmentManager.isStateSaved) {
                 val tx2 = supportFragmentManager.beginTransaction()
@@ -118,8 +163,19 @@ class MainActivity : AppCompatActivity() {
             if (binding.bottomNav.selectedItemId == id) return
             isNavSyncing = true
             binding.bottomNav.selectedItemId = id
+            // Update navigation view checked state
+            val navItemId = when (id) {
+                R.id.nav_browser -> R.id.nav_drawer_browser
+                R.id.nav_filemanager -> R.id.nav_drawer_sandbox
+                R.id.nav_music -> R.id.nav_drawer_player
+                R.id.nav_terminal -> R.id.nav_drawer_terminal
+                R.id.nav_settings -> R.id.nav_drawer_settings
+                else -> -1
+            }
+            if (navItemId != -1) {
+                binding.navView.menu.findItem(navItemId)?.isChecked = true
+            }
         } catch (_: Exception) {} finally {
-            // post to avoid immediate re-entrance
             try { binding.bottomNav.post { isNavSyncing = false } } catch (_: Exception) { isNavSyncing = false }
         }
     }
@@ -135,13 +191,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
-        val current = fragments[currentId]
-        if (current is BrowserFragment && current.canGoBack()) {
-            current.goBack()
-        } else if (currentId != R.id.nav_browser) {
-            switchTab(R.id.nav_browser)
+        if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
+            binding.drawerLayout.closeDrawer(GravityCompat.START)
         } else {
-            super.onBackPressed()
+            val current = fragments[currentId]
+            if (current is BrowserFragment && current.canGoBack()) {
+                current.goBack()
+            } else if (currentId != R.id.nav_browser) {
+                switchTab(R.id.nav_browser)
+            } else {
+                super.onBackPressed()
+            }
+        }
+    }
+
+    private fun showAboutDialog() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("About LightBrowser")
+            .setMessage("LightBrowser v1.0\n\nA lightweight browser with terminal, file manager, and audiobook player.\n\nBuilt with Material 3 and Kotlin.")
+            .setPositiveButton("OK", null)
+            .show()
+    }
+
+    private fun getFrag(id: Int): Fragment = fragments.getOrPut(id) {
+        when (id) {
+            R.id.nav_browser -> BrowserFragment()
+            R.id.nav_filemanager -> FileManagerFragment()
+            R.id.nav_music -> MusicPlayerFragment()
+            R.id.nav_terminal -> TerminalFragment()
+            R.id.nav_settings -> SettingsFragment()
+            else -> BrowserFragment()
         }
     }
 }

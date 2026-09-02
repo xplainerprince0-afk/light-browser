@@ -188,6 +188,8 @@ class MusicPlayerFragment : Fragment() {
 
             // Button listeners
             bb.btnPickLibrary.setOnClickListener { try { pickLibraryFromSandbox() } catch (e: Exception) { safeToast(e.message) } }
+            bb.btnImportFolder.setOnClickListener { try { importFolderPicker?.launch(null) } catch (e: Exception) { safeToast(e.message) } }
+            bb.btnSwitchNovel.setOnClickListener { try { showNovelList() } catch (e: Exception) { safeToast(e.message) } }
             bb.playerBtnPlay.setOnClickListener { try { toggle() } catch (_: Exception) {} }
             bb.playerBtnPrev.setOnClickListener { try { prevChapter() } catch (_: Exception) {} }
             bb.playerBtnNext.setOnClickListener { try { nextChapter() } catch (_: Exception) {} }

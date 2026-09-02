@@ -13,4 +13,11 @@
     <string name="action_back">←</string>
     <string name="action_forward">→</string>
     <string name="action_refresh">⟳</string>
+
+    <!-- Drawer strings -->
+    <string name="open_drawer">Open navigation drawer</string>
+    <string name="close_drawer">Close navigation drawer</string>
+
+    <!-- Terminal welcome message -->
+    <string name="terminal_welcome">Welcome to LightBrowser Terminal\nSandbox: /data/user/0/com.lightbrowser/files/sandbox\nType 'help' for commands.\nAll commands run inside sandbox.\n</string>
 </resources>

@@ -27,7 +27,7 @@
             android:layout_gravity="center"
             android:gravity="center"
             android:padding="24dp"
-            android:text="No audiobooks found\nTap 'Pick Library' to select a folder\nStructure: Library/Novel/audio/*.mp3 + cover.jpg"
+            android:text="No audiobooks found\nTap 'Pick Library' or 'Import Folder' to add your library\nStructure: Library/Novel/audio/*.mp3 + cover.jpg"
             android:textColor="#66FFFFFF"
             android:textSize="14sp"
             android:visibility="gone" />
@@ -223,7 +223,7 @@
         </LinearLayout>
     </FrameLayout>
 
-    <!-- Top Bar with Library Picker -->
+    <!-- Top Bar with Library Controls -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -245,7 +245,33 @@
             android:id="@+id/btnPickLibrary"
             android:layout_width="wrap_content"
             android:layout_height="36dp"
+            android:layout_marginEnd="8dp"
             android:text="Pick Library"
+            android:textSize="12sp"
+            android:textColor="?attr/colorOnPrimaryContainer"
+            style="@style/Widget.Material3.Button"
+            app:cornerRadius="12dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnImportFolder"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_marginEnd="8dp"
+            android:text="Import Folder"
+            android:textSize="12sp"
+            android:textColor="?attr/colorOnPrimaryContainer"
+            style="@style/Widget.Material3.Button"
+            app:cornerRadius="12dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSwitchNovel"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="Switch Novel"
             android:textSize="12sp"
             android:textColor="?attr/colorOnPrimaryContainer"
             style="@style/Widget.Material3.Button"
