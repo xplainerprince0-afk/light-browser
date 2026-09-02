@@ -26,7 +26,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.menu.MaterialMenuInflater
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentMusicBinding
-import java.io.File
 import java.util.Comparator
 
 class MusicPlayerFragment : Fragment() {
@@ -58,7 +57,7 @@ class MusicPlayerFragment : Fragment() {
         val title: String,
         val file: DocumentFile,
         val index: Int,
-        val novel: Novel
+        val novelName: String
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,7 +126,6 @@ class MusicPlayerFragment : Fragment() {
                 })
             } catch (_: Exception) {}
             try { handler.post(updateRunnable) } catch (_: Exception) {}
-            // Load persisted library URI if available
             loadPersistedLibrary()
         } catch (e: Exception) {
             Log.e("Audiobook", "onViewCreated crash", e)
@@ -136,7 +134,6 @@ class MusicPlayerFragment : Fragment() {
     }
 
     private fun loadPersistedLibrary() {
-        // Could load from SharedPreferences if needed
     }
 
     private fun scanLibrary(treeUri: Uri) {
@@ -157,7 +154,7 @@ class MusicPlayerFragment : Fragment() {
                             if (name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".opus") || name.endsWith(".ogg")) {
                                 val chapterTitle = file.nameWithoutExtension
                                 val index = extractChapterNumber(chapterTitle)
-                                chapterList.add(Chapter(chapterTitle, file, index, null!!)) // novel will be set after
+                                chapterList.add(Chapter(chapterTitle, file, index, novelName))
                             } else if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp")) {
                                 if (coverFile == null) coverFile = file
                             }
@@ -166,9 +163,8 @@ class MusicPlayerFragment : Fragment() {
 
                     // Sort chapters numerically
                     chapterList.sortWith(Comparator.compareBy<Chapter> { it.index }.thenBy { it.title.lowercase() })
-                    
-                    // Update novel reference in chapters
-                    val novel = Novel(novelName, novelDir, coverFile, chapterList.map { it.copy(novel = Novel(novelName, novelDir, coverFile, emptyList())) })
+
+                    val novel = Novel(novelName, novelDir, coverFile, chapterList)
                     novelList.add(novel)
                 }
             }
@@ -190,7 +186,6 @@ class MusicPlayerFragment : Fragment() {
     }
 
     private fun extractChapterNumber(title: String): Int {
-        // Extract leading number for sorting (e.g., "001 Chapter One" -> 1, "Chapter 5" -> 5)
         val pattern = "\\d+".toRegex()
         val match = pattern.find(title)
         return match?.value?.toIntOrNull() ?: Int.MAX_VALUE
@@ -211,7 +206,6 @@ class MusicPlayerFragment : Fragment() {
         val bb = _b ?: return
         try { bb.tvNovelTitle.text = novel.name } catch (_: Exception) {}
         try { bb.tvChapterTitle.text = "Select a chapter" } catch (_: Exception) {}
-        // Load cover image
         novel.cover?.let { cover ->
             try {
                 val input = requireContext().contentResolver.openInputStream(cover.uri)
@@ -225,7 +219,6 @@ class MusicPlayerFragment : Fragment() {
     }
 
     private fun updateNovelList() {
-        // Could show a list of novels in a dialog
     }
 
     private fun updateChapterList() {
@@ -266,17 +259,18 @@ class MusicPlayerFragment : Fragment() {
                 try { setDataSource(ctx, ch.file.uri) } catch (e: Exception) { safeToast("Play failed: ${e.message}"); return@apply }
                 setOnPreparedListener {
                     try { start() } catch (_: Exception) {}
-                    bb?.let { bb ->
-                        try { bb.btnPlay.text = "⏸" } catch (_: Exception) {}
-                        try { bb.tvChapterTitle.text = "${ch.index}. ${ch.title}" } catch (_: Exception) {}
-                        try { bb.tvDuration.text = fmt(duration) } catch (_: Exception) {}
+                    val bb = _b
+                    bb?.let {
+                        try { it.btnPlay.text = "⏸" } catch (_: Exception) {}
+                        try { it.tvChapterTitle.text = "${ch.index}. ${ch.title}" } catch (_: Exception) {}
+                        try { it.tvDuration.text = fmt(duration) } catch (_: Exception) {}
                     }
                 }
                 setOnCompletionListener { try { nextChapter() } catch (_: Exception) {} }
                 setOnErrorListener { _, what, extra -> safeToast("Error $what/$extra"); true }
                 try { prepareAsync() } catch (e: Exception) { safeToast(e.message) }
             }
-            try { bb?.recycler?.adapter?.notifyDataSetChanged() } catch (_: Exception) {}
+            try { _b?.recycler?.adapter?.notifyDataSetChanged() } catch (_: Exception) {}
         } catch (e: Exception) { safeToast("Play failed: ${e.message}") }
     }
 

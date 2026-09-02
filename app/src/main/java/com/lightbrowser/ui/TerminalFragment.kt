@@ -29,7 +29,7 @@ class TerminalFragment : Fragment() {
     private val b get() = _b!!
     private val logs = mutableListOf<String>()
     private val scope = CoroutineScope(Dispatchers.Main)
-    
+
     // Sandbox management
     private var sandboxDir: File? = null
     private var currentDir: File? = null
@@ -80,7 +80,6 @@ class TerminalFragment : Fragment() {
         try {
             sandboxDir = File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() }
             currentDir = sandboxDir
-            // Also create python directory
             File(sandboxDir, "python").apply { if (!exists()) mkdirs() }
         } catch (e: Exception) {
             append("Sandbox init failed: ${e.message}")
@@ -321,27 +320,22 @@ class TerminalFragment : Fragment() {
                 binDir.mkdirs()
                 libDir.mkdirs()
 
-                // Download minimal Alpine Python bootstrap
-                // Using a static Python build for Android ARM64
                 val bootstrapUrl = "https://github.com/termux/termux-packages/files/15283858/python-3.11.7-aarch64-android.tar.xz"
-                // Fallback: use a simpler approach - download python from termux bootstrap
-                val altUrl = "https://packages.termux.org/apt/termux-main/pool/main/p/python/python_3.11.7_arm64.deb"
-                
+
                 append("Downloading Python runtime...")
-                downloadAndExtract(bootstrapUrl, pythonDir) { success ->
-                    withContext(Dispatchers.Main) {
-                        if (success) {
-                            pythonInstalled = true
-                            pythonHome = pythonDir.absolutePath
-                            pythonPath = binDir.absolutePath
-                            append("✅ Python installed successfully!")
-                            append("Python home: $pythonHome")
-                            append("Try: python --version")
-                            append("Try: python -c \"print('Hello from Python')\"")
-                        } else {
-                            append("❌ Download failed. Trying alternative...")
-                            tryAlternativeInstall(pythonDir)
-                        }
+                val success = downloadAndExtract(bootstrapUrl, pythonDir)
+                withContext(Dispatchers.Main) {
+                    if (success) {
+                        pythonInstalled = true
+                        pythonHome = pythonDir.absolutePath
+                        pythonPath = binDir.absolutePath
+                        append("✅ Python installed successfully!")
+                        append("Python home: $pythonHome")
+                        append("Try: python --version")
+                        append("Try: python -c \"print('Hello from Python')\"")
+                    } else {
+                        append("❌ Download failed. Trying alternative...")
+                        tryAlternativeInstall(pythonDir)
                     }
                 }
             } catch (e: Exception) {
@@ -353,8 +347,6 @@ class TerminalFragment : Fragment() {
     private fun tryAlternativeInstall(pythonDir: File) {
         scope.launch(Dispatchers.IO) {
             try {
-                // Alternative: Use a minimal static Python build
-                // For now, provide instructions
                 withContext(Dispatchers.Main) {
                     append("Alternative: Manual install via Termux bootstrap")
                     append("1. Install Termux app from F-Droid")
@@ -370,7 +362,7 @@ class TerminalFragment : Fragment() {
         }
     }
 
-    private fun downloadAndExtract(urlStr: String, destDir: File, callback: (Boolean) -> Unit) {
+    private fun downloadAndExtract(urlStr: String, destDir: File): Boolean {
         try {
             val url = URL(urlStr)
             val connection = url.openConnection()
@@ -382,14 +374,36 @@ class TerminalFragment : Fragment() {
             input.copyTo(output)
             input.close()
             output.close()
-            
-            // Extract tar.xz (simplified - in real app use a proper library)
-            // For now, just mark as downloaded
-            runShell("cd \"${destDir.absolutePath}\" && tar -xf python.tar.xz 2>&1")
-            callback(true)
+
+            // Extract tar.xz using shell
+            val extractResult = runShellSync("cd \"${destDir.absolutePath}\" && tar -xf python.tar.xz 2>&1")
+            return extractResult.contains("error").not() || extractResult.isEmpty()
         } catch (e: Exception) {
             android.util.Log.e("Terminal", "download failed", e)
-            callback(false)
+            return false
+        }
+    }
+
+    private fun runShellSync(cmd: String): String {
+        try {
+            val env = buildEnvironment()
+            val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd), env, sandboxDir)
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val errReader = BufferedReader(InputStreamReader(process.errorStream))
+            val output = StringBuilder()
+            var line: String?
+            val start = System.currentTimeMillis()
+            while (reader.readLine().also { line = it } != null) {
+                output.appendLine(line)
+                if (System.currentTimeMillis() - start > 30000) break
+            }
+            while (errReader.readLine().also { line = it } != null) {
+                output.appendLine(line)
+            }
+            process.waitFor()
+            return output.toString()
+        } catch (e: Exception) {
+            return "error: ${e.message}"
         }
     }
 

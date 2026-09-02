@@ -1,14 +1,18 @@
 package com.lightbrowser.ui
 
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
@@ -18,6 +22,7 @@ import androidx.core.content.FileProvider
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.menu.MaterialMenuInflater
 import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentFilemanagerBinding
@@ -58,14 +63,12 @@ class FileManagerFragment : Fragment() {
             b.root
         } catch (e: Exception) {
             android.util.Log.e("FileManager", "onCreateView crash", e)
-            // fallback to simple TextView to avoid crash
             TextView(requireContext()).apply { text = "File Manager unavailable: ${e.message}" }
         }
     }
 
     override fun onViewCreated(v: View, s: Bundle?) {
         try {
-            // Phase 1 fix: MainActivity container now handles statusBars.top – fragment must not double-pad.
             try {
                 val sd = try { File(requireContext().filesDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) { try { File(requireContext().cacheDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) { null } }
                 sandboxDir = sd
@@ -172,10 +175,9 @@ class FileManagerFragment : Fragment() {
         val dd = downloadsDir
         if (sd == null || dd == null) return
         try { bb.tvPath.text = try { currentDir.absolutePath.replace(ctx.filesDir.absolutePath, "[Sandbox]").replace(dd.absolutePath, "[Downloads]") } catch (_: Exception) { currentDir.name } } catch (_: Exception) {}
-        
-        // Update breadcrumb
+
         updateBreadcrumb()
-        
+
         val files = try { currentDir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })) ?: emptyList() } catch (_: Exception) { emptyList() }
         try { bb.tvCount.text = "${files.size} items" } catch (_: Exception) {}
         try { bb.empty.visibility = if (files.isEmpty()) View.VISIBLE else View.GONE } catch (_: Exception) {}
@@ -205,7 +207,7 @@ class FileManagerFragment : Fragment() {
             }
         } catch (_: Exception) {}
     }
-    
+
     private fun getFileIconRes(file: File): Int {
         if (file.isDirectory) return R.drawable.ic_folder
         val ext = file.extension.lowercase()
@@ -221,7 +223,7 @@ class FileManagerFragment : Fragment() {
             else -> R.drawable.ic_file
         }
     }
-    
+
     private fun updateBreadcrumb() {
         val bb = _b ?: return
         val breadcrumbContainer = bb.llBreadcrumb
@@ -229,20 +231,17 @@ class FileManagerFragment : Fragment() {
         val sd = sandboxDir
         val dd = downloadsDir
         if (sd == null || dd == null) return
-        
+
         try {
             breadcrumbContainer.removeAllViews()
-            
-            // Determine root
+
             val isSandbox = currentDir.absolutePath.startsWith(sd.absolutePath)
             val isDownloads = currentDir.absolutePath.startsWith(dd.absolutePath)
             val rootName = if (isSandbox) "Sandbox" else if (isDownloads) "Downloads" else "Root"
             val rootPath = if (isSandbox) sd else if (isDownloads) dd else currentDir
-            
-            // Add root
+
             addBreadcrumbItem(breadcrumbContainer, rootName, rootPath, isRoot = true)
-            
-            // Add path segments
+
             if (currentDir != rootPath) {
                 val relPath = currentDir.absolutePath.substring(rootPath.absolutePath.length).trimStart('/')
                 if (relPath.isNotEmpty()) {
@@ -254,41 +253,36 @@ class FileManagerFragment : Fragment() {
                     }
                 }
             }
-            
+
             breadcrumbCard.visibility = View.VISIBLE
         } catch (_: Exception) {
             breadcrumbCard.visibility = View.GONE
         }
     }
-    
+
     private fun addBreadcrumbItem(container: ViewGroup, name: String, path: File, isRoot: Boolean) {
         val ctx = container.context
-        val layout = android.widget.LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
-        
+
         if (!isRoot) {
             val separator = TextView(ctx).apply {
                 text = " / "
-                textColor = 0xFF94A3B8.toInt()
+                setTextColor(0xFF94A3B8.toInt())
                 textSize = 12f
             }
             container.addView(separator)
         }
-        
-        val btn = com.google.android.material.button.MaterialButton(ctx).apply {
+
+        val btn = MaterialButton(ctx).apply {
             text = name
             textSize = 12f
-            textAllCaps = false
+            isAllCaps = false
             setPaddingRelative(8, 4, 8, 4)
             isMinWidth = false
             insetTop = 0
             insetBottom = 0
             cornerRadius = 8f
-            setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            setTextColor(android.content.res.ColorStateList.valueOf(if (path == currentDir) 0xFFFFFFFF.toInt() else 0xFF94A3B8.toInt()))
-            style = com.google.android.material.R.style.Widget_Material3_Button_TextButton
+            setBackgroundColor(Color.TRANSPARENT)
+            setTextColor(ColorStateList.valueOf(if (path == currentDir) 0xFFFFFFFF.toInt() else 0xFF94A3B8.toInt()))
             setOnClickListener { openDir(path) }
         }
         container.addView(btn)
