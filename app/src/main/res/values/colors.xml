@@ -1,8 +1,13 @@
 <resources>
-    <!-- Material 3 dark palette -->
+    <!-- Material 3 palette -->
     <color name="teal_700">#0F766E</color>
-    <color name="teal_200">#5EEAD4</color>
     <color name="teal_500">#14B8A6</color>
+    <color name="teal_200">#5EEAD4</color>
+    
+    <!-- Keep purple for backward compatibility -->
+    <color name="purple_500">#14B8A6</color>
+    <color name="purple_700">#0F766E</color>
+    <color name="purple_300">#5EEAD4</color>
     
     <color name="black">#000000</color>
     <color name="white">#FFFFFF</color>
