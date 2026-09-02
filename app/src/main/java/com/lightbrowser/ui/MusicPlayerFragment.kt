@@ -186,7 +186,7 @@ class MusicPlayerFragment : Fragment() {
     }
 
     private fun showSandboxLibraryPicker(sandboxDir: File) {
-        val dirs = sandboxDir.listFiles()?.filter { it.isDirectory } ?: arrayOf<File>()
+        val dirs: Array<File> = sandboxDir.listFiles()?.filter { it.isDirectory } ?: emptyArray()
         
         if (dirs.isEmpty()) {
             safeToast("No folders in sandbox. Use 'Import Folder' in File Manager to add your library.")
