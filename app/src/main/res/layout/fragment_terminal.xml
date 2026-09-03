@@ -34,7 +34,12 @@
             android:text="@string/terminal_welcome" />
     </androidx.core.widget.NestedScrollView>
 
-    <!-- Termux-style extra-keys row — horizontally scrollable, compact height -->
+    <!--
+        Combined compact control row:
+        Termux-style extra keys + Clear/Copy/Scripts action icons all in one
+        horizontally-scrollable row (44dp total height).
+        This replaces the old separate 52dp bottom toolbar.
+    -->
     <HorizontalScrollView
         android:id="@+id/extraKeysScroll"
         android:layout_width="match_parent"
@@ -49,11 +54,18 @@
             android:layout_height="match_parent"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:paddingHorizontal="6dp"
-            android:paddingVertical="4dp" />
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingVertical="4dp">
+
+            <!--
+                Extra key buttons are added here dynamically in TerminalFragment.
+                After them the fragment also appends the Clear / Copy / Scripts icon buttons.
+            -->
+        </LinearLayout>
     </HorizontalScrollView>
 
-    <!-- Input row – Termux-style prompt -->
+    <!-- Input row – Termux-style prompt + real EditText -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -73,23 +85,27 @@
             android:fontFamily="monospace"
             android:paddingEnd="4dp" />
 
-        <!-- Native EditText: cursor placement and text selection work naturally -->
+        <!--
+            Real EditText: maxLines+scrollHorizontally instead of deprecated singleLine,
+            so tapping anywhere in the typed text moves the cursor to that exact position.
+            No textCursorDrawable override — use the system cursor so it's visible.
+        -->
         <EditText
             android:id="@+id/etInput"
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="wrap_content"
             android:background="@android:color/transparent"
-            android:hint=""
             android:textColor="@color/terminal_text"
-            android:textColorHint="#44FF44"
             android:paddingVertical="10dp"
-            android:singleLine="true"
+            android:maxLines="1"
+            android:scrollHorizontally="true"
             android:imeOptions="actionSend"
             android:inputType="textNoSuggestions"
             android:textSize="14sp"
             android:fontFamily="monospace"
-            android:textCursorDrawable="@null" />
+            android:focusable="true"
+            android:focusableInTouchMode="true" />
 
         <TextView
             android:id="@+id/btnHistUp"
@@ -112,75 +128,35 @@
             android:background="?attr/selectableItemBackgroundBorderless" />
     </LinearLayout>
 
-    <!-- Bottom toolbar — styled icon+label buttons -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:orientation="horizontal"
-        android:gravity="center"
-        android:background="#111111"
-        android:paddingHorizontal="4dp">
+    <!--
+        Hidden stub views so the binding class still has btnClear / btnCopy / btnScripts
+        (the fragment wires them as invisible no-ops; visible equivalents live in llExtraKeys).
+    -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnClear"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:insetTop="0dp"
+        android:insetBottom="0dp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnClear"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="40dp"
-            android:layout_marginHorizontal="4dp"
-            android:text="Clear"
-            android:textSize="12sp"
-            android:textColor="#CCCCCC"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            app:cornerRadius="10dp"
-            app:strokeColor="#333333"
-            app:strokeWidth="1dp"
-            app:icon="@drawable/ic_clear"
-            app:iconSize="16dp"
-            app:iconTint="#AAAAAA"
-            app:iconGravity="textStart"
-            app:iconPadding="4dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnCopy"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:insetTop="0dp"
+        android:insetBottom="0dp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnCopy"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="40dp"
-            android:layout_marginHorizontal="4dp"
-            android:text="Copy"
-            android:textSize="12sp"
-            android:textColor="#CCCCCC"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            app:cornerRadius="10dp"
-            app:strokeColor="#333333"
-            app:strokeWidth="1dp"
-            app:iconSize="16dp"
-            app:iconTint="#AAAAAA"
-            app:iconGravity="textStart"
-            app:iconPadding="4dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnScripts"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:visibility="gone"
+        style="@style/Widget.Material3.Button.TextButton"
+        android:insetTop="0dp"
+        android:insetBottom="0dp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnScripts"
-            android:layout_width="0dp"
-            android:layout_weight="1"
-            android:layout_height="40dp"
-            android:layout_marginHorizontal="4dp"
-            android:text="Scripts"
-            android:textSize="12sp"
-            android:textColor="#CCCCCC"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            app:cornerRadius="10dp"
-            app:strokeColor="#333333"
-            app:strokeWidth="1dp"
-            app:icon="@drawable/ic_terminal"
-            app:iconSize="16dp"
-            app:iconTint="#AAAAAA"
-            app:iconGravity="textStart"
-            app:iconPadding="4dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp" />
-    </LinearLayout>
 </LinearLayout>

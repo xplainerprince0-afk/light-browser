@@ -25,24 +25,16 @@
             android:padding="12dp">
 
             <TextView
-                android:id="@+id/btnDrawer"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:gravity="center"
-                android:text="☰"
-                android:textColor="@color/teal_200"
-                android:textSize="20sp"
-                android:background="?attr/selectableItemBackgroundBorderless" />
-
-            <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp"
+                android:layout_marginStart="4dp"
                 android:text="Audiobooks"
                 android:textColor="@color/onSurface"
                 android:textSize="18sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="end" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnPickLibrary"

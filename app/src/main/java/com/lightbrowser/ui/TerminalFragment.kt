@@ -111,22 +111,6 @@ class TerminalFragment : Fragment() {
             bb.btnHistUp.setOnClickListener { historyUp() }
             bb.btnHistDown.setOnClickListener { historyDown() }
 
-            bb.btnClear.setOnClickListener {
-                logs.clear()
-                bb.tvLogs.text = ""
-                appendWelcome()
-            }
-
-            bb.btnCopy.setOnClickListener {
-                try {
-                    val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    cm.setPrimaryClip(android.content.ClipData.newPlainText("terminal", bb.tvLogs.text))
-                    Toast.makeText(requireContext(), "Copied", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) { appendError("copy error: ${e.message}") }
-            }
-
-            bb.btnScripts.setOnClickListener { openScripts() }
-
             appendWelcome()
         } catch (e: Exception) {
             Log.e("Terminal", "onViewCreated", e)
@@ -134,7 +118,7 @@ class TerminalFragment : Fragment() {
         }
     }
 
-    // Build the scrollable Termux-style extra-keys row
+    // Build the scrollable Termux-style extra-keys row, then append Clear/Copy/Scripts action icons
     private fun buildExtraKeys() {
         val bb = _b ?: return
         val container = bb.llExtraKeys
@@ -142,6 +126,7 @@ class TerminalFragment : Fragment() {
         val ctx = requireContext()
         val dp = ctx.resources.displayMetrics.density
 
+        // ── Extra key chips ──────────────────────────────────────────────────
         for (key in extraKeys) {
             val btn = TextView(ctx).apply {
                 text = key.label
@@ -156,26 +141,62 @@ class TerminalFragment : Fragment() {
                 isFocusable = true
                 tag = key
             }
-
-            // Long-press on modifier keys → sticky
-            if (key.sticky) {
-                btn.setOnLongClickListener {
-                    activateSticky(key.label, btn)
-                    true
-                }
-            }
-
-            btn.setOnClickListener {
-                handleExtraKey(key, btn)
-            }
-
+            if (key.sticky) btn.setOnLongClickListener { activateSticky(key.label, btn); true }
+            btn.setOnClickListener { handleExtraKey(key, btn) }
             container.addView(btn)
+            container.addView(divider(ctx, dp))
+        }
 
-            // Spacer
-            val spacer = View(ctx).apply {
-                layoutParams = ViewGroup.LayoutParams((4 * dp).toInt(), (4 * dp).toInt())
+        // ── Separator before action buttons ──────────────────────────────────
+        container.addView(separator(ctx, dp))
+
+        // ── Action buttons: Clear, Copy, Scripts (icon + short label) ────────
+        data class ActionBtn(val icon: String, val label: String, val onClick: () -> Unit)
+        val actions = listOf(
+            ActionBtn("🗑", "Clear") {
+                logs.clear()
+                _b?.tvLogs?.text = ""
+                appendWelcome()
+            },
+            ActionBtn("📋", "Copy") {
+                try {
+                    val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("terminal", _b?.tvLogs?.text))
+                    Toast.makeText(requireContext(), "Copied", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) { appendError("copy error: ${e.message}") }
+            },
+            ActionBtn("📜", "Scripts") { openScripts() },
+        )
+        for (a in actions) {
+            val btn = TextView(ctx).apply {
+                text = "${a.icon} ${a.label}"
+                textSize = 11f
+                setTextColor(Color.parseColor("#BBBBBB"))
+                setPadding((10 * dp).toInt(), 0, (10 * dp).toInt(), 0)
+                minWidth = (56 * dp).toInt()
+                height = (36 * dp).toInt()
+                gravity = android.view.Gravity.CENTER
+                background = ctx.getDrawable(R.drawable.bg_extra_key)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { a.onClick() }
             }
-            container.addView(spacer)
+            container.addView(btn)
+            container.addView(divider(ctx, dp))
+        }
+    }
+
+    private fun divider(ctx: android.content.Context, dp: Float): View {
+        return View(ctx).apply {
+            layoutParams = ViewGroup.LayoutParams((4 * dp).toInt(), ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+    }
+
+    private fun separator(ctx: android.content.Context, dp: Float): View {
+        return View(ctx).apply {
+            setBackgroundColor(Color.parseColor("#1AFFFFFF"))
+            layoutParams = ViewGroup.LayoutParams((1 * dp).toInt(), (28 * dp).toInt())
         }
     }
 

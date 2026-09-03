@@ -366,26 +366,23 @@ class BrowserFragment : Fragment() {
             val list = HistoryStorage.all(ctx)
             if (list.isEmpty()) { Toast.makeText(ctx, "No history yet", Toast.LENGTH_SHORT).show(); return }
 
-            val dlgView = LayoutInflater.from(ctx).inflate(android.R.layout.list_content, null)
             val recycler = RecyclerView(ctx)
             recycler.layoutManager = LinearLayoutManager(ctx)
 
             // Group by date
-            val now = System.currentTimeMillis()
             val todayStart = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY,0); set(Calendar.MINUTE,0); set(Calendar.SECOND,0); set(Calendar.MILLISECOND,0) }.timeInMillis
             val yesterdayStart = todayStart - 86400_000L
             val weekStart = todayStart - 6 * 86400_000L
 
-            // Build sections: header strings + entries
             data class HistoryRow(val isHeader: Boolean, val headerText: String = "", val entry: HistoryEntry? = null)
             val rows = mutableListOf<HistoryRow>()
             var lastSection = ""
             for (e in list) {
                 val sec = when {
-                    e.time >= todayStart    -> "Today"
+                    e.time >= todayStart     -> "Today"
                     e.time >= yesterdayStart -> "Yesterday"
-                    e.time >= weekStart     -> "Last 7 Days"
-                    else                   -> "Older"
+                    e.time >= weekStart      -> "Last 7 Days"
+                    else                     -> "Older"
                 }
                 if (sec != lastSection) { rows.add(HistoryRow(true, sec)); lastSection = sec }
                 rows.add(HistoryRow(false, entry = e))
@@ -397,7 +394,7 @@ class BrowserFragment : Fragment() {
                 inner class HeaderVH(v: View) : RecyclerView.ViewHolder(v)
                 inner class EntryVH(v: View) : RecyclerView.ViewHolder(v)
 
-                override fun getItemViewType(position: Int) = if (rows[position].isHeader) 0 else 1
+                override fun getItemViewType(pos: Int) = if (rows[pos].isHeader) 0 else 1
 
                 override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
                     return if (viewType == 0) {
@@ -425,7 +422,7 @@ class BrowserFragment : Fragment() {
                         holder.itemView.findViewById<TextView>(R.id.tvHistTitle).text = e.title.ifBlank { e.url }
                         holder.itemView.findViewById<TextView>(R.id.tvHistUrl).text = e.url
                         holder.itemView.findViewById<TextView>(R.id.tvHistTime).text = sdf.format(Date(e.time))
-                        holder.itemView.setOnClickListener { loadUrl(e.url); }
+                        holder.itemView.setOnClickListener { loadUrl(e.url) }
                         holder.itemView.findViewById<TextView>(R.id.btnHistDelete).setOnClickListener {
                             val all = HistoryStorage.all(ctx)
                             all.removeAll { it.url == e.url }
@@ -439,19 +436,28 @@ class BrowserFragment : Fragment() {
                 override fun getItemCount() = rows.size
             }
 
-            val scrollView = android.widget.ScrollView(ctx)
-            scrollView.addView(recycler)
+            // Wrap in a single FrameLayout so the RecyclerView has exactly ONE parent —
+            // prevents the "specified child already has a parent" crash.
+            val dp = ctx.resources.displayMetrics.density
+            val wrapper = android.widget.FrameLayout(ctx).apply {
+                addView(recycler, android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    (480 * dp).toInt()
+                ))
+            }
 
             android.app.AlertDialog.Builder(ctx)
                 .setTitle("History")
-                .setView(recycler)
+                .setView(wrapper)
                 .setPositiveButton("Close", null)
                 .setNeutralButton("Clear All") { _, _ ->
                     HistoryStorage.clear(ctx)
                     Toast.makeText(ctx, "History cleared", Toast.LENGTH_SHORT).show()
                 }
                 .show()
-        } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
+        } catch (e: Exception) {
+            Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show()
+        }
     }
 
     // ──── Bookmarks ──────────────────────────────────────────────────────────

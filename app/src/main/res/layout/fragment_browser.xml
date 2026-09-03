@@ -4,8 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg_dark"
-    android:fitsSystemWindows="false">
+    android:background="@android:color/transparent">
 
     <!-- Chrome-style toolbar card -->
     <com.google.android.material.card.MaterialCardView

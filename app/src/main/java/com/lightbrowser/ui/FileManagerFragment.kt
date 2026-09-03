@@ -5,7 +5,6 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.LayoutInflater
@@ -100,10 +99,9 @@ class FileManagerFragment : Fragment() {
             } catch (_: Exception) {
                 try { sandboxDir = File(requireContext().cacheDir, "sandbox").apply { if (!exists()) mkdirs() } } catch (_: Exception) {}
             }
-            try {
-                downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            } catch (_: Exception) { downloadsDir = sandboxDir }
-            if (downloadsDir == null) downloadsDir = sandboxDir
+            // Downloads shortcut opens the sandbox-internal Downloads folder (same place
+            // DownloadHelper saves files from the browser). NOT the system public Downloads.
+            downloadsDir = File(sandboxDir, "Downloads").apply { if (!exists()) mkdirs() }
 
             val bb = _b ?: return
             bb.recycler.layoutManager = LinearLayoutManager(requireContext())
