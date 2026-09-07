@@ -10,6 +10,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import com.lightbrowser.data.AppCtx
+import com.lightbrowser.data.BrowserAgent
 import com.lightbrowser.data.BrowserProfile
 import com.lightbrowser.data.DownloadHelper
 import com.lightbrowser.data.Prefs
@@ -91,6 +92,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
             super.onPageFinished(v, url)
             if (url != null && v != null) {
                 cb.onFinished(url, v.title ?: url)
+                try { BrowserAgent.ensureShim(v) } catch (_: Exception) {}
                 injectVisibilityHack(v, url)
                 if (Prefs.desktopMode) injectDesktop(v)
                 v.postDelayed({

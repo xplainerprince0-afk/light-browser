@@ -208,6 +208,28 @@ class TerminalViewModel : ViewModel() {
     fun onEditorChange(v: TextFieldValue) {
         try {
             val s = active()
+            val old = s.editor
+            if (v.text == old.text) {
+                // Caret-only move: always allowed, even inside the prompt zone.
+                s.editor = v
+                if (s.id == _activeId.value) _editor.value = v
+                return
+            }
+            val p = s.promptText
+            // ── Prompt armor: the trailing "$ " prompt is immutable. If the edit
+            // broke it (backspace into it, select-all+type, paste over it), block
+            // the edit and park the caret at the end of the prompt instead.
+            if (p.isNotEmpty()) {
+                val oldLast = old.text.substringAfterLast("\n")
+                val newLast = v.text.substringAfterLast("\n")
+                if (oldLast.startsWith(p) && !newLast.startsWith(p)) {
+                    val promptEnd = old.text.length - (oldLast.length - p.length)
+                    val fixed = old.copy(selection = TextRange(promptEnd.coerceIn(0, old.text.length)))
+                    s.editor = fixed
+                    if (s.id == _activeId.value) _editor.value = fixed
+                    return
+                }
+            }
             // Re-apply our spans over whatever the user typed (keeps colors alive).
             val merged = mergeSpans(s.built, v.text)
             s.editor = v.copy(annotatedString = merged)
@@ -389,13 +411,18 @@ class TerminalViewModel : ViewModel() {
     }
 
     private fun execCmd(raw: String) {
+        // ── Agentic browser bridge: `b …` never reaches the shell ──
+        if (raw == "b" || raw.startsWith("b ")) {
+            agentCmd(raw.removePrefix("b").trim())
+            return
+        }
         try {
             val parts = raw.split(" ", limit = 2)
             val cmd = parts[0].lowercase()
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> {
-                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm  cp  mv\nsh <cmd>  ping  curl  echo  cache\n", TermDim)
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\n", TermDim)
                     afterCommand()
                 }
                 "clear" -> clear()
@@ -586,6 +613,110 @@ class TerminalViewModel : ViewModel() {
                 running = null
                 try { process?.destroy() } catch (_: Exception) {}
             }
+        }
+    }
+
+    // ── `b` browser-agent commands ──
+    private fun agentCmd(line: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            fun out(t: String, c: Color = TermWhite) {
+                viewModelScope.launch(Dispatchers.Main) { print(t, c) }
+            }
+            fun wrapped(origin: String, body: String) {
+                out("--- PAGE CONTENT origin=$origin ---\n", TermDim)
+                out(body.take(12_000) + "\n", TermWhite)
+                out("--- END PAGE CONTENT ---\n", TermDim)
+            }
+            try {
+                val parts = line.split(" ", limit = 3)
+                when (parts.getOrNull(0) ?: "") {
+                    "", "help" -> out(
+                        "b open <url> | back | fwd | reload | url | title\n" +
+                            "b js <expr> | text [max] | dom [css] | snap\n" +
+                            "b click <ref|css> | fill <ref|css> <val> | scroll [px]\n" +
+                            "b serve — server URL + token\n", TermDim
+                    )
+                    "open" -> {
+                        val url = parts.getOrNull(1) ?: ""
+                        if (url.isBlank()) out("Usage: b open <url>\n", TermRed)
+                        else {
+                            com.lightbrowser.data.BrowserAgent.navigate(url)
+                            out("Opening $url\n", TermGreen)
+                        }
+                    }
+                    "back" -> com.lightbrowser.data.BrowserAgent.runOnPage {
+                        try { if (it.canGoBack()) it.goBack() } catch (_: Exception) {}
+                    }
+                    "fwd" -> com.lightbrowser.data.BrowserAgent.runOnPage {
+                        try { if (it.canGoForward()) it.goForward() } catch (_: Exception) {}
+                    }
+                    "reload" -> com.lightbrowser.data.BrowserAgent.runOnPage {
+                        try { it.reload() } catch (_: Exception) {}
+                    }
+                    "url" -> out((com.lightbrowser.data.BrowserAgent.currentUrl() ?: "(none)") + "\n", TermWhite)
+                    "title" -> {
+                        val r = com.lightbrowser.data.BrowserAgent.eval("(function(){return document.title;})()")
+                        out("$r\n", TermWhite)
+                    }
+                    "js" -> {
+                        val expr = line.removePrefix("js").trim()
+                        if (expr.isBlank()) out("Usage: b js <expr>\n", TermRed)
+                        else {
+                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return JSON.stringify(eval(" + expr + "));}catch(e){return 'ERR '+e;}})()")
+                            wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
+                        }
+                    }
+                    "text" -> {
+                        val max = parts.getOrNull(1)?.toIntOrNull() ?: 8000
+                        val r = com.lightbrowser.data.BrowserAgent.pageText(max)
+                        wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
+                    }
+                    "dom" -> {
+                        val sel = parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "body"
+                        val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
+                        val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$esc');return e?e.outerHTML.slice(0,20000):'ERR no-node';}catch(e){return 'ERR '+e;}})()")
+                        wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
+                    }
+                    "snap" -> {
+                        val r = com.lightbrowser.data.BrowserAgent.snapshot()
+                        wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
+                    }
+                    "click" -> {
+                        val sel = parts.getOrNull(1) ?: ""
+                        if (sel.isBlank()) out("Usage: b click <ref|css>\n", TermRed)
+                        else {
+                            val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
+                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.click('$esc');}catch(e){return 'ERR '+e;}})()")
+                            out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                        }
+                    }
+                    "fill" -> {
+                        val rest = line.removePrefix("fill").trim()
+                        val sp = rest.indexOf(' ')
+                        if (sp < 0) out("Usage: b fill <ref|css> <value>\n", TermRed)
+                        else {
+                            val sel = rest.substring(0, sp).replace("\\", "\\\\").replace("'", "\\'")
+                            val v = rest.substring(sp + 1).replace("\\", "\\\\").replace("'", "\\'")
+                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.fill('$sel','$v');}catch(e){return 'ERR '+e;}})()")
+                            out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                        }
+                    }
+                    "scroll" -> {
+                        val y = parts.getOrNull(1)?.toIntOrNull() ?: 500
+                        val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{window.scrollBy(0,$y);return 'OK';}catch(e){return 'ERR '+e;}})()")
+                        out("$r\n", TermGreen)
+                    }
+                    "serve" -> {
+                        if (com.lightbrowser.data.BrowserAgent.serverRunning.value) {
+                            out("Agent server: ${com.lightbrowser.data.BrowserAgent.serverLabel.value}\nFrom Termux: curl 'http://127.0.0.1:8089/text?token=…'\n", TermGreen)
+                        } else out("Server is OFF — enable it in Browser ⋮ → Agent bridge.\n", TermDim)
+                    }
+                    else -> out("Unknown b command. Try: b help\n", TermRed)
+                }
+            } catch (e: Exception) {
+                out("b error: ${e.message}\n", TermRed)
+            }
+            withContext(Dispatchers.Main) { afterCommand() }
         }
     }
 

@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -116,6 +117,7 @@ fun BrowserScreen(
     var findOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var sheetSearch by remember { mutableStateOf("") }
+    var showAgent by remember { mutableStateOf(false) }
 
     val loadReq by vm.loadRequest.collectAsState()
     LaunchedEffect(loadReq) {
@@ -320,8 +322,9 @@ fun BrowserScreen(
                                 inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
                             )
                         )
-                        webView = wv
-                        val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
+                    webView = wv
+                    try { com.lightbrowser.data.BrowserAgent.webViewProvider = { webView } } catch (_: Exception) {}
+                    val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
                         try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
                     }
                 },
@@ -371,6 +374,7 @@ fun BrowserScreen(
                         MenuAction.Scripts -> onOpenScripts()
                         MenuAction.Downloads -> onOpenDownloads()
                         MenuAction.Settings -> onOpenSettings()
+                        MenuAction.Agent -> showAgent = true
                         MenuAction.ClearCache -> scope.launch {
                             try {
                                 android.webkit.CookieManager.getInstance().removeAllCookies(null)
@@ -510,6 +514,16 @@ fun BrowserScreen(
         }
     }
 
+    // ── Agent bridge sheet (separate menu: server + terminal commands) ──
+    if (showAgent) {
+        ModalBottomSheet(
+            onDismissRequest = { showAgent = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            AgentSheet(onClose = { showAgent = false })
+        }
+    }
+
     longPressUrl?.let { url ->
         AlertDialog(
             onDismissRequest = { longPressUrl = null },
@@ -538,8 +552,84 @@ fun BrowserScreen(
 }
 
 @Composable
-private fun SheetHeader(title: String, onClear: () -> Unit, clearLabel: String) {
-    Row(
+private fun AgentSheet(onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val running by com.lightbrowser.data.BrowserAgent.serverRunning.collectAsState()
+    val label by com.lightbrowser.data.BrowserAgent.serverLabel.collectAsState()
+    val scope = rememberCoroutineScope()
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.SmartToy, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Text("Agent bridge", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            TextButton(onClick = onClose) { Text("Done") }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Drive this browser from the Terminal tab (b open, b snap…) or from your main Termux over localhost.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (running) "● Server running" else "○ Server stopped",
+                color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = {
+                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    if (running) com.lightbrowser.data.BrowserAgent.stopServer()
+                    else com.lightbrowser.data.BrowserAgent.startServer()
+                }
+            }) { Text(if (running) "Stop" else "Expose server") }
+        }
+        if (running) {
+            Spacer(Modifier.height(4.dp))
+            Surface(
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(label, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            copyText(ctx, "http://127.0.0.1:${com.lightbrowser.data.BrowserAgent.PORT}")
+                        }) { Text("Copy URL") }
+                        TextButton(onClick = {
+                            copyText(ctx, com.lightbrowser.data.BrowserAgent.token)
+                        }) { Text("Copy token") }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "From Termux: curl 'http://127.0.0.1:8089/text?token=TOKEN'",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text("Terminal commands", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        listOf(
+            "b open <url> — navigate",
+            "b snap — page refs + text",
+            "b click <ref> — tap it",
+            "b fill <ref> <val> — type it",
+            "b js <expr> — run JS"
+        ).forEach { cmd ->
+            Text("• $cmd", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun SheetHeader(title: String, onClear: () -> Unit, clearLabel: String) {    Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -548,7 +638,7 @@ private fun SheetHeader(title: String, onClear: () -> Unit, clearLabel: String) 
     }
 }
 
-private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, ClearCache }
+private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, Agent, ClearCache }
 
 @Composable
 private fun MenuGrid(
@@ -570,6 +660,7 @@ private fun MenuGrid(
         Item(Icons.Filled.Code, "Scripts", MenuAction.Scripts),
         Item(Icons.Filled.Download, "Downloads", MenuAction.Downloads),
         Item(Icons.Filled.Settings, "Settings", MenuAction.Settings),
+        Item(Icons.Filled.SmartToy, "Agent", MenuAction.Agent),
         Item(Icons.Filled.Block, "Clear cache", MenuAction.ClearCache)
     )
     LazyVerticalGrid(
