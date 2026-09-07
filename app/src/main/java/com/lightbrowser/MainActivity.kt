@@ -38,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -78,6 +79,11 @@ private enum class Tab(
 
 class MainActivity : ComponentActivity() {
 
+    // Resize-proof keyboard signal: measures the visible window frame, so it works
+    // even on devices where the window shrinks for the keyboard (insets read 0 there).
+    private val keyboardOpenFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+    private var layoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -89,6 +95,20 @@ class MainActivity : ComponentActivity() {
         try { AppCtx.init(this) } catch (_: Exception) {}
         val startUrl = intent?.data?.toString()?.takeIf { it.startsWith("http") }
 
+        val decor = window.decorView
+        layoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            try {
+                val r = android.graphics.Rect()
+                decor.getWindowVisibleDisplayFrame(r)
+                val screenH = decor.height.coerceAtLeast(1)
+                val keyH = screenH - r.bottom
+                keyboardOpenFlow.value = keyH > screenH * 0.15
+            } catch (_: Exception) {}
+        }
+        try {
+            decor.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+        } catch (_: Exception) {}
+
         setContent {
             var themeMode by remember {
                 mutableStateOf(try { Prefs.themeMode } catch (_: Exception) { "system" })
@@ -98,13 +118,23 @@ class MainActivity : ComponentActivity() {
                 "light" -> false
                 else -> androidx.compose.foundation.isSystemInDarkTheme()
             }
+            val keyboardOpen by keyboardOpenFlow.collectAsState()
             LightBrowserTheme(darkTheme = dark) {
                 AppShell(
                     startUrl = startUrl,
+                    keyboardOpen = keyboardOpen,
                     onThemeChange = { themeMode = it }
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        try {
+            layoutListener?.let { window.decorView.viewTreeObserver.removeOnGlobalLayoutListener(it) }
+        } catch (_: Exception) {}
+        layoutListener = null
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -116,6 +146,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppShell(
     startUrl: String?,
+    keyboardOpen: Boolean,
     onThemeChange: (String) -> Unit
 ) {
     var tab by remember { mutableStateOf(Tab.Browser) }
@@ -213,22 +244,28 @@ private fun AppShell(
                                 Tab.Settings -> SettingsScreen(onThemeChange = onThemeChange)
                             }
                         }
-                        // Bottom zone is IME-immune: even if IME insets arrive here, the
-                        // mini-player + tab bar ignore them and stay anchored at the
-                        // very bottom; the keyboard overlays them instead of pushing up.
-                        Column(modifier = Modifier.consumeWindowInsets(WindowInsets.ime)) {
-                            if (tab != Tab.Music) {
-                                MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
-                            }
-                            if (!wide) {
-                                NavigationBar {
-                                    Tab.entries.filter { it.inBar }.forEach { t ->
-                                        NavigationBarItem(
-                                            selected = tab == t,
-                                            onClick = { tab = t },
-                                            icon = { Icon(t.icon, t.title) },
-                                            label = { Text(t.title) }
-                                        )
+                        // Bottom zone is IME-immune AND hidden while typing: the tab bar
+                        // can never float above the keyboard on any device — when keys
+                        // are out, this whole zone slides away; it returns on dismiss.
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = !keyboardOpen,
+                            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
+                            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it }
+                        ) {
+                            Column(modifier = Modifier.consumeWindowInsets(WindowInsets.ime)) {
+                                if (tab != Tab.Music) {
+                                    MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
+                                }
+                                if (!wide) {
+                                    NavigationBar {
+                                        Tab.entries.filter { it.inBar }.forEach { t ->
+                                            NavigationBarItem(
+                                                selected = tab == t,
+                                                onClick = { tab = t },
+                                                icon = { Icon(t.icon, t.title) },
+                                                label = { Text(t.title) }
+                                            )
+                                        }
                                     }
                                 }
                             }

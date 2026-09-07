@@ -26,9 +26,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -194,6 +192,14 @@ fun TerminalScreen(
                             clipboard.setText(AnnotatedString(vm.fullLog().take(100_000)))
                             scope.launch { snacks.showSnackbar("Log copied") }
                         })
+                        DropdownMenuItem(text = { Text("Paste") }, onClick = {
+                            overflow = false
+                            try {
+                                clipboard.getText()?.text?.let { t ->
+                                    if (t.isNotEmpty()) vm.insertText(t)
+                                }
+                            } catch (_: Exception) {}
+                        })
                         DropdownMenuItem(text = { Text("Clear") }, onClick = { overflow = false; vm.clear() })
                         if (status != "idle") DropdownMenuItem(
                             text = { Text("Kill process") },
@@ -300,20 +306,9 @@ fun TerminalScreen(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = (14 * fontScale).sp
                             )
+                            // Full-width editor: prompt + caret share one line like a real
+                            // linux terminal. Paste/send moved to the ⋮ menu + keyboard Go.
                             Box(modifier = Modifier.weight(1f)) { inner() }
-                            IconButton(
-                                onClick = {
-                                    try {
-                                        clipboard.getText()?.text?.let { t ->
-                                            if (t.isNotEmpty()) vm.insertText(t)
-                                        }
-                                    } catch (_: Exception) {}
-                                },
-                                modifier = Modifier.size(34.dp)
-                            ) { Icon(Icons.Filled.ContentPaste, "Paste", tint = TermWhite, modifier = Modifier.size(17.dp)) }
-                            IconButton(onClick = { vm.submit() }, modifier = Modifier.size(34.dp)) {
-                                Icon(Icons.Filled.Send, "Send", tint = TermGreen, modifier = Modifier.size(17.dp))
-                            }
                         }
                     }
                 )
