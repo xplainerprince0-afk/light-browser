@@ -1,0 +1,626 @@
+package com.lightbrowser.ui.browser
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.webkit.WebView
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DesktopWindows
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FindReplace
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.lightbrowser.data.DownloadHelper
+import com.lightbrowser.data.Prefs
+import kotlinx.coroutines.launch
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BrowserScreen(
+    modifier: Modifier = Modifier,
+    vm: BrowserViewModel = viewModel(),
+    onOpenScripts: () -> Unit,
+    onOpenDownloads: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val ui by vm.ui.collectAsState()
+    val history by vm.history.collectAsState()
+    val bookmarks by vm.bookmarks.collectAsState()
+    val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var canGoBack by remember { mutableStateOf(false) }
+    var canGoForward by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showTabs by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
+    var showBookmarks by remember { mutableStateOf(false) }
+    var longPressUrl by remember { mutableStateOf<String?>(null) }
+    var findOpen by remember { mutableStateOf(false) }
+    var findQuery by remember { mutableStateOf("") }
+
+    // Deep-link / tab-switch loads
+    val loadReq by vm.loadRequest.collectAsState()
+    LaunchedEffect(loadReq) {
+        val (url, _) = loadReq ?: return@LaunchedEffect
+        try {
+            webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
+        } catch (_: Exception) {}
+    }
+
+    BackHandler(enabled = webView?.canGoBack() == true && !ui.searchExpanded) {
+        try {
+            webView?.goBack()
+        } catch (_: Exception) {}
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                webView?.stopLoading()
+                webView?.destroy()
+            } catch (_: Exception) {}
+            webView = null
+        }
+    }
+
+    fun currentDomain(): String = try {
+        android.net.Uri.parse(ui.currentUrl).host ?: ui.currentUrl.ifBlank { "Search or enter URL" }
+    } catch (_: Exception) {
+        ui.currentUrl.ifBlank { "Search or enter URL" }
+    }
+
+    Column(modifier = modifier.fillMaxSize()) {
+        // ── URL bar: collapsed pill / expanded editor ──
+        if (ui.searchExpanded) {
+            val focusReq = remember { FocusRequester() }
+            OutlinedTextField(
+                value = ui.searchQuery,
+                onValueChange = vm::setQuery,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                    .focusRequester(focusReq),
+                placeholder = { Text("Search or enter URL") },
+                leadingIcon = { Icon(Icons.Filled.Search, null) },
+                trailingIcon = {
+                    IconButton(onClick = {
+                        vm.setSearch(false)
+                        focusManager.clearFocus()
+                    }) { Icon(Icons.Filled.Close, "Collapse") }
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = {
+                    val url = vm.resolveInput(ui.searchQuery)
+                    if (url.isNotEmpty()) {
+                        vm.onPageStarted(url)
+                        webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
+                    }
+                    vm.setSearch(false)
+                    focusManager.clearFocus()
+                }),
+                shape = MaterialTheme.shapes.extraLarge
+            )
+            LaunchedEffect(Unit) {
+                try { focusReq.requestFocus() } catch (_: Exception) {}
+            }
+            // Suggestions: bookmarks + history filtered
+            val q = ui.searchQuery.lowercase()
+            val sugBookmarks = bookmarks.filter {
+                q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)
+            }.take(4)
+            val sugHistory = history.filter {
+                (q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)) &&
+                    sugBookmarks.none { b -> b.url == it.url }
+            }.take(6)
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(sugBookmarks, key = { "b${it.url}" }) { b ->
+                    ListItem(
+                        headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Filled.Bookmark, null) },
+                        modifier = Modifier.clickable {
+                            vm.setSearch(false)
+                            focusManager.clearFocus()
+                            vm.onPageStarted(b.url)
+                            webView?.loadUrl(b.url)
+                        }
+                    )
+                }
+                items(sugHistory, key = { "h${it.url}${it.time}" }) { h ->
+                    ListItem(
+                        headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Filled.History, null) },
+                        modifier = Modifier.clickable {
+                            vm.setSearch(false)
+                            focusManager.clearFocus()
+                            vm.onPageStarted(h.url)
+                            webView?.loadUrl(h.url)
+                        }
+                    )
+                }
+            }
+        } else {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 2.dp,
+                onClick = { vm.setSearch(true) }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = { try { webView?.goBack() } catch (_: Exception) {} }, enabled = canGoBack) {
+                        Icon(Icons.Filled.ArrowBack, "Back")
+                    }
+                    IconButton(onClick = { try { webView?.goForward() } catch (_: Exception) {} }, enabled = canGoForward) {
+                        Icon(Icons.Filled.ArrowForward, "Forward")
+                    }
+                    Icon(
+                        if (ui.currentUrl.startsWith("https://")) Icons.Filled.Lock else Icons.Filled.Warning,
+                        null,
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        currentDomain(),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (ui.loading) {
+                        IconButton(onClick = { try { webView?.stopLoading() } catch (_: Exception) {} }) {
+                            Icon(Icons.Filled.Close, "Stop")
+                        }
+                    } else {
+                        IconButton(onClick = { try { webView?.reload() } catch (_: Exception) {} }) {
+                            Icon(Icons.Filled.Refresh, "Reload")
+                        }
+                    }
+                    BadgedBox(badge = { Badge { Text(ui.tabs.size.coerceAtLeast(1).toString()) } }) {
+                        TextButton(onClick = { showTabs = true }) { Text("Tabs") }
+                    }
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(Icons.Filled.MoreVert, "Menu")
+                    }
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = ui.loading && !ui.searchExpanded, enter = fadeIn(), exit = fadeOut()) {
+            LinearProgressIndicator(
+                progress = { (ui.progress.coerceIn(0, 100)) / 100f },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+            )
+        }
+
+        // ── Find in page ──
+        AnimatedVisibility(visible = findOpen) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = findQuery,
+                    onValueChange = {
+                        findQuery = it
+                        try { webView?.findAllAsync(it) } catch (_: Exception) {}
+                    },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Find in page") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.large
+                )
+                IconButton(onClick = { try { webView?.findNext(false) } catch (_: Exception) {} }) {
+                    Icon(Icons.Filled.KeyboardArrowUp, "Prev")
+                }
+                IconButton(onClick = { try { webView?.findNext(true) } catch (_: Exception) {} }) {
+                    Icon(Icons.Filled.KeyboardArrowDown, "Next")
+                }
+                IconButton(onClick = {
+                    findOpen = false
+                    try { webView?.clearMatches() } catch (_: Exception) {}
+                }) { Icon(Icons.Filled.Close, "Close find") }
+            }
+        }
+
+        // ── WebView (no imePadding here: WebView resizes itself via adjustResize;
+        // padding it would double-count the keyboard = the old black gap bug) ──
+        if (!ui.searchExpanded) {
+            AndroidView(
+                factory = { c ->
+                    WebView(c).also { wv ->
+                        setupLightWebView(
+                            wv,
+                            BrowserCallbacks(
+                                onStarted = { vm.onPageStarted(it) },
+                                onProgress = {
+                                    vm.onProgress(it)
+                                    try {
+                                        canGoBack = webView?.canGoBack() == true
+                                        canGoForward = webView?.canGoForward() == true
+                                    } catch (_: Exception) {}
+                                },
+                                onFinished = { url, title -> vm.onPageFinished(url, title) },
+                                onLongPressUrl = { longPressUrl = it },
+                                inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
+                            )
+                        )
+                        webView = wv
+                        val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
+                        try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f),
+                update = { wv ->
+                    if (webView == null) webView = wv
+                    var js = true
+                    var desk = false
+                    try { js = Prefs.jsEnabled } catch (_: Exception) {}
+                    try { desk = Prefs.desktopMode } catch (_: Exception) {}
+                    try {
+                        if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
+                        val want = if (desk) DESKTOP_UA else null
+                        if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
+                        else if (!desk && want == null && wv.settings.userAgentString == DESKTOP_UA) {
+                            wv.settings.userAgentString = System.getProperty("http.agent")
+                        }
+                    } catch (_: Exception) {}
+                }
+            )
+        }
+    }
+
+    // ── Overflow menu sheet ──
+    if (showMenu) {
+        ModalBottomSheet(
+            onDismissRequest = { showMenu = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            MenuGrid(
+                bookmarked = ui.bookmarked,
+                desktopOn = try { Prefs.desktopMode } catch (_: Exception) { false },
+                onAction = { action ->
+                    showMenu = false
+                    when (action) {
+                        MenuAction.Refresh -> try { webView?.reload() } catch (_: Exception) {}
+                        MenuAction.NewTab -> vm.openTab(try { Prefs.homePage } catch (_: Exception) { "https://www.google.com" })
+                        MenuAction.Bookmark -> vm.toggleBookmark()
+                        MenuAction.Find -> findOpen = true
+                        MenuAction.Share -> shareUrl(ctx, ui.currentUrl)
+                        MenuAction.OpenExternal -> openExternal(ctx, ui.currentUrl)
+                        MenuAction.Desktop -> {
+                            try { Prefs.desktopMode = !Prefs.desktopMode } catch (_: Exception) {}
+                            try { webView?.reload() } catch (_: Exception) {}
+                        }
+                        MenuAction.History -> showHistory = true
+                        MenuAction.Bookmarks -> showBookmarks = true
+                        MenuAction.Scripts -> onOpenScripts()
+                        MenuAction.Downloads -> onOpenDownloads()
+                        MenuAction.Settings -> onOpenSettings()
+                        MenuAction.ClearCache -> scope.launch {
+                            try {
+                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                android.webkit.WebStorage.getInstance().deleteAllData()
+                                webView?.clearCache(true)
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    // ── Tabs dialog ──
+    if (showTabs) {
+        AlertDialog(
+            onDismissRequest = { showTabs = false },
+            title = { Text("Tabs (${ui.tabs.size})") },
+            text = {
+                LazyColumn {
+                    items(ui.tabs.size) { i ->
+                        val t = ui.tabs[i]
+                        ListItem(
+                            headlineContent = {
+                                Text(
+                                    t.title.ifBlank { t.url },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            supportingContent = { Text(t.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingContent = {
+                                Text(
+                                    if (i == ui.currentIndex) "●" else "${i + 1}",
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            },
+                            trailingContent = {
+                                IconButton(onClick = { vm.closeTab(i) }, enabled = ui.tabs.size > 1) {
+                                    Icon(Icons.Filled.Close, "Close tab")
+                                }
+                            },
+                            modifier = Modifier.clickable {
+                                vm.selectTab(i)
+                                showTabs = false
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.openTab(try { Prefs.homePage } catch (_: Exception) { "https://www.google.com" })
+                    showTabs = false
+                }) { Text("New tab") }
+            },
+            dismissButton = { TextButton(onClick = { showTabs = false }) { Text("Close") } }
+        )
+    }
+
+    if (showHistory) {
+        AlertDialog(
+            onDismissRequest = { showHistory = false },
+            title = { Text("History") },
+            text = {
+                if (history.isEmpty()) Text("No history yet")
+                else LazyColumn(modifier = Modifier.height(400.dp)) {
+                    items(history, key = { it.url + it.time }) { h ->
+                        ListItem(
+                            headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            modifier = Modifier.clickable {
+                                showHistory = false
+                                vm.onPageStarted(h.url)
+                                webView?.loadUrl(h.url)
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.clearHistory()
+                    showHistory = false
+                }) { Text("Clear all") }
+            },
+            dismissButton = { TextButton(onClick = { showHistory = false }) { Text("Close") } }
+        )
+    }
+
+    if (showBookmarks) {
+        AlertDialog(
+            onDismissRequest = { showBookmarks = false },
+            title = { Text("Bookmarks") },
+            text = {
+                if (bookmarks.isEmpty()) Text("No bookmarks — use ☆ in the menu to add one")
+                else LazyColumn(modifier = Modifier.height(400.dp)) {
+                    items(bookmarks, key = { it.url }) { b ->
+                        ListItem(
+                            headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            modifier = Modifier.clickable {
+                                showBookmarks = false
+                                vm.onPageStarted(b.url)
+                                webView?.loadUrl(b.url)
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showBookmarks = false }) { Text("Close") } },
+            dismissButton = {
+                TextButton(onClick = {
+                    vm.clearBookmarks()
+                    showBookmarks = false
+                }) { Text("Clear") }
+            }
+        )
+    }
+
+    longPressUrl?.let { url ->
+        AlertDialog(
+            onDismissRequest = { longPressUrl = null },
+            title = { Text("Link", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = { Text(url) },
+            confirmButton = {
+                TextButton(onClick = {
+                    longPressUrl = null
+                    vm.onPageStarted(url)
+                    webView?.loadUrl(url)
+                }) { Text("Open") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        longPressUrl = null
+                        try {
+                            DownloadHelper.enqueue(ctx, url, null, null, null)
+                        } catch (_: Exception) {}
+                    }) { Text("Download") }
+                    TextButton(onClick = {
+                        longPressUrl = null
+                        copyText(ctx, url)
+                    }) { Text("Copy") }
+                }
+            }
+        )
+    }
+}
+
+private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, ClearCache }
+
+@Composable
+private fun MenuGrid(
+    bookmarked: Boolean,
+    desktopOn: Boolean,
+    onAction: (MenuAction) -> Unit
+) {
+    data class Item(val icon: ImageVector, val label: String, val action: MenuAction)
+    val items = listOf(
+        Item(Icons.Filled.Refresh, "Refresh", MenuAction.Refresh),
+        Item(Icons.Filled.Add, "New tab", MenuAction.NewTab),
+        Item(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, "Bookmark", MenuAction.Bookmark),
+        Item(Icons.Filled.FindReplace, "Find", MenuAction.Find),
+        Item(Icons.Filled.Share, "Share", MenuAction.Share),
+        Item(Icons.Filled.OpenInNew, "External", MenuAction.OpenExternal),
+        Item(Icons.Filled.DesktopWindows, if (desktopOn) "Desktop ON" else "Desktop", MenuAction.Desktop),
+        Item(Icons.Filled.History, "History", MenuAction.History),
+        Item(Icons.Filled.Bookmark, "Saved", MenuAction.Bookmarks),
+        Item(Icons.Filled.Code, "Scripts", MenuAction.Scripts),
+        Item(Icons.Filled.Download, "Downloads", MenuAction.Downloads),
+        Item(Icons.Filled.Settings, "Settings", MenuAction.Settings),
+        Item(Icons.Filled.Block, "Clear cache", MenuAction.ClearCache)
+    )
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(4),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        items(items) { item ->
+            Column(
+                modifier = Modifier
+                    .clickable { onAction(item.action) }
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                FilledTonalIconButton(onClick = { onAction(item.action) }) {
+                    Icon(item.icon, item.label)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(item.label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+private fun shareUrl(ctx: Context, url: String) {
+    if (url.isBlank()) return
+    try {
+        ctx.startActivity(
+            Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, url)
+                },
+                "Share link"
+            )
+        )
+    } catch (_: Exception) {}
+}
+
+private fun openExternal(ctx: Context, url: String) {
+    if (url.isBlank()) return
+    try {
+        ctx.startActivity(
+            Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
+    } catch (_: Exception) {}
+}
+
+private fun copyText(ctx: Context, text: String) {
+    try {
+        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(ClipData.newPlainText("url", text))
+    } catch (_: Exception) {}
+}

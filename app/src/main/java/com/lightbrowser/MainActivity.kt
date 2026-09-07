@@ -1,256 +1,232 @@
 package com.lightbrowser
 
+import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
-import androidx.activity.OnBackPressedCallback
-import androidx.appcompat.app.ActionBarDrawerToggle
-import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.view.GravityCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.updatePadding
-import androidx.fragment.app.Fragment
-import com.lightbrowser.databinding.ActivityMainBinding
-import com.lightbrowser.ui.BrowserFragment
-import com.lightbrowser.ui.DownloadsFragment
-import com.lightbrowser.ui.FileManagerFragment
-import com.lightbrowser.ui.MusicPlayerFragment
-import com.lightbrowser.ui.ScriptsFragment
-import com.lightbrowser.ui.SettingsFragment
-import com.lightbrowser.ui.TerminalFragment
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.lightbrowser.data.AppCtx
+import com.lightbrowser.data.Prefs
+import com.lightbrowser.ui.browser.BrowserScreen
+import com.lightbrowser.ui.browser.BrowserViewModel
+import com.lightbrowser.ui.downloads.DownloadsScreen
+import com.lightbrowser.ui.files.FilesScreen
+import com.lightbrowser.ui.music.MiniPlayer
+import com.lightbrowser.ui.music.MusicScreen
+import com.lightbrowser.ui.music.MusicViewModel
+import com.lightbrowser.ui.scripts.ScriptsScreen
+import com.lightbrowser.ui.settings.SettingsScreen
+import com.lightbrowser.ui.terminal.TerminalScreen
+import com.lightbrowser.ui.theme.LightBrowserTheme
+import kotlinx.coroutines.launch
 
-class MainActivity : AppCompatActivity() {
+private enum class Tab(
+    val title: String,
+    val icon: ImageVector,
+    val inBar: Boolean
+) {
+    Browser("Browser", Icons.Filled.Language, true),
+    Files("Sandbox", Icons.Filled.Folder, true),
+    Music("Player", Icons.Filled.AudioFile, true),
+    Terminal("Terminal", Icons.Filled.Terminal, true),
+    Scripts("Scripts", Icons.Filled.Description, false),
+    Downloads("Downloads", Icons.Filled.Download, false),
+    Settings("Settings", Icons.Filled.Settings, false)
+}
 
-    private lateinit var binding: ActivityMainBinding
-    private var currentId: Int = R.id.nav_browser
-    private var isNavSyncing = false
-    private lateinit var drawerToggle: ActionBarDrawerToggle
-
-    private val fragments = mutableMapOf<Int, Fragment>()
-
-    private fun getFrag(id: Int): Fragment = fragments.getOrPut(id) {
-        when (id) {
-            R.id.nav_browser -> BrowserFragment()
-            R.id.nav_filemanager -> FileManagerFragment()
-            R.id.nav_music -> MusicPlayerFragment()
-            R.id.nav_terminal -> TerminalFragment()
-            R.id.nav_settings -> SettingsFragment()
-            R.id.nav_scripts -> ScriptsFragment()
-            R.id.nav_downloads -> DownloadsFragment()
-            else -> BrowserFragment()
-        }
-    }
+class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val themePrefs = getSharedPreferences("app_theme", MODE_PRIVATE)
-        AppCompatDelegate.setDefaultNightMode(
-            themePrefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_YES)
-        )
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-        com.lightbrowser.data.AppCtx.init(this)
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        enableEdgeToEdge()
+        try { AppCtx.init(this) } catch (_: Exception) {}
+        val startUrl = intent?.data?.toString()?.takeIf { it.startsWith("http") }
 
-        drawerToggle = ActionBarDrawerToggle(
-            this, binding.drawerLayout,
-            R.string.open_drawer, R.string.close_drawer
-        )
-        binding.drawerLayout.addDrawerListener(drawerToggle)
-        drawerToggle.syncState()
-
-        binding.navView.setNavigationItemSelectedListener { item ->
-            when (item.itemId) {
-                R.id.nav_drawer_browser -> switchTab(R.id.nav_browser)
-                R.id.nav_drawer_sandbox -> switchTab(R.id.nav_filemanager)
-                R.id.nav_drawer_player -> switchTab(R.id.nav_music)
-                R.id.nav_drawer_terminal -> switchTab(R.id.nav_terminal)
-                R.id.nav_drawer_settings -> switchTab(R.id.nav_settings)
-                R.id.nav_drawer_scripts -> switchTab(R.id.nav_scripts)
-                R.id.nav_drawer_downloads -> switchTab(R.id.nav_downloads)
-                R.id.nav_drawer_history -> {
-                    switchTab(R.id.nav_browser)
-                    (fragments[R.id.nav_browser] as? BrowserFragment)?.showHistory()
-                }
-                R.id.nav_drawer_bookmarks -> {
-                    switchTab(R.id.nav_browser)
-                    (fragments[R.id.nav_browser] as? BrowserFragment)?.showBookmarks()
-                }
-                R.id.nav_drawer_about -> showAboutDialog()
+        setContent {
+            var themeMode by remember {
+                mutableStateOf(try { Prefs.themeMode } catch (_: Exception) { "system" })
             }
-            binding.drawerLayout.closeDrawer(GravityCompat.START)
-            true
-        }
-
-        // Bottom nav stays fixed; only content area responds to keyboard IME
-        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-            binding.container.updatePadding(
-                top = systemBars.top,
-                bottom = ime.bottom
-            )
-            binding.bottomNav.updatePadding(bottom = systemBars.bottom)
-            insets
-        }
-        ViewCompat.requestApplyInsets(binding.root)
-
-        if (savedInstanceState == null) {
-            switchTab(R.id.nav_browser)
-        } else {
-            supportFragmentManager.fragments.forEach { f ->
-                val id = when (f) {
-                    is BrowserFragment -> R.id.nav_browser
-                    is FileManagerFragment -> R.id.nav_filemanager
-                    is MusicPlayerFragment -> R.id.nav_music
-                    is TerminalFragment -> R.id.nav_terminal
-                    is SettingsFragment -> R.id.nav_settings
-                    is ScriptsFragment -> R.id.nav_scripts
-                    is DownloadsFragment -> R.id.nav_downloads
-                    else -> null
-                }
-                if (id != null) fragments[id] = f
+            val dark = when (themeMode) {
+                "dark" -> true
+                "light" -> false
+                else -> androidx.compose.foundation.isSystemInDarkTheme()
             }
-            fragments.entries.find { it.value.isVisible }?.let { currentId = it.key }
-            try { binding.bottomNav.selectedItemId = currentId } catch (_: Exception) {}
-        }
-
-        binding.bottomNav.setOnItemSelectedListener { item ->
-            if (isNavSyncing) return@setOnItemSelectedListener true
-            switchTab(item.itemId)
-            true
-        }
-
-        intent?.data?.toString()?.let { url ->
-            if (url.startsWith("http")) {
-                BrowserFragment.pendingUrl = url
-                switchTab(R.id.nav_browser)
+            LightBrowserTheme(darkTheme = dark) {
+                AppShell(
+                    startUrl = startUrl,
+                    onThemeChange = { themeMode = it }
+                )
             }
         }
-
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (binding.drawerLayout.isDrawerOpen(GravityCompat.START)) {
-                    binding.drawerLayout.closeDrawer(GravityCompat.START)
-                    return
-                }
-                val current = fragments[currentId]
-                if (current is BrowserFragment && current.canGoBack()) {
-                    current.goBack()
-                } else if (currentId != R.id.nav_browser) {
-                    switchTab(R.id.nav_browser)
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                    isEnabled = true
-                }
-            }
-        })
     }
 
-    override fun onPostCreate(savedInstanceState: Bundle?) {
-        super.onPostCreate(savedInstanceState)
-        drawerToggle.syncState()
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+}
+
+@Composable
+private fun AppShell(
+    startUrl: String?,
+    onThemeChange: (String) -> Unit
+) {
+    var tab by remember { mutableStateOf(Tab.Browser) }
+    var showAbout by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    // Activity-scoped shared VMs: MiniPlayer and screens observe the same state.
+    val browserVm: BrowserViewModel = viewModel()
+    val musicVm: MusicViewModel = viewModel()
+
+    fun open(t: Tab) {
+        tab = t
+        scope.launch { try { drawerState.close() } catch (_: Exception) {} }
     }
 
-    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
-        super.onConfigurationChanged(newConfig)
-        drawerToggle.onConfigurationChanged(newConfig)
-    }
-
-    fun openDrawer() {
-        binding.drawerLayout.openDrawer(GravityCompat.START)
-    }
-
-    fun switchTab(id: Int) {
-        try {
-            if (currentId == id && fragments.containsKey(id) && fragments[id]?.isAdded == true) return
-            if (supportFragmentManager.isStateSaved) {
-                val tx2 = supportFragmentManager.beginTransaction()
-                    .setCustomAnimations(R.anim.fade_in, R.anim.fade_out, R.anim.fade_in, R.anim.fade_out)
-                fragments[currentId]?.let { if (it.isAdded) try { tx2.hide(it) } catch (_: Exception) {} }
-                val n2 = getFrag(id)
-                if (n2.isAdded) try { tx2.show(n2) } catch (_: Exception) {} else try { tx2.add(R.id.container, n2, id.toString()) } catch (_: Exception) {}
-                try { tx2.commitAllowingStateLoss() } catch (_: Exception) {}
-                currentId = id
-                syncBottomNav(id)
-                return
-            }
-            val tx = supportFragmentManager.beginTransaction()
-                .setCustomAnimations(R.anim.fade_in, R.anim.fade_out, R.anim.fade_in, R.anim.fade_out)
-            fragments[currentId]?.let { if (it.isAdded) try { tx.hide(it) } catch (_: Exception) {} }
-            val next = getFrag(id)
+    LaunchedEffect(startUrl) {
+        if (startUrl != null) {
+            tab = Tab.Browser
             try {
-                if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString())
-            } catch (_: Exception) {
-                try { if (next.isAdded) tx.show(next) else tx.add(R.id.container, next, id.toString()) } catch (_: Exception) {}
-            }
-            try { tx.commit() } catch (_: Exception) { try { tx.commitAllowingStateLoss() } catch (_: Exception) {} }
-            currentId = id
-            syncBottomNav(id)
-        } catch (e: Exception) {
-            try { android.util.Log.e("LightBrowser", "switchTab $id", e) } catch (_: Exception) {}
-            try { Toast.makeText(this, "Tab error: ${e.message}", Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                val url = browserVm.resolveInput(startUrl).ifBlank { startUrl }
+                browserVm.onPageStarted(url)
+                browserVm.requestLoad(url)
+            } catch (_: Exception) {}
         }
     }
 
-    private fun syncBottomNav(id: Int) {
-        val bottomNavIds = setOf(
-            R.id.nav_browser, R.id.nav_filemanager, R.id.nav_music, R.id.nav_terminal
-        )
-        try {
-            if (id in bottomNavIds) {
-                if (binding.bottomNav.selectedItemId != id) {
-                    isNavSyncing = true
-                    binding.bottomNav.selectedItemId = id
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Text("LightBrowser", style = androidx.compose.material3.MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(20.dp))
+                Tab.entries.forEach { t ->
+                    NavigationDrawerItem(
+                        label = { Text(t.title) },
+                        selected = tab == t,
+                        onClick = { open(t) },
+                        icon = { Icon(t.icon, null) },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
+                NavigationDrawerItem(
+                    label = { Text("About") },
+                    selected = false,
+                    onClick = {
+                        showAbout = true
+                        scope.launch { try { drawerState.close() } catch (_: Exception) {} }
+                    },
+                    icon = { Icon(Icons.Filled.Info, null) },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+            }
+        }
+    ) {
+        // contentWindowInsets = safeDrawing (no IME) — inputs add imePadding themselves.
+        // This is the exact fix for the old black-gap-above-keyboard bug.
+        Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { inner ->
+            BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(inner).consumeWindowInsets(inner)) {
+                val wide = maxWidth >= 600.dp
+                Row(modifier = Modifier.fillMaxSize()) {
+                    if (wide) {
+                        NavigationRail {
+                            Tab.entries.filter { it.inBar }.forEach { t ->
+                                NavigationRailItem(
+                                    selected = tab == t,
+                                    onClick = { tab = t },
+                                    icon = { Icon(t.icon, t.title) },
+                                    label = { Text(t.title) }
+                                )
+                            }
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f).fillMaxSize()) {
+                        Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                            when (tab) {
+                                Tab.Browser -> BrowserScreen(
+                                    onOpenScripts = { tab = Tab.Scripts },
+                                    onOpenDownloads = { tab = Tab.Downloads },
+                                    onOpenSettings = { tab = Tab.Settings },
+                                    vm = browserVm
+                                )
+                                Tab.Files -> FilesScreen()
+                                Tab.Music -> MusicScreen(vm = musicVm)
+                                Tab.Terminal -> TerminalScreen()
+                                Tab.Scripts -> ScriptsScreen()
+                                Tab.Downloads -> DownloadsScreen()
+                                Tab.Settings -> SettingsScreen(onThemeChange = onThemeChange)
+                            }
+                        }
+                        if (tab != Tab.Music) {
+                            MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
+                        }
+                        if (!wide) {
+                            NavigationBar {
+                                Tab.entries.filter { it.inBar }.forEach { t ->
+                                    NavigationBarItem(
+                                        selected = tab == t,
+                                        onClick = { tab = t },
+                                        icon = { Icon(t.icon, t.title) },
+                                        label = { Text(t.title) }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            val navItemId = when (id) {
-                R.id.nav_browser -> R.id.nav_drawer_browser
-                R.id.nav_filemanager -> R.id.nav_drawer_sandbox
-                R.id.nav_music -> R.id.nav_drawer_player
-                R.id.nav_terminal -> R.id.nav_drawer_terminal
-                R.id.nav_settings -> R.id.nav_drawer_settings
-                else -> -1
-            }
-            if (navItemId != -1) {
-                binding.navView.menu.findItem(navItemId)?.isChecked = true
-            }
-        } catch (_: Exception) {} finally {
-            try { binding.bottomNav.post { isNavSyncing = false } } catch (_: Exception) { isNavSyncing = false }
         }
     }
 
-    fun switchToTab(id: Int) = switchTab(id)
-
-    fun switchToBrowser(url: String? = null) {
-        // If the browser tab already exists, load directly (pendingUrl would otherwise sit
-        // unconsumed, then double-load on next recreate). Only use pendingUrl for cold start.
-        val existing = fragments[R.id.nav_browser] as? BrowserFragment
-        if (url != null && existing != null && existing.isAdded) {
-            BrowserFragment.pendingUrl = null
-            switchTab(R.id.nav_browser)
-            existing.loadUrl(url)
-        } else {
-            url?.let { BrowserFragment.pendingUrl = it }
-            switchTab(R.id.nav_browser)
-            if (url != null) {
-                (fragments[R.id.nav_browser] as? BrowserFragment)?.loadUrl(url)
+    if (showAbout) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showAbout = false },
+            title = { Text("LightBrowser 3.0") },
+            text = { Text("Browser · Sandbox · Terminal (Alpine) · Player\n\nCompose + Material 3 Expressive · ExoPlayer") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showAbout = false }) { Text("OK") }
             }
-        }
-    }
-
-    private fun showAboutDialog() {
-        android.app.AlertDialog.Builder(this)
-            .setTitle("About LightBrowser")
-            .setMessage(
-                "LightBrowser v2.3\n\n" +
-                "Browser · Sandbox · Terminal (Alpine) · Player\n\n" +
-                "Material 3 · Kotlin"
-            )
-            .setPositiveButton("OK", null)
-            .show()
+        )
     }
 }

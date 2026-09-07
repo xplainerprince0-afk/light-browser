@@ -51,8 +51,6 @@ android {
 
     buildFeatures {
         compose = true
-        // viewBinding stays true until the last Fragment is deleted
-        viewBinding = true
     }
 
     packaging {
@@ -80,13 +78,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
-    // SAF file access (pre-existing need)
+    // SAF file access (scoped-storage compliant file manager + music import)
     implementation("androidx.documentfile:documentfile:1.0.1")
-    // Kept during Views→Compose migration; dropped in final cleanup push
+    // Kept: manifest theme + file_paths depend on Material/AppCompat resources
     implementation("com.google.android.material:material:1.11.0")
-    implementation("androidx.fragment:fragment-ktx:1.8.2")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
-    implementation("androidx.webkit:webkit:1.8.0")
-    implementation("androidx.drawerlayout:drawerlayout:1.2.0")
+    implementation(libs.androidx.appcompat)
 }
