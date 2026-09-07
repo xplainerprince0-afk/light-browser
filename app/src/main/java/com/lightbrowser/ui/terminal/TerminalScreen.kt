@@ -1,7 +1,10 @@
 package com.lightbrowser.ui.terminal
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,28 +19,28 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.FilterChip
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,10 +51,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -60,11 +67,17 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lightbrowser.data.Prefs
 import kotlinx.coroutines.launch
 
+private val TermBlack = Color(0xFF000000)
+private val TermWhite = Color(0xFFE8E8E8)
+private val TermGreen = Color(0xFF00E676)
+private val TermDim = Color(0xFF88CC88)
+private val TermRed = Color(0xFFFF8A80)
+private val TermKeyBg = Color(0xFF0A0A0A)
+
 /**
- * Terminal: output is selectable (long-press any text to copy), the input is a
- * real multi-line-capable field with full cursor control — arrows, word jumps,
- * tap-to-place, and a scrub slider. Sticky CTRL/ALT send visual markers only
- * for `sh` (documented); extra keys insert real escape chars (ESC/TAB).
+ * Termux-style terminal: full-black fullscreen, flat two-row key grid,
+ * tap-anywhere focuses input, long-press selects/copies, sessions on top.
+ * The keyboard overlays everything below the input (no push-up weirdness).
  */
 @Composable
 fun TerminalScreen(
@@ -80,11 +93,12 @@ fun TerminalScreen(
     val scope = rememberCoroutineScope()
     val snacks = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
-    val ctx = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val inputFocus = remember { FocusRequester() }
 
     var sticky by remember { mutableStateOf<String?>(null) }
-    var showFont by remember { mutableStateOf(false) }
     var follow by remember { mutableStateOf(true) }
+    var overflow by remember { mutableStateOf(false) }
     var renameId by remember { mutableStateOf<String?>(null) }
     var renameText by remember { mutableStateOf("") }
     var fontScale by remember { mutableStateOf(try { Prefs.terminalFontScale } catch (_: Exception) { 1f }) }
@@ -97,108 +111,110 @@ fun TerminalScreen(
         } catch (_: Exception) {}
     }
 
-    val green = Color(0xFF00E676)
-    val dimGreen = Color(0xFF88CC88)
-    val red = Color(0xFFFF8A80)
-
     fun lineColor(kind: Int): Color = when (kind) {
-        TermLine.OK -> green
-        TermLine.ERROR -> red
+        TermLine.OK -> TermGreen
+        TermLine.ERROR -> TermRed
         TermLine.ECHO -> Color.White
-        else -> dimGreen
+        else -> TermDim
     }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snacks) },
-        containerColor = Color(0xFF060A12)
+        containerColor = TermBlack
     ) { _ ->
-        Column(modifier = Modifier.fillMaxSize()) {
-            // ── Session strip (Termux-style) ──
+        Column(modifier = Modifier.fillMaxSize().background(TermBlack)) {
+            // ── Slim session strip + status + overflow ──
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
                     modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     sessions.forEach { s ->
-                        FilterChip(
-                            selected = s.id == activeId,
-                            onClick = { vm.switchSession(s.id) },
-                            label = { Text(s.name, fontFamily = FontFamily.Monospace) },
-                            trailingIcon = if (sessions.size > 1) {
-                                {
-                                    IconButton(
-                                        onClick = { vm.closeSession(s.id) },
-                                        modifier = Modifier.size(20.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Close, "Close session", modifier = Modifier.size(12.dp))
-                                    }
+                        val sel = s.id == activeId
+                        Row(
+                            modifier = Modifier
+                                .clickable { vm.switchSession(s.id) }
+                                .background(if (sel) Color(0xFF1A1A1A) else Color.Transparent)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                s.name,
+                                color = if (sel) TermWhite else Color(0xFF888888),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp
+                            )
+                            if (sessions.size > 1) {
+                                Spacer(Modifier.width(4.dp))
+                                IconButton(onClick = { vm.closeSession(s.id) }, modifier = Modifier.size(18.dp)) {
+                                    Icon(Icons.Filled.Close, "Close", tint = Color(0xFF888888), modifier = Modifier.size(12.dp))
                                 }
-                            } else null
+                            }
+                        }
+                    }
+                    IconButton(onClick = vm::newSession, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Filled.Add, "New session", tint = TermWhite, modifier = Modifier.size(16.dp))
+                    }
+                }
+                Text(
+                    "●",
+                    color = if (status == "idle") Color(0xFF444444) else TermGreen,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                Box {
+                    IconButton(onClick = { overflow = true }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Filled.MoreVert, "Options", tint = TermWhite, modifier = Modifier.size(16.dp))
+                    }
+                    DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (follow) "✓ Follow output" else "Follow output") },
+                            onClick = { follow = !follow }
+                        )
+                        DropdownMenuItem(text = { Text("Text bigger") }, onClick = {
+                            fontScale = (fontScale + 0.15f).coerceAtMost(1.8f)
+                            try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
+                        })
+                        DropdownMenuItem(text = { Text("Text smaller") }, onClick = {
+                            fontScale = (fontScale - 0.15f).coerceAtLeast(0.7f)
+                            try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
+                        })
+                        DropdownMenuItem(text = { Text("Rename session") }, onClick = {
+                            overflow = false
+                            renameId = activeId
+                            renameText = sessions.firstOrNull { it.id == activeId }?.name ?: ""
+                        })
+                        DropdownMenuItem(text = { Text("Copy all output") }, onClick = {
+                            overflow = false
+                            clipboard.setText(AnnotatedString(vm.fullLog().take(100_000)))
+                            scope.launch { snacks.showSnackbar("Log copied") }
+                        })
+                        DropdownMenuItem(text = { Text("Clear") }, onClick = { overflow = false; vm.clear() })
+                        if (status != "idle") DropdownMenuItem(
+                            text = { Text("Kill process") },
+                            onClick = { overflow = false; vm.killRunning() }
                         )
                     }
                 }
-                AssistChip(onClick = vm::newSession, label = { Text("+") })
-            }
-            // Status row
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "● $status",
-                    color = if (status == "idle") dimGreen else green,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.weight(1f)
-                )
-                if (status != "idle") {
-                    androidx.compose.material3.TextButton(onClick = vm::killRunning) {
-                        Text("Kill", color = red)
-                    }
-                }
-                FilterChip(selected = follow, onClick = { follow = !follow }, label = { Text("Follow") })
-                IconButton(onClick = {
-                    renameId = activeId
-                    renameText = sessions.firstOrNull { it.id == activeId }?.name ?: ""
-                }) { Text("✎", color = dimGreen, style = MaterialTheme.typography.labelLarge) }
-                IconButton(onClick = {
-                    clipboard.setText(AnnotatedString(vm.fullLog().take(100_000)))
-                    scope.launch { snacks.showSnackbar("Log copied") }
-                }) { Icon(Icons.Filled.ContentCopy, "Copy log", tint = dimGreen) }
-                IconButton(onClick = vm::clear) { Icon(Icons.Filled.Delete, "Clear", tint = dimGreen) }
-                IconButton(onClick = { showFont = !showFont }) {
-                    Text("A±", color = dimGreen, style = MaterialTheme.typography.labelLarge)
-                }
             }
 
-            if (showFont) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Text size", color = dimGreen, style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.width(12.dp))
-                    Slider(
-                        value = fontScale,
-                        onValueChange = { fontScale = it },
-                        onValueChangeFinished = {
-                            try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
-                        },
-                        valueRange = 0.7f..1.8f,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            // Output — selectable so ANY text (not just input) is reachable by cursor/selection
+            // ── Output: tap focuses input, long-press selects ──
             SelectionContainer(modifier = Modifier.weight(1f)) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                            indication = null,
+                            onClick = { try { inputFocus.requestFocus() } catch (_: Exception) {} }
+                        )
+                        .padding(horizontal = 8.dp)
                 ) {
                     items(lines.takeLast(500), key = { it.hashCode().toString() + it.text.hashCode() }) { line ->
                         Text(
@@ -212,106 +228,95 @@ fun TerminalScreen(
                 }
             }
 
-            // Cursor scrub slider (basic feature: drag to move caret across the whole input)
-            if (input.text.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("⇤", color = dimGreen)
-                    Slider(
-                        value = input.selection.start.toFloat(),
-                        onValueChange = { vm.moveCursorTo(it.toInt()) },
-                        valueRange = 0f..input.text.length.coerceAtLeast(1).toFloat(),
-                        steps = 0,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Text("⇥", color = dimGreen)
-                }
-            }
+            // ── Termux two-row key grid (full-bleed, flat) ──
+            TermKeyRow(
+                keys = listOf(
+                    "ESC" to { vm.insertText("") },
+                    "/" to { applySticky(sticky, { sticky = null }, vm, "/") },
+                    "-" to { applySticky(sticky, { sticky = null }, vm, "-") },
+                    "HOME" to { vm.moveCursorTo(0) },
+                    "↑" to { vm.historyUp() },
+                    "END" to { vm.moveCursorTo(vm.input.value.text.length) },
+                    "PGUP" to { scope.launch { try { listState.animateScrollToItem(0) } catch (_: Exception) {} } }
+                ),
+                sticky = null
+            )
+            TermKeyRow(
+                keys = listOf(
+                    "⇥" to { vm.insertText("\t") },
+                    "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL" },
+                    "ALT" to { sticky = if (sticky == "ALT") null else "ALT" },
+                    "←" to { vm.moveCursor(-1) },
+                    "↓" to { vm.historyDown() },
+                    "→" to { vm.moveCursor(1) },
+                    "PGDN" to { scope.launch { try { listState.animateScrollToItem(maxOf(0, lines.size - 1)) } catch (_: Exception) {} } }
+                ),
+                sticky = sticky
+            )
 
-            // Extra keys — sticky CTRL/ALT, cursor cluster, symbols
+            // ── Input row: prompt + transparent field (tap places cursor natively) ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    .background(TermBlack)
+                    .imePadding()
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                FilterChip(
-                    selected = sticky == "CTRL",
-                    onClick = { sticky = if (sticky == "CTRL") null else "CTRL" },
-                    label = { Text("CTRL") }
+                Text(
+                    prompt,
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = (14 * fontScale).sp,
+                    modifier = Modifier.padding(start = 4.dp)
                 )
-                FilterChip(
-                    selected = sticky == "ALT",
-                    onClick = { sticky = if (sticky == "ALT") null else "ALT" },
-                    label = { Text("ALT") }
-                )
-                listOf("ESC" to "\u001B", "TAB" to "\t", "|" to "|", "/" to "/", "-" to "-", "~" to "~").forEach { (label, ins) ->
-                    AssistChip(onClick = {
-                        val mod = sticky
-                        if (mod != null) {
-                            vm.insertText(if (mod == "CTRL") "^$ins" else "M-$ins")
-                            sticky = null
-                        } else vm.insertText(ins)
-                    }, label = { Text(label, fontFamily = FontFamily.Monospace) })
-                }
-                AssistChip(onClick = { vm.moveCursor(-1) }, label = { Text("◄") })
-                AssistChip(onClick = { vm.moveCursor(1) }, label = { Text("►") })
-                AssistChip(onClick = { vm.moveWord(true) }, label = { Text("⇤") })
-                AssistChip(onClick = { vm.moveWord(false) }, label = { Text("⇥") })
-                AssistChip(onClick = { vm.moveCursorTo(0) }, label = { Text("HOME") })
-                AssistChip(onClick = { vm.moveCursorTo(vm.input.value.text.length) }, label = { Text("END") })
-                AssistChip(onClick = vm::historyUp, label = { Text("▲") })
-                AssistChip(onClick = vm::historyDown, label = { Text("▼") })
-            }
-
-            // Input row — imePadding ONLY here (no double-count black gap)
-            Surface(
-                color = Color(0xFF0A0A0A),
-                modifier = Modifier.fillMaxWidth().imePadding()
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        prompt,
-                        color = Color.White,
+                BasicTextField(
+                    value = input,
+                    onValueChange = vm::onInputChange,
+                    modifier = Modifier.weight(1f).focusRequester(inputFocus).padding(horizontal = 2.dp),
+                    textStyle = TextStyle(
+                        color = TermWhite,
                         fontFamily = FontFamily.Monospace,
                         fontSize = (14 * fontScale).sp
-                    )
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = vm::onInputChange,
-                        modifier = Modifier.weight(1f),
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            color = green,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = (14 * fontScale).sp
-                        ),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { vm.submit() }),
-                        shape = MaterialTheme.shapes.extraLarge
-                    )
-                    IconButton(onClick = vm::historyUp) { Icon(Icons.Filled.ArrowUpward, "History up", tint = dimGreen) }
-                    IconButton(onClick = vm::historyDown) { Icon(Icons.Filled.ArrowDownward, "History down", tint = dimGreen) }
-                    // Paste from system clipboard (basic Termux parity)
-                    IconButton(onClick = {
+                    ),
+                    cursorBrush = SolidColor(Color.White),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                        // Apply sticky modifier prefix like Termux (CTRL+C etc.)
+                        val mod = sticky
+                        if (mod != null) {
+                            val cur = vm.input.value.text
+                            if (mod == "CTRL" && cur.length == 1) {
+                                val code = cur[0].lowercaseChar() - 'a' + 1
+                                if (code in 1..26) {
+                                    vm.onInputChange(
+                                        androidx.compose.ui.text.input.TextFieldValue(
+                                            String(Character.toChars(code)),
+                                            androidx.compose.ui.text.TextRange(1)
+                                        )
+                                    )
+                                }
+                            }
+                            sticky = null
+                        }
+                        vm.submit()
+                    })
+                )
+                IconButton(
+                    onClick = {
                         try {
                             clipboard.getText()?.text?.let { t ->
                                 if (t.isNotEmpty()) vm.insertText(t)
                             }
                         } catch (_: Exception) {}
-                    }) { Icon(Icons.Filled.ContentPaste, "Paste", tint = dimGreen) }
-                    IconButton(onClick = { vm.onInputChange(androidx.compose.ui.text.input.TextFieldValue("")) }) {
-                        Icon(Icons.Filled.Close, "Clear input", tint = dimGreen)
-                    }
+                    },
+                    modifier = Modifier.size(36.dp)
+                ) { Icon(Icons.Filled.ContentPaste, "Paste", tint = TermWhite, modifier = Modifier.size(18.dp)) }
+                IconButton(onClick = { vm.submit() }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Filled.Send, "Send", tint = TermGreen, modifier = Modifier.size(18.dp))
                 }
             }
-            Spacer(Modifier.height(4.dp))
         }
     }
 
@@ -319,18 +324,49 @@ fun TerminalScreen(
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { renameId = null },
             title = { Text("Rename session") },
-            text = {
-                OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true)
-            },
+            text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true) },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                TextButton(onClick = {
                     renameId = null
                     if (renameText.isNotBlank()) vm.renameSession(id, renameText.trim())
                 }) { Text("OK") }
             },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { renameId = null }) { Text("Cancel") }
-            }
+            dismissButton = { TextButton(onClick = { renameId = null }) { Text("Cancel") } }
         )
     }
+}
+
+/** One flat Termux key row: 7 full-width cells, sticky CTRL/ALT invert when armed. */
+@Composable
+private fun TermKeyRow(
+    keys: List<Pair<String, () -> Unit>>,
+    sticky: String?
+) {
+    Row(modifier = Modifier.fillMaxWidth().background(TermKeyBg)) {
+        keys.forEach { (label, onTap) ->
+            val armed = (label == "CTRL" && sticky == "CTRL") || (label == "ALT" && sticky == "ALT")
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(if (armed) TermWhite else Color.Transparent)
+                    .clickable(onClick = onTap)
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label,
+                    color = if (armed) TermBlack else TermWhite,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp
+                )
+            }
+        }
+    }
+}
+
+private fun applySticky(sticky: String?, clear: () -> Unit, vm: TerminalViewModel, ins: String) {
+    if (sticky != null) {
+        vm.insertText(if (sticky == "CTRL") "^$ins" else "M-$ins")
+        clear()
+    } else vm.insertText(ins)
 }

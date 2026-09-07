@@ -9,18 +9,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -83,7 +79,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -159,55 +154,72 @@ fun BrowserScreen(
         try { webView?.loadUrl(url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
     }
 
-    // IME visible? Suggestions hide while typing (they floated above the keyboard).
-    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
-    val keyboardOpen = imeBottom > 0
-
-    Box(modifier = modifier.fillMaxSize()) {
-        // ── WebView: ALWAYS composed (never destroyed by search overlay) ──
-        AndroidView(
-            factory = { c ->
-                WebView(c).also { wv ->
-                    setupLightWebView(
-                        wv,
-                        BrowserCallbacks(
-                            onStarted = { vm.onPageStarted(it) },
-                            onProgress = {
-                                vm.onProgress(it)
-                                try {
-                                    canGoBack = webView?.canGoBack() == true
-                                    canGoForward = webView?.canGoForward() == true
-                                } catch (_: Exception) {}
-                            },
-                            onFinished = { url, title -> vm.onPageFinished(url, title) },
-                            onLongPressUrl = { longPressUrl = it },
-                            inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
-                        )
-                    )
-                    webView = wv
-                    val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
-                    try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-            update = { wv ->
-                if (webView == null) webView = wv
-                var js = true
-                var desk = false
-                try { js = Prefs.jsEnabled } catch (_: Exception) {}
-                try { desk = Prefs.desktopMode } catch (_: Exception) {}
-                try {
-                    if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
-                    if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
-                    else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
-                        wv.settings.userAgentString = System.getProperty("http.agent")
-                    }
-                } catch (_: Exception) {}
+    // FIXED search: pill or editor lives at the top of a plain Column, the WebView
+    // below is ALWAYS composed (never destroyed). No imePadding anywhere here —
+    // the keyboard overlays the bottom instead of pushing content up.
+    Column(modifier = modifier.fillMaxSize()) {
+        if (ui.searchExpanded) {
+            val focusReq = remember { FocusRequester() }
+            OutlinedTextField(
+                value = ui.searchQuery,
+                onValueChange = vm::setQuery,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).focusRequester(focusReq),
+                placeholder = { Text("Search or enter URL") },
+                leadingIcon = { Icon(Icons.Filled.Search, null) },
+                trailingIcon = {
+                    IconButton(onClick = {
+                        vm.setSearch(false)
+                        focusManager.clearFocus()
+                    }) { Icon(Icons.Filled.Close, "Collapse") }
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = {
+                    val url = vm.resolveInput(ui.searchQuery)
+                    if (url.isNotEmpty()) goTo(url)
+                    vm.setSearch(false)
+                    focusManager.clearFocus()
+                }),
+                shape = MaterialTheme.shapes.extraLarge
+            )
+            LaunchedEffect(Unit) {
+                try { focusReq.requestFocus() } catch (_: Exception) {}
             }
-        )
-
-        // ── Top chrome overlays ──
-        Column(modifier = Modifier.fillMaxWidth()) {
+            val q = ui.searchQuery.lowercase()
+            val sugBookmarks = bookmarks.filter {
+                q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)
+            }.take(4)
+            val sugHistory = history.filter {
+                (q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)) &&
+                    sugBookmarks.none { b -> b.url == it.url }
+            }.take(6)
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(sugBookmarks, key = { "b${it.url}" }) { b ->
+                    ListItem(
+                        headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Filled.Bookmark, null) },
+                        modifier = Modifier.clickable {
+                            vm.setSearch(false)
+                            focusManager.clearFocus()
+                            goTo(b.url)
+                        }
+                    )
+                }
+                items(sugHistory, key = { "h${it.url}${it.time}" }) { h ->
+                    ListItem(
+                        headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Filled.History, null) },
+                        modifier = Modifier.clickable {
+                            vm.setSearch(false)
+                            focusManager.clearFocus()
+                            goTo(h.url)
+                        }
+                    )
+                }
+            }
+        } else {
             Surface(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                 shape = MaterialTheme.shapes.extraLarge,
@@ -245,7 +257,7 @@ fun BrowserScreen(
                             Icon(Icons.Filled.Refresh, "Reload")
                         }
                     }
-                    // Plain tabs button — no count badge (removed per feedback)
+                    // Plain tabs button — no count badge
                     TextButton(onClick = { showTabs = true }) { Text("Tabs") }
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Filled.MoreVert, "Menu")
@@ -287,89 +299,48 @@ fun BrowserScreen(
                     }
                 }
             }
-        }
 
-        // ── Search overlay (WebView stays alive underneath) ──
-        if (ui.searchExpanded) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.4f))
-                    .clickable(onClick = {
-                        vm.setSearch(false)
-                        focusManager.clearFocus()
-                    })
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(bottom = 8.dp)
-            ) {
-                val focusReq = remember { FocusRequester() }
-                OutlinedTextField(
-                    value = ui.searchQuery,
-                    onValueChange = vm::setQuery,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).focusRequester(focusReq),
-                    placeholder = { Text("Search or enter URL") },
-                    leadingIcon = { Icon(Icons.Filled.Search, null) },
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            vm.setSearch(false)
-                            focusManager.clearFocus()
-                        }) { Icon(Icons.Filled.Close, "Collapse") }
-                    },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = {
-                        val url = vm.resolveInput(ui.searchQuery)
-                        if (url.isNotEmpty()) goTo(url)
-                        vm.setSearch(false)
-                        focusManager.clearFocus()
-                    }),
-                    shape = MaterialTheme.shapes.extraLarge
-                )
-                LaunchedEffect(Unit) {
-                    try { focusReq.requestFocus() } catch (_: Exception) {}
-                }
-                // Suggestions only when the keyboard is hidden — no more floating list above keys.
-                if (!keyboardOpen) {
-                    val q = ui.searchQuery.lowercase()
-                    val sugBookmarks = bookmarks.filter {
-                        q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)
-                    }.take(4)
-                    val sugHistory = history.filter {
-                        (q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)) &&
-                            sugBookmarks.none { b -> b.url == it.url }
-                    }.take(6)
-                    LazyColumn {
-                        items(sugBookmarks, key = { "b${it.url}" }) { b ->
-                            ListItem(
-                                headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                leadingContent = { Icon(Icons.Filled.Bookmark, null) },
-                                modifier = Modifier.clickable {
-                                    vm.setSearch(false)
-                                    focusManager.clearFocus()
-                                    goTo(b.url)
-                                }
+            // WebView fills the rest and is NEVER removed from composition.
+            AndroidView(
+                factory = { c ->
+                    WebView(c).also { wv ->
+                        setupLightWebView(
+                            wv,
+                            BrowserCallbacks(
+                                onStarted = { vm.onPageStarted(it) },
+                                onProgress = {
+                                    vm.onProgress(it)
+                                    try {
+                                        canGoBack = webView?.canGoBack() == true
+                                        canGoForward = webView?.canGoForward() == true
+                                    } catch (_: Exception) {}
+                                },
+                                onFinished = { url, title -> vm.onPageFinished(url, title) },
+                                onLongPressUrl = { longPressUrl = it },
+                                inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
                             )
-                        }
-                        items(sugHistory, key = { "h${it.url}${it.time}" }) { h ->
-                            ListItem(
-                                headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                leadingContent = { Icon(Icons.Filled.History, null) },
-                                modifier = Modifier.clickable {
-                                    vm.setSearch(false)
-                                    focusManager.clearFocus()
-                                    goTo(h.url)
-                                }
-                            )
-                        }
+                        )
+                        webView = wv
+                        val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
+                        try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
                     }
+                },
+                modifier = Modifier.fillMaxSize().weight(1f),
+                update = { wv ->
+                    if (webView == null) webView = wv
+                    var js = true
+                    var desk = false
+                    try { js = Prefs.jsEnabled } catch (_: Exception) {}
+                    try { desk = Prefs.desktopMode } catch (_: Exception) {}
+                    try {
+                        if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
+                        if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
+                        else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
+                            wv.settings.userAgentString = System.getProperty("http.agent")
+                        }
+                    } catch (_: Exception) {}
                 }
-            }
+            )
         }
     }
 
