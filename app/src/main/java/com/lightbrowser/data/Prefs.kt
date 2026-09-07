@@ -38,6 +38,29 @@ object Prefs {
         get() = p(AppCtx.ctx).getString("search_engine", "google") ?: "google"
         set(v) { p(AppCtx.ctx).edit().putString("search_engine", v).apply() }
 
+    /** Theme mode: system | dark | light */
+    var themeMode: String
+        get() = p(AppCtx.ctx).getString("theme_mode", "system") ?: "system"
+        set(v) { p(AppCtx.ctx).edit().putString("theme_mode", v).apply() }
+
+    /** Terminal font scale multiplier */
+    var terminalFontScale: Float
+        get() = p(AppCtx.ctx).getFloat("term_font", 1f)
+        set(v) { p(AppCtx.ctx).edit().putFloat("term_font", v).apply() }
+
+    /** Player prefs */
+    var playerShuffle: Boolean
+        get() = p(AppCtx.ctx).getBoolean("pl_shuffle", false)
+        set(v) { p(AppCtx.ctx).edit().putBoolean("pl_shuffle", v).apply() }
+
+    var playerRepeat: Int
+        get() = p(AppCtx.ctx).getInt("pl_repeat", 0) // 0 off, 1 all, 2 one
+        set(v) { p(AppCtx.ctx).edit().putInt("pl_repeat", v).apply() }
+
+    var playerSpeed: Float
+        get() = p(AppCtx.ctx).getFloat("pl_speed", 1f)
+        set(v) { p(AppCtx.ctx).edit().putFloat("pl_speed", v).apply() }
+
     /** Build search URL for the given query using the configured search engine */
     fun buildSearchUrl(query: String): String {
         val encoded = android.net.Uri.encode(query)

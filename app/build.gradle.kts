@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // NOTE: no org.jetbrains.kotlin.android — AGP 9 has built-in Kotlin support.
+    // Only the Compose compiler plugin is needed (version tracks Kotlin).
     alias(libs.plugins.compose)
 }
 

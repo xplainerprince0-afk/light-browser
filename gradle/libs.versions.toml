@@ -34,7 +34,6 @@ media3-session = { group = "androidx.media3", name = "media3-session", version.r
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-# Module also applies org.jetbrains.kotlin.android (same version.ref kotlin):
-# forbidden in ROOT per compatibility-matrix, required in MODULE for compilation.
+# No org.jetbrains.kotlin.android entry: AGP 9 forbids it (built-in Kotlin).
+# Only the Compose compiler plugin (version tracks Kotlin via version.ref).
 compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
