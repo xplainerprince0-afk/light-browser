@@ -4,12 +4,18 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.webkit.WebView
-import com.sun.net.httpserver.HttpServer
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStream
 import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.net.URLDecoder
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,7 +42,11 @@ object BrowserAgent {
     var token: String = UUID.randomUUID().toString().take(8)
         private set
 
-    private var server: HttpServer? = null
+    // Minimal socket HTTP server (same-device testing). We deliberately avoid
+    // com.sun.net.httpserver — it is NOT on Android and breaks R8/release builds.
+    private var serverSocket: ServerSocket? = null
+    private var acceptThread: Thread? = null
+    private val pool = Executors.newCachedThreadPool()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // ── WebView ops (always on Main) ──
@@ -149,25 +159,24 @@ object BrowserAgent {
         stopServer()
         token = UUID.randomUUID().toString().take(8)
         return try {
-            val s = HttpServer.create(InetSocketAddress("127.0.0.1", PORT), 0)
-            s.createContext("/") { ex ->
-                try {
-                    val path = ex.requestURI.path ?: "/"
-                    val q = parseQuery(ex.requestURI.rawQuery ?: "")
-                    if (path != "/status" && q["token"] != token) {
-                        respond(ex, 403, """{"ok":false,"err":"bad token"}""")
-                        return@createContext
+            val ss = ServerSocket()
+            ss.reuseAddress = true
+            ss.bind(InetSocketAddress("127.0.0.1", PORT))
+            serverSocket = ss
+            val running = AtomicBoolean(true)
+            val t = Thread({
+                while (running.get() && !ss.isClosed) {
+                    try {
+                        val sock = ss.accept()
+                        pool.execute { handleSocket(sock) }
+                    } catch (_: Exception) {
+                        break
                     }
-                    // WebView calls must run on Main: block this worker thread briefly.
-                    val out = handle(path, q)
-                    respond(ex, 200, out)
-                } catch (e: Exception) {
-                    try { respond(ex, 500, """{"ok":false,"err":"${e.message}"}""") } catch (_: Exception) {}
                 }
-            }
-            s.executor = java.util.concurrent.Executors.newCachedThreadPool()
-            s.start()
-            server = s
+            }, "AgentServer")
+            t.isDaemon = true
+            acceptThread = t
+            t.start()
             _serverRunning.value = true
             _serverLabel.value = "http://127.0.0.1:$PORT • token $token"
             _serverLabel.value
@@ -181,10 +190,51 @@ object BrowserAgent {
 
     @Synchronized
     fun stopServer() {
-        try { server?.stop(0) } catch (_: Exception) {}
-        server = null
+        try { serverSocket?.close() } catch (_: Exception) {}
+        serverSocket = null
+        acceptThread = null
         _serverRunning.value = false
         _serverLabel.value = ""
+    }
+
+    private fun handleSocket(sock: Socket) {
+        try {
+            sock.soTimeout = 15_000
+            val reader = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8))
+            val requestLine = reader.readLine() ?: return
+            // Consume headers
+            var line: String?
+            do {
+                line = reader.readLine()
+            } while (line != null && line.isNotEmpty())
+            val parts = requestLine.split(" ")
+            if (parts.size < 2 || parts[0] != "GET") {
+                respondRaw(sock.getOutputStream(), 405, """{"ok":false,"err":"GET only"}""")
+                return
+            }
+            val rawTarget = parts[1]
+            val path = rawTarget.substringBefore("?")
+            val query = if (rawTarget.contains("?")) rawTarget.substringAfter("?") else ""
+            val q = parseQuery(query)
+            if (path != "/status" && q["token"] != token) {
+                respondRaw(sock.getOutputStream(), 403, """{"ok":false,"err":"bad token"}""")
+                return
+            }
+            respondRaw(sock.getOutputStream(), 200, handle(path, q))
+        } catch (_: Exception) {
+            try { respondRaw(sock.getOutputStream(), 500, """{"ok":false,"err":"io"}""") } catch (_: Exception) {}
+        } finally {
+            try { sock.close() } catch (_: Exception) {}
+        }
+    }
+
+    private fun respondRaw(out: OutputStream, code: Int, body: String) {
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        val head = "HTTP/1.1 $code OK\r\nContent-Type: application/json; charset=utf-8\r\n" +
+            "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+        out.write(head.toByteArray(Charsets.UTF_8))
+        out.write(bytes)
+        out.flush()
     }
 
     private fun parseQuery(raw: String): Map<String, String> {
@@ -197,13 +247,6 @@ object BrowserAgent {
                     URLDecoder.decode(kv.substring(i + 1), "UTF-8")
             } catch (_: Exception) { null }
         }.toMap()
-    }
-
-    private fun respond(ex: com.sun.net.httpserver.HttpExchange, code: Int, body: String) {
-        val bytes = body.toByteArray(Charsets.UTF_8)
-        ex.responseHeaders.add("Content-Type", "application/json; charset=utf-8")
-        ex.sendResponseHeaders(code, bytes.size.toLong())
-        ex.responseBody.use { it.write(bytes) }
     }
 
     /** Runs on the HTTP worker thread; WebView ops hop to Main and block-await. */
