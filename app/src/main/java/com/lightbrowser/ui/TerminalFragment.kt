@@ -111,6 +111,18 @@ class TerminalFragment : Fragment() {
             bb.btnHistUp.setOnClickListener { historyUp() }
             bb.btnHistDown.setOnClickListener { historyDown() }
 
+            // Tapping the output area redirects focus to the input field.
+            // We forward the touch to svLogs for scrolling first, then request focus on etInput.
+            bb.svLogs.setOnTouchListener { _, event ->
+                if (event.action == MotionEvent.ACTION_UP) {
+                    bb.etInput.requestFocus()
+                    val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                            as android.view.inputmethod.InputMethodManager
+                    imm.showSoftInput(bb.etInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
+                false // let NestedScrollView handle the scroll itself
+            }
+
             appendWelcome()
         } catch (e: Exception) {
             Log.e("Terminal", "onViewCreated", e)
