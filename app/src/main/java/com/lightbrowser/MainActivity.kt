@@ -149,7 +149,13 @@ private fun AppShell(
         gesturesEnabled = false,
         drawerContent = {
             ModalDrawerSheet {
-                Text("LightBrowser", style = androidx.compose.material3.MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(20.dp))
+                Text("LightBrowser", style = androidx.compose.material3.MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp))
+                Text(
+                    "v${try { com.lightbrowser.BuildConfig.VERSION_NAME } catch (_: Exception) { "?" }} (${try { com.lightbrowser.BuildConfig.VERSION_CODE } catch (_: Exception) { "?" }})",
+                    style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 20.dp, bottom = 8.dp)
+                )
                 Tab.entries.forEach { t ->
                     NavigationDrawerItem(
                         label = { Text(t.title) },
@@ -236,8 +242,8 @@ private fun AppShell(
     if (showAbout) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showAbout = false },
-            title = { Text("LightBrowser 3.0") },
-            text = { Text("Browser · Sandbox · Terminal (Alpine) · Player\n\nCompose + Material 3 Expressive · ExoPlayer") },
+            title = { Text("LightBrowser 3.1") },
+            text = { Text("v${try { com.lightbrowser.BuildConfig.VERSION_NAME } catch (_: Exception) { "?" }} (${try { com.lightbrowser.BuildConfig.VERSION_CODE } catch (_: Exception) { "?" }})\n\nBrowser · Sandbox · Terminal (Alpine) · Player\n\nCompose + Material 3 Expressive · ExoPlayer") },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = { showAbout = false }) { Text("OK") }
             }
