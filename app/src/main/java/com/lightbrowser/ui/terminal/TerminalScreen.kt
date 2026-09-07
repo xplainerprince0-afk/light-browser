@@ -60,7 +60,6 @@ import com.lightbrowser.data.Prefs
 import kotlinx.coroutines.launch
 
 private val TermBlack = Color(0xFF000000)
-private val TermWhite = Color(0xFFE8E8E8)
 
 /**
  * ONE live editor: transcript + prompt in a single field. Cursor roams the whole
