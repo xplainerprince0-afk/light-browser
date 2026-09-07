@@ -1,6 +1,10 @@
 package com.lightbrowser.ui.terminal
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -21,41 +25,39 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-data class TermLine(val text: String, val kind: Int = 0) {
-    companion object {
-        const val NORMAL = 0
-        const val OK = 1
-        const val ERROR = 2
-        const val ECHO = 3
-    }
-}
+val TermGreen = Color(0xFF00E676)
+val TermDim = Color(0xFF88CC88)
+val TermRed = Color(0xFFFF8A80)
+val TermWhite = Color(0xFFE8E8E8)
+
+private data class Seg(val text: String, val color: Color)
 
 data class TermSessionMeta(val id: String, val name: String)
 
-/** Per-session state — Termux-style multiple sessions. */
+/**
+ * ONE live editor model: the whole transcript + the "$" prompt live in a single
+ * TextFieldValue. The cursor roams the entire buffer (up into old output, like a
+ * live linux terminal); Enter submits the last line. Colors via spans.
+ */
 private data class Sess(
     val id: String = UUID.randomUUID().toString(),
     var name: String,
-    val lines: MutableList<TermLine> = mutableListOf(),
+    val segs: MutableList<Seg> = mutableListOf(),
+    var built: AnnotatedString = AnnotatedString(""),
     val history: MutableList<String> = mutableListOf(),
     var histIndex: Int = -1,
     var dir: File? = null,
-    var input: TextFieldValue = TextFieldValue("")
+    var editor: TextFieldValue = TextFieldValue(AnnotatedString("")),
+    var promptText: String = ""
 )
 
 class TerminalViewModel : ViewModel() {
 
-    private val _lines = MutableStateFlow<List<TermLine>>(emptyList())
-    val lines: StateFlow<List<TermLine>> = _lines.asStateFlow()
-
-    private val _input = MutableStateFlow(TextFieldValue(""))
-    val input: StateFlow<TextFieldValue> = _input.asStateFlow()
+    private val _editor = MutableStateFlow(TextFieldValue(AnnotatedString("")))
+    val editor: StateFlow<TextFieldValue> = _editor.asStateFlow()
 
     private val _status = MutableStateFlow("idle")
     val status: StateFlow<String> = _status.asStateFlow()
-
-    private val _prompt = MutableStateFlow("~ $ ")
-    val prompt: StateFlow<String> = _prompt.asStateFlow()
 
     private val _sessions = MutableStateFlow<List<TermSessionMeta>>(emptyList())
     val sessions: StateFlow<List<TermSessionMeta>> = _sessions.asStateFlow()
@@ -89,13 +91,13 @@ class TerminalViewModel : ViewModel() {
             val s = Sess(name = "main", dir = sd)
             store.add(s)
             _activeId.value = s.id
+            refreshPrompt()
+            print("LightBrowser Terminal (Alpine sandbox)\n", TermGreen)
+            print(if (alpineInstalled) "Alpine Linux ready\n" else "Run 'install-alpine' for Alpine\n", TermDim)
+            printPrompt()
             emitSessions()
-            publish(s)
-            append(TermLine("LightBrowser Terminal (Alpine sandbox)", TermLine.OK))
-            append(TermLine(if (alpineInstalled) "Alpine Linux ready" else "Run 'install-alpine' for Alpine", TermLine.NORMAL))
-            updatePrompt()
         } catch (e: Exception) {
-            append(TermLine("Sandbox init failed: ${e.message}", TermLine.ERROR))
+            print("Sandbox init failed: ${e.message}\n", TermRed)
         }
     }
 
@@ -104,18 +106,19 @@ class TerminalViewModel : ViewModel() {
         val s = Sess(name = "sh${++sessionCounter + 1}", dir = active().dir ?: sandboxDir)
         store.add(s)
         switchSession(s.id)
-        append(TermLine("New session '${s.name}' — type 'help'", TermLine.OK))
+        refreshPrompt()
+        print("New session '${s.name}' — type 'help'\n", TermGreen)
+        printPrompt()
     }
 
     fun switchSession(id: String) {
-        // persist current UI state into old session
         try {
-            val cur = active()
-            cur.input = _input.value
+            active().editor = _editor.value
         } catch (_: Exception) {}
         val s = store.firstOrNull { it.id == id } ?: return
         _activeId.value = id
-        publish(s)
+        _editor.value = s.editor
+        emitSessions()
     }
 
     fun closeSession(id: String) {
@@ -126,7 +129,7 @@ class TerminalViewModel : ViewModel() {
         if (_activeId.value == id) {
             val next = store[(i - 1).coerceAtLeast(0)]
             _activeId.value = next.id
-            publish(next)
+            _editor.value = next.editor
         }
         emitSessions()
     }
@@ -136,32 +139,166 @@ class TerminalViewModel : ViewModel() {
         emitSessions()
     }
 
-    private fun publish(s: Sess) {
-        _lines.value = s.lines.toList()
-        _input.value = s.input
-        updatePrompt()
-        emitSessions()
+    // ── Buffer primitives ──
+    private fun rebuild(s: Sess) {
+        val b = AnnotatedString.Builder()
+        s.segs.forEach { seg ->
+            b.pushStyle(SpanStyle(color = seg.color, fontFamily = FontFamily.Monospace))
+            b.append(seg.text)
+            b.pop()
+        }
+        s.built = b.toAnnotatedString()
     }
 
-    // ── Input / cursor ──
-    fun onInputChange(v: TextFieldValue) {
-        _input.value = v
-        try { active().input = v } catch (_: Exception) {}
+    /** Append output text; keeps the caret glued to the end only if it was there. */
+    fun print(text: String, color: Color) {
+        try {
+            val s = active()
+            val wasAtEnd = s.editor.selection.start >= s.editor.text.length
+            s.segs.add(Seg(text, color))
+            // Cap scrollback: drop oldest lines past ~600
+            var lineCount = 0
+            s.segs.forEach { seg -> lineCount += seg.text.count { c -> c == '\n' } }
+            if (lineCount > 600) {
+                var drop = 0
+                var dropped = 0
+                while (drop < s.segs.size && lineCount - dropped > 500) {
+                    dropped += s.segs[drop].text.count { c -> c == '\n' }
+                    drop++
+                }
+                repeat(drop) { s.segs.removeAt(0) }
+                rebuild(s)
+            } else {
+                val b = AnnotatedString.Builder(s.built)
+                b.pushStyle(SpanStyle(color = color, fontFamily = FontFamily.Monospace))
+                b.append(text)
+                b.pop()
+                s.built = b.toAnnotatedString()
+            }
+            val newText = s.built.text
+            s.editor = if (wasAtEnd || _editor.value.text.isEmpty()) {
+                TextFieldValue(s.built, TextRange(newText.length))
+            } else {
+                // Cursor parked mid-buffer: keep it, clamp into new length
+                val cur = _editor.value
+                val len = newText.length
+                cur.copy(
+                    annotatedString = s.built,
+                    selection = TextRange(cur.selection.start.coerceIn(0, len), cur.selection.end.coerceIn(0, len))
+                )
+            }
+            if (s.id == _activeId.value) _editor.value = s.editor
+        } catch (_: Exception) {}
     }
 
+    private fun refreshPrompt() {
+        val sd = sandboxDir ?: return
+        val s = try { active() } catch (_: Exception) { return }
+        val cwd = s.dir ?: sd
+        val rel = cwd.absolutePath.removePrefix(sd.absolutePath).trim('/').trimStart('/')
+        val display = if (rel.isEmpty()) "~" else "~/$rel"
+        s.promptText = (if (alpineInstalled) "alpine:" else "sh:") + display + " $ "
+    }
+
+    private fun printPrompt() {
+        val s = try { active() } catch (_: Exception) { return }
+        print(s.promptText, TermWhite)
+    }
+
+    fun onEditorChange(v: TextFieldValue) {
+        try {
+            val s = active()
+            // Re-apply our spans over whatever the user typed (keeps colors alive).
+            val merged = mergeSpans(s.built, v.text)
+            s.editor = v.copy(annotatedString = merged)
+            s.built = merged
+            if (s.id == _activeId.value) _editor.value = s.editor
+        } catch (_: Exception) {
+            _editor.value = v
+        }
+    }
+
+    /** Rebuild spans after an edit: keep old colors for the untouched prefix. */
+    private fun mergeSpans(old: AnnotatedString, newText: String): AnnotatedString {
+        if (newText.isEmpty()) return AnnotatedString("")
+        val b = AnnotatedString.Builder()
+        val spans = old.spanStyles
+        var pos = 0
+        // Walk old spans in order while they still match the new text
+        for (span in spans) {
+            if (span.start >= newText.length) break
+            val end = minOf(span.end, newText.length)
+            if (end <= pos) continue
+            // Only reuse if the underlying chars are unchanged
+            var ok = true
+            if (span.start < old.text.length) {
+                val oldSlice = old.text.substring(span.start, minOf(span.end, old.text.length))
+                val newSlice = if (span.start < newText.length) {
+                    newText.substring(span.start, minOf(end, newText.length))
+                } else ""
+                ok = oldSlice == newSlice
+            }
+            if (!ok) break
+            b.pushStyle(span.item)
+            b.append(newText.substring(pos, end))
+            b.pop()
+            pos = end
+        }
+        if (pos < newText.length) {
+            b.pushStyle(SpanStyle(color = TermWhite, fontFamily = FontFamily.Monospace))
+            b.append(newText.substring(pos))
+            b.pop()
+        }
+        return b.toAnnotatedString()
+    }
+
+    // ── Cursor moves across the WHOLE editor ──
     fun moveCursor(delta: Int) {
-        val v = _input.value
+        val v = _editor.value
         val pos = (v.selection.start + delta).coerceIn(0, v.text.length)
-        onInputChange(v.copy(selection = TextRange(pos)))
+        onEditorChange(v.copy(selection = TextRange(pos)))
     }
 
     fun moveCursorTo(pos: Int) {
-        val v = _input.value
-        onInputChange(v.copy(selection = TextRange(pos.coerceIn(0, v.text.length))))
+        val v = _editor.value
+        onEditorChange(v.copy(selection = TextRange(pos.coerceIn(0, v.text.length))))
+    }
+
+    fun moveLineHome() {
+        val v = _editor.value
+        val cur = v.selection.start
+        val start = v.text.lastIndexOf('\n', cur - 1) + 1
+        onEditorChange(v.copy(selection = TextRange(start)))
+    }
+
+    fun moveLineEnd() {
+        val v = _editor.value
+        val cur = v.selection.start
+        val nl = v.text.indexOf('\n', cur)
+        onEditorChange(v.copy(selection = TextRange(if (nl == -1) v.text.length else nl)))
+    }
+
+    fun moveLineVertical(down: Boolean) {
+        val v = _editor.value
+        val t = v.text
+        val cur = v.selection.start
+        val lineStart = t.lastIndexOf('\n', cur - 1) + 1
+        val col = cur - lineStart
+        val targetStart = if (down) {
+            val nl = t.indexOf('\n', cur)
+            if (nl == -1) return
+            nl + 1
+        } else {
+            if (lineStart == 0) return
+            val prev = t.lastIndexOf('\n', lineStart - 2) + 1
+            prev
+        }
+        val targetEnd = t.indexOf('\n', targetStart).let { if (it == -1) t.length else it }
+        onEditorChange(v.copy(selection = TextRange((targetStart + col).coerceAtMost(targetEnd))))
     }
 
     fun moveWord(backward: Boolean) {
-        val v = _input.value
+        val v = _editor.value
         var pos = v.selection.start
         val t = v.text
         if (backward) {
@@ -171,16 +308,16 @@ class TerminalViewModel : ViewModel() {
             while (pos < t.length && t[pos] != ' ') pos++
             while (pos < t.length && t[pos] == ' ') pos++
         }
-        onInputChange(v.copy(selection = TextRange(pos)))
+        onEditorChange(v.copy(selection = TextRange(pos)))
     }
 
     fun insertText(s: String) {
-        val v = _input.value
+        val v = _editor.value
         val start = v.selection.start.coerceIn(0, v.text.length)
         val end = v.selection.end.coerceIn(0, v.text.length)
         val ns = v.text.substring(0, minOf(start, end)) + s + v.text.substring(maxOf(start, end))
         val pos = minOf(start, end) + s.length
-        onInputChange(TextFieldValue(ns, TextRange(pos)))
+        onEditorChange(TextFieldValue(AnnotatedString(ns), TextRange(pos)))
     }
 
     fun historyUp() = browseHistory(-1)
@@ -192,70 +329,63 @@ class TerminalViewModel : ViewModel() {
         s.histIndex = (if (s.histIndex < 0) s.history.size else s.histIndex) + dir
         s.histIndex = s.histIndex.coerceIn(0, s.history.size)
         val t = if (s.histIndex >= s.history.size) "" else s.history[s.histIndex]
-        onInputChange(TextFieldValue(t, TextRange(t.length)))
+        replaceLastLine(s.promptText + t)
+    }
+
+    /** Replace everything after the last newline with [line], caret to end. */
+    private fun replaceLastLine(line: String) {
+        val v = _editor.value
+        val idx = v.text.lastIndexOf('\n')
+        val ns = (if (idx == -1) "" else v.text.substring(0, idx + 1)) + line
+        onEditorChange(TextFieldValue(AnnotatedString(ns), TextRange(ns.length)))
     }
 
     fun submit() {
-        val s = active()
-        val cmd = _input.value.text.trim()
-        if (cmd.isEmpty()) return
-        if (s.history.isEmpty() || s.history.last() != cmd) s.history.add(cmd)
+        val s = try { active() } catch (_: Exception) { return }
+        val full = _editor.value.text
+        val lastLine = full.substringAfterLast("\n")
+        val cmd = if (lastLine.startsWith(s.promptText)) lastLine.removePrefix(s.promptText) else lastLine
+        val trimmed = cmd.trim()
+        // Move caret to absolute end, ensure trailing newline before output
+        onEditorChange(_editor.value.copy(selection = TextRange(full.length)))
+        if (trimmed.isEmpty()) {
+            print("\n", TermWhite)
+            printPrompt()
+            return
+        }
+        if (s.history.isEmpty() || s.history.last() != trimmed) s.history.add(trimmed)
         s.histIndex = s.history.size
-        append(TermLine("${_prompt.value}$cmd", TermLine.ECHO))
-        onInputChange(TextFieldValue(""))
-        execCmd(cmd)
+        print("\n", TermWhite)
+        execCmd(trimmed)
     }
 
     fun killRunning() {
         try {
             running?.destroyForcibly()
-            append(TermLine("Killed running process", TermLine.ERROR))
+            print("Killed running process\n", TermRed)
+            printPrompt()
         } catch (_: Exception) {}
         running = null
         _status.value = "idle"
     }
 
     fun clear() {
-        try { active().lines.clear() } catch (_: Exception) {}
-        _lines.value = emptyList()
-        append(TermLine("LightBrowser Terminal — type 'help'", TermLine.OK))
-    }
-
-    fun fullLog(): String = _lines.value.joinToString("\n") { it.text }
-
-    private fun append(line: TermLine) {
         try {
             val s = active()
-            s.lines.add(line)
-            if (s.lines.size > 2000) s.lines.removeAt(0)
-            if (s.id == _activeId.value) _lines.value = s.lines.toList()
-        } catch (_: Exception) {
-            _lines.value = _lines.value + line
-        }
+            s.segs.clear()
+            s.built = AnnotatedString("")
+            s.editor = TextFieldValue(AnnotatedString(""))
+            _editor.value = s.editor
+        } catch (_: Exception) {}
+        print("LightBrowser Terminal — type 'help'\n", TermGreen)
+        printPrompt()
     }
 
-    private fun updatePrompt() {
-        val sd = sandboxDir ?: return
-        val cwd = try { active().dir } catch (_: Exception) { null } ?: sd
-        val rel = cwd.absolutePath.removePrefix(sd.absolutePath).trim('/').trimStart('/')
-        val display = if (rel.isEmpty()) "~" else "~/$rel"
-        val prefix = if (alpineInstalled) "alpine:" else "sh:"
-        _prompt.value = "$prefix$display $ "
-    }
+    fun fullLog(): String = try { active().built.text } catch (_: Exception) { "" }
 
-    private fun isAllowed(path: File): Boolean {
-        val sd = sandboxDir ?: return false
-        return try {
-            path.canonicalFile.absolutePath.startsWith(sd.canonicalFile.absolutePath)
-        } catch (_: Exception) { false }
-    }
-
-    private fun resolve(input: String): File? {
-        val sd = sandboxDir ?: return null
-        val cwd = try { active().dir } catch (_: Exception) { null } ?: sd
-        if (input.isBlank()) return cwd
-        val f = if (input.startsWith("/")) File(input) else File(cwd, input)
-        return if (isAllowed(f)) f else null
+    private fun afterCommand() {
+        refreshPrompt()
+        printPrompt()
     }
 
     private fun execCmd(raw: String) {
@@ -264,57 +394,64 @@ class TerminalViewModel : ViewModel() {
             val cmd = parts[0].lowercase()
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
-                "help" -> append(
-                    TermLine(
-                        "help/clear/history/scripts/install-alpine/alpine-status\n" +
-                            "ls [path]  cd  pwd  cat  mkdir  rm  cp  mv\nsh <cmd>  ping  curl  echo  js <code>  cache  ua",
-                        TermLine.NORMAL
-                    )
-                )
+                "help" -> {
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm  cp  mv\nsh <cmd>  ping  curl  echo  cache\n", TermDim)
+                    afterCommand()
+                }
                 "clear" -> clear()
                 "history" -> {
                     val list = try { HistoryStorage.all(AppCtx.ctx) } catch (_: Exception) { emptyList() }
-                    if (list.isEmpty()) append(TermLine("No browsing history", TermLine.NORMAL))
-                    else list.take(10).forEach { append(TermLine("• ${it.title} – ${it.url}", TermLine.NORMAL)) }
+                    if (list.isEmpty()) print("No browsing history\n", TermDim)
+                    else list.take(10).forEach { print("• ${it.title} – ${it.url}\n", TermDim) }
+                    afterCommand()
                 }
                 "scripts" -> {
                     val list = try { ScriptStorage.all(AppCtx.ctx) } catch (_: Exception) { emptyList() }
-                    if (list.isEmpty()) append(TermLine("No userscripts", TermLine.NORMAL))
-                    else list.forEach { append(TermLine("• ${it.name} [${if (it.enabled) "ON" else "OFF"}]", TermLine.NORMAL)) }
+                    if (list.isEmpty()) print("No userscripts\n", TermDim)
+                    else list.forEach { print("• ${it.name} [${if (it.enabled) "ON" else "OFF"}]\n", TermDim) }
+                    afterCommand()
                 }
                 "ls" -> {
                     val t = resolve(arg) ?: sandboxDir
-                    if (t == null) append(TermLine("Path denied", TermLine.ERROR))
-                    else runShell("ls -la \"${t.absolutePath}\"")
+                    if (t == null) {
+                        print("Path denied\n", TermRed); afterCommand()
+                    } else runShell("ls -la \"${t.absolutePath}\"")
                 }
                 "cd" -> {
                     val t = resolve(arg)
                     if (t != null && t.exists() && t.isDirectory) {
                         try { active().dir = t } catch (_: Exception) {}
-                        updatePrompt()
-                    } else append(TermLine("cd: no such directory: $arg", TermLine.ERROR))
+                    } else print("cd: no such directory: $arg\n", TermRed)
+                    afterCommand()
                 }
-                "pwd" -> append(TermLine((try { active().dir } catch (_: Exception) { null })?.absolutePath ?: "unknown", TermLine.NORMAL))
+                "pwd" -> {
+                    print(((try { active().dir } catch (_: Exception) { null })?.absolutePath ?: "unknown") + "\n", TermWhite)
+                    afterCommand()
+                }
                 "cat" -> {
-                    if (arg.isBlank()) append(TermLine("Usage: cat <file>", TermLine.ERROR))
-                    else resolve(arg)?.let { runShell("cat \"${it.absolutePath}\"") }
-                        ?: append(TermLine("Access denied", TermLine.ERROR))
+                    if (arg.isBlank()) {
+                        print("Usage: cat <file>\n", TermRed); afterCommand()
+                    } else resolve(arg)?.let { runShell("cat \"${it.absolutePath}\"") }
+                        ?: run { print("Access denied\n", TermRed); afterCommand() }
                 }
                 "mkdir" -> {
                     resolve(arg)?.let {
-                        append(TermLine(if (it.mkdirs()) "Created ${it.name}" else "Failed", TermLine.NORMAL))
-                    } ?: append(TermLine("Access denied", TermLine.ERROR))
+                        print((if (it.mkdirs()) "Created ${it.name}" else "Failed") + "\n", TermDim)
+                    } ?: print("Access denied\n", TermRed)
+                    afterCommand()
                 }
                 "rm" -> {
                     resolve(arg)?.let {
                         val ok = if (it.isDirectory) it.deleteRecursively() else it.delete()
-                        append(TermLine(if (ok) "Deleted" else "Failed", TermLine.NORMAL))
-                    } ?: append(TermLine("Access denied", TermLine.ERROR))
+                        print((if (ok) "Deleted" else "Failed") + "\n", TermDim)
+                    } ?: print("Access denied\n", TermRed)
+                    afterCommand()
                 }
                 "mv", "cp" -> {
                     val a = arg.split(" ")
-                    if (a.size < 2) append(TermLine("Usage: $cmd <src> <dst>", TermLine.ERROR))
-                    else {
+                    if (a.size < 2) {
+                        print("Usage: $cmd <src> <dst>\n", TermRed)
+                    } else {
                         val src = resolve(a[0])
                         val dst = resolve(a[1])
                         if (src != null && dst != null) {
@@ -323,61 +460,71 @@ class TerminalViewModel : ViewModel() {
                                     if (src.isDirectory) src.copyRecursively(dst, overwrite = true)
                                     else src.copyTo(dst, overwrite = true)
                                 } else src.renameTo(dst)
-                                append(TermLine("OK", TermLine.OK))
-                            } catch (e: Exception) { append(TermLine(e.message ?: "error", TermLine.ERROR)) }
-                        } else append(TermLine("Access denied", TermLine.ERROR))
+                                print("OK\n", TermGreen)
+                            } catch (e: Exception) { print((e.message ?: "error") + "\n", TermRed) }
+                        } else print("Access denied\n", TermRed)
                     }
+                    afterCommand()
                 }
                 "install-alpine", "alpine-install" -> installAlpine()
                 "alpine-status" -> {
                     val sd = sandboxDir
-                    if (sd == null) append(TermLine("No sandbox", TermLine.ERROR))
+                    if (sd == null) print("No sandbox\n", TermRed)
                     else {
-                        append(TermLine("Alpine installed: $alpineInstalled", TermLine.NORMAL))
-                        append(TermLine("Root: ${AlpineEnv.alpineDir(sd).absolutePath}", TermLine.NORMAL))
+                        print("Alpine installed: $alpineInstalled\nRoot: ${AlpineEnv.alpineDir(sd).absolutePath}\n", TermDim)
                     }
+                    afterCommand()
                 }
                 "apk" -> {
-                    if (!alpineInstalled) append(TermLine("Install Alpine first: install-alpine", TermLine.ERROR))
-                    else runShell("apk $arg")
+                    if (!alpineInstalled) {
+                        print("Install Alpine first: install-alpine\n", TermRed); afterCommand()
+                    } else runShell("apk $arg")
                 }
                 "sh", "shell", "exec" -> {
-                    if (arg.isBlank()) append(TermLine("Usage: sh <cmd>", TermLine.ERROR))
-                    else runShell(arg)
+                    if (arg.isBlank()) {
+                        print("Usage: sh <cmd>\n", TermRed); afterCommand()
+                    } else runShell(arg)
                 }
                 "ping" -> runShell("ping -c 3 ${arg.ifBlank { "8.8.8.8" }}")
                 "curl" -> {
-                    if (arg.isBlank()) append(TermLine("Usage: curl <url>", TermLine.ERROR))
-                    else runShell("curl -I $arg")
+                    if (arg.isBlank()) {
+                        print("Usage: curl <url>\n", TermRed); afterCommand()
+                    } else runShell("curl -I $arg")
                 }
                 "cache" -> {
                     try {
                         val dir = AppCtx.ctx.cacheDir
                         val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-                        append(TermLine("Cache: ${size / 1024} KB", TermLine.NORMAL))
-                    } catch (e: Exception) { append(TermLine(e.message ?: "", TermLine.ERROR)) }
+                        print("Cache: ${size / 1024} KB\n", TermDim)
+                    } catch (e: Exception) { print((e.message ?: "") + "\n", TermRed) }
+                    afterCommand()
                 }
-                "echo" -> append(TermLine(arg, TermLine.NORMAL))
-                "ua", "js" -> append(TermLine("Run from Browser tab", TermLine.NORMAL))
+                "echo" -> {
+                    print("$arg\n", TermWhite); afterCommand()
+                }
+                "ua", "js" -> {
+                    print("Run from Browser tab\n", TermDim); afterCommand()
+                }
                 else -> runShell(raw)
             }
         } catch (e: Exception) {
-            append(TermLine("exec error: ${e.message}", TermLine.ERROR))
+            print("exec error: ${e.message}\n", TermRed)
+            afterCommand()
         }
     }
 
     private fun installAlpine() {
         val sd = sandboxDir ?: return
-        append(TermLine("Installing Alpine Linux…", TermLine.NORMAL))
+        print("Installing Alpine Linux…\n", TermWhite)
         _status.value = "installing"
         viewModelScope.launch(Dispatchers.IO) {
             val ok = AlpineEnv.install(sd) { msg ->
-                viewModelScope.launch(Dispatchers.Main) { append(TermLine(msg, TermLine.NORMAL)) }
+                viewModelScope.launch(Dispatchers.Main) { print("$msg\n", TermDim) }
             }
             withContext(Dispatchers.Main) {
                 alpineInstalled = ok
-                if (ok) append(TermLine("✓ Alpine ready", TermLine.OK))
-                updatePrompt()
+                if (ok) print("✓ Alpine ready\n", TermGreen)
+                afterCommand()
                 _status.value = "idle"
             }
         }
@@ -421,17 +568,18 @@ class TerminalViewModel : ViewModel() {
                 } catch (_: Exception) {
                     try { process.destroy() } catch (_: Exception) {}
                 }
-                val result = output.toString().trimEnd()
+                var result = output.toString().trimEnd()
+                if (result.length > 4000) result = result.take(4000) + "\n…truncated"
+                val finalResult = result
                 withContext(Dispatchers.Main) {
-                    if (result.isNotEmpty()) {
-                        val t = if (result.length > 4000) result.take(4000) + "\n…truncated" else result
-                        append(TermLine(t, TermLine.NORMAL))
-                    }
+                    if (finalResult.isNotEmpty()) print("$finalResult\n", TermWhite)
+                    afterCommand()
                     _status.value = "idle"
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    append(TermLine("sh: ${e.message}", TermLine.ERROR))
+                    print("sh: ${e.message}\n", TermRed)
+                    afterCommand()
                     _status.value = "idle"
                 }
             } finally {
@@ -439,5 +587,20 @@ class TerminalViewModel : ViewModel() {
                 try { process?.destroy() } catch (_: Exception) {}
             }
         }
+    }
+
+    private fun isAllowed(path: File): Boolean {
+        val sd = sandboxDir ?: return false
+        return try {
+            path.canonicalFile.absolutePath.startsWith(sd.canonicalFile.absolutePath)
+        } catch (_: Exception) { false }
+    }
+
+    private fun resolve(input: String): File? {
+        val sd = sandboxDir ?: return null
+        val cwd = try { active().dir } catch (_: Exception) { null } ?: sd
+        if (input.isBlank()) return cwd
+        val f = if (input.startsWith("/")) File(input) else File(cwd, input)
+        return if (isAllowed(f)) f else null
     }
 }
