@@ -37,4 +37,4 @@ app/src/main/java/com/lightbrowser/
 ```
 
 ## Target size
-Was ~2 MB (Views). Compose + M3 + Coil + Media3 target **~10–15 MB APK** (user-approved).
+Was ~2 MB (Views). v3.0-expressive release APK: **~3.7 MB** (R8 + shrinkResources) — Compose + M3 + Coil + Media3 all fit.
