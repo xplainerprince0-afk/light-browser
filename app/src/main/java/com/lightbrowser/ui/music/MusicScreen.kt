@@ -7,7 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.StiffnessLow
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -327,12 +327,12 @@ private fun HeroPlayer(
     )
     val corner by animateDpAsState(
         targetValue = if (pl.isPlaying) 64.dp else 48.dp,
-        animationSpec = spring(stiffness = StiffnessLow),
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
         label = "pebble"
     )
     val playScale by animateFloatAsState(
         targetValue = if (pressed) 0.85f else 1f,
-        animationSpec = spring(stiffness = StiffnessLow),
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
         label = "squish"
     )
 
