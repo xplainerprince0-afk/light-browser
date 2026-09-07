@@ -11,30 +11,77 @@ import java.io.File
 import java.io.FileOutputStream
 
 object DownloadHelper {
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    private fun toastOnMain(ctx: Context, msg: String, long: Boolean = false) {
+        try {
+            val app = ctx.applicationContext
+            mainHandler.post {
+                try {
+                    android.widget.Toast.makeText(
+                        app, msg,
+                        if (long) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
     fun enqueue(ctx: Context, url: String, userAgent: String?, contentDisposition: String?, mimeType: String?) {
         try {
-            val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val app = ctx.applicationContext
             val uri = Uri.parse(url)
             val fileName = try { URLUtil.guessFileName(url, contentDisposition, mimeType) } catch (_: Exception) { uri.lastPathSegment ?: "download" }
-            
-            // Save to sandbox/Downloads instead of public Downloads
-            val sandboxDir = getSandboxDownloadsDir(ctx)
-            val file = File(sandboxDir, fileName)
-            
-            val req = DownloadManager.Request(uri)
-                .setMimeType(mimeType)
-                .addRequestHeader("User-Agent", userAgent ?: "")
-                .addRequestHeader("cookie", CookieManager.getInstance().getCookie(url) ?: "")
-                .setTitle(fileName)
-                .setDescription("Downloading via LightBrowser")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationUri(Uri.fromFile(file))
-                .setAllowedOverMetered(true).setAllowedOverRoaming(true)
-            dm.enqueue(req)
-            Toast.makeText(ctx, "Downloading $fileName to sandbox/Downloads", Toast.LENGTH_SHORT).show()
+            val safeName = fileName.ifBlank { "download_${System.currentTimeMillis()}.bin" }
+
+            // DownloadManager CANNOT write to internal filesDir (different UID) — it would fail
+            // with SecurityException. Download in-app on a background thread instead.
+            toastOnMain(app, "Downloading $safeName…")
+            Thread {
+                try {
+                    val sandboxDir = getSandboxDownloadsDir(app)
+                    val outFile = uniqueFile(sandboxDir, safeName)
+                    val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 30_000
+                    conn.readTimeout = 120_000
+                    conn.instanceFollowRedirects = true
+                    if (!userAgent.isNullOrBlank()) conn.setRequestProperty("User-Agent", userAgent)
+                    try {
+                        CookieManager.getInstance().getCookie(url)?.let {
+                            if (it.isNotBlank()) conn.setRequestProperty("Cookie", it)
+                        }
+                    } catch (_: Exception) {}
+                    conn.connect()
+                    if (conn.responseCode !in 200..299) throw java.io.IOException("HTTP ${conn.responseCode}")
+                    conn.inputStream.use { input ->
+                        java.io.FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                    }
+                    try {
+                        android.media.MediaScannerConnection.scanFile(app, arrayOf(outFile.absolutePath), arrayOf(mimeType ?: "*/*"), null)
+                    } catch (_: Exception) {}
+                    toastOnMain(app, "Saved $safeName to sandbox/Downloads", long = true)
+                } catch (e: Exception) {
+                    android.util.Log.e("LightBrowser", "download fail", e)
+                    toastOnMain(app, "Download failed: ${e.message}", long = true)
+                }
+            }.also { it.isDaemon = true }.start()
         } catch (e: Exception) {
-            Toast.makeText(ctx, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+            toastOnMain(ctx, "Download failed: ${e.message}", long = true)
         }
+    }
+
+    private fun uniqueFile(dir: File, name: String): File {
+        var f = File(dir, name)
+        if (!f.exists()) return f
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var i = 1
+        while (f.exists() && i < 1000) {
+            f = File(dir, "$base($i)$ext")
+            i++
+        }
+        return f
     }
 
     private fun getSandboxDownloadsDir(ctx: Context): File {
@@ -47,9 +94,20 @@ object DownloadHelper {
 
     // Wibgar exact: xv1.onBlobDownload(String base64data, String mime, String disposition)
     // JS calls window.BlobDownloader.onBlobDownload(base64,mime,disposition)
+    // NOTE: @JavascriptInterface runs on a background thread — never touch Toast/Views directly.
     class BlobBridge(private val ctx: Context) {
+        private val appCtx: Context = ctx.applicationContext
+        private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
+
         @android.webkit.JavascriptInterface
         fun onBlobDownload(base64data: String, mime: String?, disposition: String?) {
+            // Offload Base64 decode + file write off the JS thread (large videos = multi-MB).
+            try { io.execute { saveBlob(base64data, mime, disposition) } } catch (_: Exception) {
+                try { saveBlob(base64data, mime, disposition) } catch (_: Exception) {}
+            }
+        }
+
+        private fun saveBlob(base64data: String, mime: String?, disposition: String?) {
             try {
                 // base64data is data: URL like data:application/zip;base64,....
                 val dataPart = base64data.substringAfter(",", base64data)
@@ -59,17 +117,17 @@ object DownloadHelper {
                 } catch (_: Exception) { "download_${System.currentTimeMillis()}.bin" }
                 val safeName = if (fileName.isBlank()) "download_${System.currentTimeMillis()}.bin" else fileName
                 
-                val sandboxDir = getSandboxDownloadsDir(ctx)
-                val file = File(sandboxDir, safeName)
+                val sandboxDir = getSandboxDownloadsDir(appCtx)
+                val file = uniqueFile(sandboxDir, safeName)
                 FileOutputStream(file).use { it.write(bytes) }
                 
                 // also notify via MediaScanner
                 try {
-                    android.media.MediaScannerConnection.scanFile(ctx, arrayOf(file.absolutePath), arrayOf(mime ?: "*/*"), null)
+                    android.media.MediaScannerConnection.scanFile(appCtx, arrayOf(file.absolutePath), arrayOf(mime ?: "*/*"), null)
                 } catch (_: Exception) {}
-                Toast.makeText(ctx, "Saved $safeName (${bytes.size/1024} KB) to sandbox/Downloads", Toast.LENGTH_LONG).show()
+                toastOnMain(appCtx, "Saved $safeName (${bytes.size/1024} KB) to sandbox/Downloads", long = true)
             } catch (e: Exception) {
-                Toast.makeText(ctx, "Blob save failed: ${e.message}", Toast.LENGTH_LONG).show()
+                toastOnMain(appCtx, "Blob save failed: ${e.message}", long = true)
                 android.util.Log.e("LightBrowser", "Blob save fail", e)
             }
         }

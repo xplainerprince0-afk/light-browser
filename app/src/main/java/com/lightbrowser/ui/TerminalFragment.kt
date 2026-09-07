@@ -23,6 +23,9 @@ import com.lightbrowser.data.ScriptStorage
 import com.lightbrowser.databinding.FragmentTerminalBinding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -35,7 +38,8 @@ class TerminalFragment : Fragment() {
     private val logs = mutableListOf<String>()
     private val commandHistory = mutableListOf<String>()
     private var historyBrowseIndex = -1
-    private val scope = CoroutineScope(Dispatchers.Main)
+    // Recreated per view (hide/show retains instance; a cancelled val-scope would stay dead).
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private var sandboxDir: File? = null
     private var currentDir: File? = null
@@ -75,6 +79,9 @@ class TerminalFragment : Fragment() {
     )
 
     override fun onCreateView(inflater: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
+        try { scope.ensureActive() } catch (_: Exception) {
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        }
         return try {
             _b = FragmentTerminalBinding.inflate(inflater, c, false)
             _b!!.root
@@ -111,16 +118,15 @@ class TerminalFragment : Fragment() {
             bb.btnHistUp.setOnClickListener { historyUp() }
             bb.btnHistDown.setOnClickListener { historyDown() }
 
-            // Tapping the output area redirects focus to the input field.
-            // We forward the touch to svLogs for scrolling first, then request focus on etInput.
-            bb.svLogs.setOnTouchListener { _, event ->
-                if (event.action == MotionEvent.ACTION_UP) {
+            // Tapping the output area focuses input. Use CLICK (not touch) so scrolling
+            // doesn't pop the keyboard on every scroll gesture (old onTouch did).
+            bb.tvLogs.setOnClickListener {
+                try {
                     bb.etInput.requestFocus()
                     val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
                             as android.view.inputmethod.InputMethodManager
                     imm.showSoftInput(bb.etInput, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-                }
-                false // let NestedScrollView handle the scroll itself
+                } catch (_: Exception) {}
             }
 
             appendWelcome()
@@ -507,24 +513,37 @@ class TerminalFragment : Fragment() {
         val sd = sandboxDir ?: return
         val cwd = currentDir ?: sd
         scope.launch(Dispatchers.IO) {
+            var process: Process? = null
             try {
                 val prefix = AlpineEnv.shellPrefix(sd)
                 val fullCmd = "$prefix$cmd"
                 val env = AlpineEnv.buildEnvironment(sd, cwd)
-                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", fullCmd), env, cwd)
-                val out = BufferedReader(InputStreamReader(process.inputStream))
-                val err = BufferedReader(InputStreamReader(process.errorStream))
+                process = Runtime.getRuntime().exec(arrayOf("sh", "-c", fullCmd), env, cwd)
+                val p = process
+                val out = BufferedReader(InputStreamReader(p.inputStream))
+                val err = BufferedReader(InputStreamReader(p.errorStream))
                 val output = StringBuilder()
                 var line: String?
                 val start = System.currentTimeMillis()
+                // Bound the read loop; the old code blocked forever on `ping` with no -c.
                 while (out.readLine().also { line = it } != null) {
                     output.appendLine(line)
-                    if (System.currentTimeMillis() - start > 15_000) break
+                    if (output.length > 8000) { output.append("\n…truncated"); break }
+                    if (System.currentTimeMillis() - start > 15_000) { output.append("\n…timed out (15s)"); break }
                 }
-                while (err.readLine().also { line = it } != null) {
+                while (err.readLine().also { line = it } != null && output.length < 8000) {
                     output.appendLine(line)
                 }
-                process.waitFor()
+                // waitFor without timeout hangs the IO thread forever — bound it.
+                try {
+                    val done = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+                    if (!done) {
+                        try { p.destroyForcibly() } catch (_: Exception) {}
+                        output.appendLine("…killed after 20s")
+                    }
+                } catch (_: Exception) {
+                    try { p.destroy() } catch (_: Exception) {}
+                }
                 val result = output.toString().trimEnd()
                 withContext(Dispatchers.Main) {
                     if (result.isNotEmpty()) {
@@ -535,6 +554,8 @@ class TerminalFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { appendError("sh: ${e.message}") }
+            } finally {
+                try { process?.destroy() } catch (_: Exception) {}
             }
         }
     }
@@ -566,11 +587,14 @@ class TerminalFragment : Fragment() {
 
     private fun renderLogs(lastLineColor: Int? = null) {
         val bb = _b ?: return
+        // Rebuilding a 2000-line Spannable on every keystroke is O(n²) jank.
+        // Render only the last 500 lines; full history stays in `logs`.
+        val visible = if (logs.size > 500) logs.takeLast(500) else logs
         val sb = SpannableStringBuilder()
-        logs.forEachIndexed { i, logLine ->
+        visible.forEachIndexed { i, logLine ->
             val start = sb.length
             sb.append(logLine).append("\n")
-            if (lastLineColor != null && i == logs.size - 1) {
+            if (lastLineColor != null && i == visible.size - 1) {
                 sb.setSpan(ForegroundColorSpan(lastLineColor), start, sb.length, 0)
             }
         }
@@ -592,5 +616,5 @@ class TerminalFragment : Fragment() {
         } catch (_: Exception) { null }
     }
 
-    override fun onDestroyView() { _b = null; super.onDestroyView() }
+    override fun onDestroyView() { try { scope.cancel() } catch (_: Exception) {}; _b = null; super.onDestroyView() }
 }

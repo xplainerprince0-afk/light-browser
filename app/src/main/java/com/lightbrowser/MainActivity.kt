@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         drawerToggle = ActionBarDrawerToggle(
-            this, binding.drawerLayout, null,
+            this, binding.drawerLayout,
             R.string.open_drawer, R.string.close_drawer
         )
         binding.drawerLayout.addDrawerListener(drawerToggle)
@@ -226,10 +226,19 @@ class MainActivity : AppCompatActivity() {
     fun switchToTab(id: Int) = switchTab(id)
 
     fun switchToBrowser(url: String? = null) {
-        url?.let { BrowserFragment.pendingUrl = it }
-        switchTab(R.id.nav_browser)
-        if (url != null) {
-            (fragments[R.id.nav_browser] as? BrowserFragment)?.loadUrl(url)
+        // If the browser tab already exists, load directly (pendingUrl would otherwise sit
+        // unconsumed, then double-load on next recreate). Only use pendingUrl for cold start.
+        val existing = fragments[R.id.nav_browser] as? BrowserFragment
+        if (url != null && existing != null && existing.isAdded) {
+            BrowserFragment.pendingUrl = null
+            switchTab(R.id.nav_browser)
+            existing.loadUrl(url)
+        } else {
+            url?.let { BrowserFragment.pendingUrl = it }
+            switchTab(R.id.nav_browser)
+            if (url != null) {
+                (fragments[R.id.nav_browser] as? BrowserFragment)?.loadUrl(url)
+            }
         }
     }
 

@@ -19,13 +19,9 @@ object BrowserProfile {
         val dataDir = File(ctx.filesDir, "browser_data").apply { mkdirs() }
         val cacheDir = File(dataDir, "cache").apply { mkdirs() }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            try {
-                WebView.setDataDirectorySuffix("lightbrowser")
-            } catch (e: Exception) {
-                Log.w(TAG, "setDataDirectorySuffix failed", e)
-            }
-        }
+        // NOTE: WebView.setDataDirectorySuffix() must run in Application.onCreate BEFORE
+        // any WebView is inflated. Calling it here is too late (WebView already exists)
+        // and throws on Android P+. Moved to LightBrowserApp. See that file.
 
         val settings = webView.settings
         settings.javaScriptEnabled = Prefs.jsEnabled
@@ -60,8 +56,9 @@ object BrowserProfile {
             settings.safeBrowsingEnabled = true
         }
 
-        // Hardware acceleration for smoother rendering
-        webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+        // SOFTWARE layer avoids WTR fixed-panel flicker (Wibgar used HARDWARE and flickered).
+        // Keep SOFTWARE even though it costs a bit of GPU smoothness.
+        webView.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)

@@ -30,6 +30,8 @@ import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentMusicBinding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -57,7 +59,11 @@ class MusicPlayerFragment : Fragment() {
     private var folderPicker: ActivityResultLauncher<Uri?>? = null
     private var importFolderPicker: ActivityResultLauncher<Uri?>? = null
 
-    private val scope = CoroutineScope(Dispatchers.Main)
+    // Bound to the fragment VIEW lifecycle: recreated per view, cancelled in onDestroyView.
+    // (hide/show retains the instance, so a single val-scope would stay cancelled forever.)
+    private var scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main)
+    private var libraryFile: File? = null
+    private var importProgress: android.app.AlertDialog? = null
 
     data class Novel(
         val name: String,
@@ -125,7 +131,16 @@ class MusicPlayerFragment : Fragment() {
         } catch (_: Exception) {}
     }
 
-    private fun safeToast(m: String?) { try { Toast.makeText(requireContext(), m ?: "error", Toast.LENGTH_SHORT).show() } catch (_: Exception) {} }
+    private fun safeToast(m: String?) {
+        try {
+            val msg = m ?: "error"
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                try { Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+            } else {
+                handler.post { try { Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show() } catch (_: Exception) {} }
+            }
+        } catch (_: Exception) {}
+    }
 
     private val updateRunnable = object : Runnable {
         override fun run() {
@@ -139,21 +154,10 @@ class MusicPlayerFragment : Fragment() {
                     try { bb.playerSeekBar.progress = pos } catch (_: Exception) {}
                     try { bb.playerCurrentTime.text = formatDuration(pos.toLong()) } catch (_: Exception) {}
                     try { bb.playerDuration.text = formatDuration(dur.toLong()) } catch (_: Exception) {}
-                    
-                    // Update chapter progress in novel list
-                    if (currentNovelIndex >= 0 && currentNovelIndex < novels.size) {
-                        val novel = novels[currentNovelIndex]
-                        val updatedChapters = novel.chapters.toMutableList()
-                        if (currentChapterIndex >= 0 && currentChapterIndex < updatedChapters.size) {
-                            val currentChapter = updatedChapters[currentChapterIndex]
-                            val playedMs = pos.toLong() + updatedChapters.take(currentChapterIndex).sumOf { it.duration }
-                            val updatedNovel = novel.copy(
-                                playedDuration = playedMs
-                            )
-                            novels = novels.toMutableList().apply { this[currentNovelIndex] = updatedNovel }
-                            handler.post { updateNovelList() }
-                        }
-                    }
+                    // NOTE: do NOT rebuild the novel list here. The old code did
+                    // novels = novels.copy(...) + notifyDataSetChanged() every 500ms
+                    // which meant 2 full RecyclerView rebinds/sec -> jank + dull feel.
+                    // Progress % is refreshed on track change / pause instead.
                 }
                 handler.postDelayed(this, 500)
             } catch (_: Exception) { try { handler.postDelayed(this, 500) } catch (_: Exception) {} }
@@ -161,6 +165,11 @@ class MusicPlayerFragment : Fragment() {
     }
 
     override fun onCreateView(inflater: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
+        // hide/show keeps the instance alive — recreate the view-scope if a previous
+        // onDestroyView cancelled it.
+        try { scope.ensureActive() } catch (_: Exception) {
+            scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main)
+        }
         return try {
             _b = FragmentMusicBinding.inflate(inflater, c, false)
             b.root
@@ -254,24 +263,35 @@ class MusicPlayerFragment : Fragment() {
     }
 
     private fun scanLibrary(treeUri: Uri) {
-        try {
-            val ctx = requireContext()
-            val docTree = DocumentFile.fromTreeUri(ctx, treeUri) ?: return
-            scanLibraryFromDocumentFile(docTree)
-        } catch (e: Exception) {
-            Log.e("Audiobook", "scanLibrary", e)
-            safeToast("Scan failed: ${e.message}")
+        // DocumentFile.listFiles + MediaMetadataRetriever are BLOCKING — never run on main.
+        safeToast("Scanning library…")
+        scope.launch(Dispatchers.IO) {
+            try {
+                val ctx = requireContext().applicationContext
+                val docTree = DocumentFile.fromTreeUri(ctx, treeUri) ?: return@launch
+                scanLibraryFromDocumentFile(docTree)
+            } catch (e: Exception) {
+                Log.e("Audiobook", "scanLibrary", e)
+                withContext(Dispatchers.Main) { safeToast("Scan failed: ${e.message}") }
+            }
         }
     }
 
     private fun scanLibraryFromFile(dir: File) {
-        val docFile = DocumentFile.fromFile(dir)
-        if (docFile != null) {
-            scanLibraryFromDocumentFile(docFile)
+        libraryFile = dir
+        libraryUri = null
+        safeToast("Scanning library…")
+        scope.launch(Dispatchers.IO) {
+            try {
+                val docFile = DocumentFile.fromFile(dir) ?: return@launch
+                scanLibraryFromDocumentFile(docFile)
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { safeToast("Scan failed: ${e.message}") }
+            }
         }
     }
 
-    private fun scanLibraryFromDocumentFile(libraryRoot: DocumentFile) {
+    private suspend fun scanLibraryFromDocumentFile(libraryRoot: DocumentFile) {
         try {
             val novelList = mutableListOf<Novel>()
 
@@ -356,15 +376,16 @@ class MusicPlayerFragment : Fragment() {
             }
 
             novels = novelList
-            
-            handler.post {
+
+            // Publish to main thread — adapter reads novels on main.
+            withContext(Dispatchers.Main) {
                 updateNovelList()
                 if (novels.isNotEmpty() && currentNovelIndex == -1) {
                     // Don't auto-select, let user choose
                     showNovelList()
                 }
+                safeToast("Found ${novels.size} novel(s) in library")
             }
-            safeToast("Found ${novels.size} novel(s) in library")
         } catch (e: Exception) {
             Log.e("Audiobook", "scanLibraryFromDocumentFile", e)
             safeToast("Scan failed: ${e.message}")
@@ -372,14 +393,17 @@ class MusicPlayerFragment : Fragment() {
     }
 
     private fun getAudioDuration(file: DocumentFile): Long {
-        try {
-            val mmr = MediaMetadataRetriever()
-            mmr.setDataSource(requireContext(), file.uri)
-            val durationStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            mmr.release()
-            return durationStr?.toLongOrNull() ?: 0L
+        var mmr: MediaMetadataRetriever? = null
+        return try {
+            val app = try { requireContext().applicationContext } catch (_: Exception) { return 0L }
+            mmr = MediaMetadataRetriever()
+            try { mmr.setDataSource(app, file.uri) } catch (_: Exception) { return 0L }
+            val durationStr = try { mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION) } catch (_: Exception) { null }
+            durationStr?.toLongOrNull() ?: 0L
         } catch (_: Exception) {
-            return 0L
+            0L
+        } finally {
+            try { mmr?.release() } catch (_: Exception) {}
         }
     }
 
@@ -412,23 +436,27 @@ class MusicPlayerFragment : Fragment() {
         val bb = _b ?: return
         bb.novelListContainer.visibility = View.GONE
         bb.playerContainer.visibility = View.VISIBLE
-        
-        // Load cover
+
+        // Cover decode is I/O + bitmap alloc — never on main (old code froze scrolling).
+        bb.playerCover.setImageResource(R.drawable.bg_url_bar)
+        bb.playerCoverBg.setImageResource(R.drawable.bg_url_bar)
         novel.cover?.let { cover ->
-            try {
-                val input = requireContext().contentResolver.openInputStream(cover.uri)
-                input?.use { stream ->
-                    val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
-                    bb.playerCover.setImageBitmap(bitmap)
-                    bb.playerCoverBg.setImageBitmap(bitmap)
-                }
-            } catch (_: Exception) { 
-                bb.playerCover.setImageResource(R.drawable.bg_url_bar)
-                bb.playerCoverBg.setImageResource(R.drawable.bg_url_bar)
+            val coverUri = cover.uri
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val app = requireContext().applicationContext
+                    app.contentResolver.openInputStream(coverUri)?.use { stream ->
+                        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }
+                        val bitmap = android.graphics.BitmapFactory.decodeStream(stream, null, opts)
+                        if (bitmap != null) withContext(Dispatchers.Main) {
+                            try {
+                                _b?.playerCover?.setImageBitmap(bitmap)
+                                _b?.playerCoverBg?.setImageBitmap(bitmap)
+                            } catch (_: Exception) {}
+                        }
+                    }
+                } catch (_: Exception) {}
             }
-        } ?: run { 
-            bb.playerCover.setImageResource(R.drawable.bg_url_bar)
-            bb.playerCoverBg.setImageResource(R.drawable.bg_url_bar)
         }
         
         bb.playerNovelTitle.text = novel.name
@@ -456,17 +484,25 @@ class MusicPlayerFragment : Fragment() {
             h.duration.text = novel.formattedTotalDuration
             h.progressText.text = "${novel.progressPercent}%"
             h.progressBar.progress = novel.progressPercent
-            
-            // Load cover thumbnail
+
+            // Thumbnail decode off main; tag guards against recycled-view overwrite.
+            h.cover.setImageResource(R.drawable.bg_url_bar)
             novel.cover?.let { cover ->
-                try {
-                    val input = requireContext().contentResolver.openInputStream(cover.uri)
-                    input?.use { stream ->
-                        val bitmap = android.graphics.BitmapFactory.decodeStream(stream)
-                        h.cover.setImageBitmap(bitmap)
-                    }
-                } catch (_: Exception) { h.cover.setImageResource(R.drawable.bg_url_bar) }
-            } ?: run { h.cover.setImageResource(R.drawable.bg_url_bar) }
+                val uri = cover.uri
+                h.cover.tag = uri.toString()
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val app = h.itemView.context.applicationContext
+                        app.contentResolver.openInputStream(uri)?.use { stream ->
+                            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = 4 }
+                            val bitmap = android.graphics.BitmapFactory.decodeStream(stream, null, opts)
+                            if (bitmap != null) withContext(Dispatchers.Main) {
+                                try { if (h.cover.tag == uri.toString()) h.cover.setImageBitmap(bitmap) } catch (_: Exception) {}
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            } ?: run { h.cover.tag = null }
             
             h.itemView.setOnClickListener { selectNovel(i) }
         }
@@ -493,15 +529,17 @@ class MusicPlayerFragment : Fragment() {
             val ch = chapters[idx]
             val ctx = requireContext()
             player = MediaPlayer().apply {
-                try { setDataSource(ctx, ch.file.uri) } catch (e: Exception) { safeToast("Play failed: ${e.message}"); return@apply }
-                setOnPreparedListener {
+                try { setDataSource(ctx.applicationContext, ch.file.uri) } catch (e: Exception) { safeToast("Play failed: ${e.message}"); return@apply }
+                setOnPreparedListener { mp ->
                     try { start() } catch (_: Exception) {}
                     val bb = _b
                     bb?.let {
                         try { it.playerBtnPlay.text = "⏸" } catch (_: Exception) {}
                         try { it.playerChapterTitle.text = "${ch.index}. ${ch.title}" } catch (_: Exception) {}
-                        try { it.playerDuration.text = ch.formattedDuration } catch (_: Exception) {}
-                        try { it.playerSeekBar.max = ch.duration.toInt() } catch (_: Exception) {}
+                        // Use the REAL prepared duration, not the scanned estimate (which may be 0).
+                        val realDur = try { mp.duration } catch (_: Exception) { 0 }
+                        try { it.playerDuration.text = formatDuration(if (realDur > 0) realDur.toLong() else ch.duration) } catch (_: Exception) {}
+                        try { it.playerSeekBar.max = if (realDur > 0) realDur else 100 } catch (_: Exception) {}
                     }
                 }
                 setOnCompletionListener { try { nextChapter() } catch (_: Exception) {} }
@@ -549,7 +587,15 @@ class MusicPlayerFragment : Fragment() {
                         R.id.menu_switch_novel -> showNovelList()
                         R.id.menu_seek_back -> seekRelative(-10000)
                         R.id.menu_seek_forward -> seekRelative(10000)
-                        R.id.menu_scan -> libraryUri?.let { scanLibrary(it) }
+                        R.id.menu_scan -> {
+                            val tree = libraryUri
+                            val file = libraryFile
+                            when {
+                                tree != null -> scanLibrary(tree)
+                                file != null -> scanLibraryFromFile(file)
+                                else -> safeToast("Pick a library first")
+                            }
+                        }
                         R.id.menu_stop -> stop()
                     }
                 } catch (_: Exception) {}
@@ -613,26 +659,34 @@ class MusicPlayerFragment : Fragment() {
     private fun copyFolderToSandbox(sourceUri: Uri) {
         try {
             val sandboxDir = getSandboxDir() ?: return
-            val sourceDoc = DocumentFile.fromTreeUri(requireContext(), sourceUri) ?: return
-            
-            val progressDialog = android.app.ProgressDialog(requireContext()).apply {
-                setTitle("Importing Folder")
-                setMessage("Copying files to sandbox...")
-                setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
-                setCancelable(false)
-                show()
+            val app = requireContext().applicationContext
+            val sourceDoc = DocumentFile.fromTreeUri(app, sourceUri) ?: return
+
+            // ProgressDialog is deprecated + leaks on rotation. Use a dismiss-safe AlertDialog.
+            val progressBar = android.widget.ProgressBar(requireContext(), null, android.R.attr.progressBarStyleHorizontal).apply {
+                isIndeterminate = true
             }
+            val dlg = android.app.AlertDialog.Builder(requireContext())
+                .setTitle("Importing Folder")
+                .setMessage("Copying files to sandbox…")
+                .setView(progressBar)
+                .setCancelable(false)
+                .create()
+            try { dlg.show() } catch (_: Exception) {}
+            importProgress = dlg
 
             scope.launch(Dispatchers.IO) {
                 try {
-                    val copiedCount = copyDocumentTreeRecursive(sourceDoc, sandboxDir, progressDialog)
+                    val copiedCount = copyDocumentTreeRecursive(sourceDoc, sandboxDir)
                     withContext(Dispatchers.Main) {
-                        progressDialog.dismiss()
+                        try { dlg.dismiss() } catch (_: Exception) {}
+                        if (importProgress === dlg) importProgress = null
                         safeToast("Imported $copiedCount file(s) to sandbox")
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        progressDialog.dismiss()
+                        try { dlg.dismiss() } catch (_: Exception) {}
+                        if (importProgress === dlg) importProgress = null
                         safeToast("Import failed: ${e.message}")
                     }
                 }
@@ -642,24 +696,23 @@ class MusicPlayerFragment : Fragment() {
         }
     }
 
-    private suspend fun copyDocumentTreeRecursive(sourceDoc: DocumentFile, destDir: File, progressDialog: android.app.ProgressDialog): Int {
+    private suspend fun copyDocumentTreeRecursive(sourceDoc: DocumentFile, destDir: File): Int {
+        // Capture app context once — requireContext() inside IO would crash if detached mid-copy.
+        val app = try { requireContext().applicationContext } catch (_: Exception) { return 0 }
         var count = 0
         sourceDoc.listFiles()?.forEach { item ->
             if (item.isDirectory) {
                 val subDir = File(destDir, item.name ?: "folder").apply { mkdirs() }
-                count += copyDocumentTreeRecursive(item, subDir, progressDialog)
+                count += copyDocumentTreeRecursive(item, subDir)
             } else if (item.isFile) {
                 try {
                     val destFile = File(destDir, item.name ?: "file_${System.currentTimeMillis()}")
-                    requireContext().contentResolver.openInputStream(item.uri)?.use { input ->
+                    app.contentResolver.openInputStream(item.uri)?.use { input ->
                         FileOutputStream(destFile).use { output ->
                             input.copyTo(output)
                         }
                     }
                     count++
-                    withContext(Dispatchers.Main) {
-                        progressDialog.incrementProgressBy(1)
-                    }
                 } catch (_: Exception) {}
             }
         }
@@ -670,5 +723,13 @@ class MusicPlayerFragment : Fragment() {
         super.onHiddenChanged(hidden)
         try { if (hidden && try { player?.isPlaying == true } catch (_: Exception) { false }) { try { player?.pause() } catch (_: Exception) {}; try { _b?.playerBtnPlay?.text = "▶" } catch (_: Exception) {} } } catch (_: Exception) {}
     }
-    override fun onDestroyView() { try { handler.removeCallbacks(updateRunnable) } catch (_: Exception) {}; try { stopPlayer() } catch (_: Exception) {}; _b = null; super.onDestroyView() }
+    override fun onDestroyView() {
+        try { handler.removeCallbacks(updateRunnable) } catch (_: Exception) {}
+        try { importProgress?.dismiss() } catch (_: Exception) {}
+        importProgress = null
+        try { scope.cancel() } catch (_: Exception) {}
+        try { stopPlayer() } catch (_: Exception) {}
+        _b = null
+        super.onDestroyView()
+    }
 }

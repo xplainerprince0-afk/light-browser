@@ -110,6 +110,27 @@ object AlpineEnv {
                 val type = header[156].toInt().toChar()
 
                 val outFile = File(destDir, name)
+                // Zip-slip guard: tar entries with ../ or absolute paths must not escape sandbox
+                var unsafeEntry = false
+                try {
+                    val destCanon = destDir.canonicalFile
+                    val outCanon = outFile.canonicalFile
+                    if (!outCanon.absolutePath.startsWith(destCanon.absolutePath + File.separator) &&
+                        outCanon.absolutePath != destCanon.absolutePath
+                    ) {
+                        unsafeEntry = true
+                    }
+                } catch (_: Exception) { unsafeEntry = false }
+                if (unsafeEntry) {
+                    // Consume this entry's bytes so the stream stays aligned, then skip it.
+                    var toSkip = size + (512 - (size % 512)) % 512
+                    while (toSkip > 0) {
+                        val skipped = gzip.skip(toSkip)
+                        if (skipped <= 0) break
+                        toSkip -= skipped
+                    }
+                    continue
+                }
                 when (type) {
                     '5', '0', '\u0000' -> {
                         if (type == '5' || name.endsWith("/")) {

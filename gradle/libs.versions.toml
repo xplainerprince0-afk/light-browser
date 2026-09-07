@@ -1,0 +1,40 @@
+[versions]
+agp = "9.3.2"
+kotlin = "2.3.0"
+androidxActivity = "1.9.3"
+androidxAppCompat = "1.7.0"
+androidxComposeBom = "2025.09.01"
+androidxCore = "1.15.0"
+androidxLifecycle = "2.10.0"
+coil = "2.7.0"
+coroutines = "1.10.1"
+desugar = "2.1.4"
+# Media3 is NOT in Android/libs.versions.toml.txt — version verified via
+# developer.android.com media3 release notes (1.11.0 stable Aug 2026,
+# requires compileSdk 35+; project uses 37). User explicitly approved ExoPlayer.
+media3 = "1.11.0"
+
+[libraries]
+android-desugarJdkLibs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "androidxActivity" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "androidxAppCompat" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom-alpha", version.ref = "androidxComposeBom" }
+androidx-compose-material-iconsExtended = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-compose-material3-navigationSuite = { group = "androidx.compose.material3", name = "material3-adaptive-navigation-suite" }
+androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidxCore" }
+androidx-lifecycle-runtimeCompose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "androidxLifecycle" }
+androidx-lifecycle-viewModelCompose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "androidxLifecycle" }
+coil-kt-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+# Module also applies org.jetbrains.kotlin.android (same version.ref kotlin):
+# forbidden in ROOT per compatibility-matrix, required in MODULE for compilation.
+compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

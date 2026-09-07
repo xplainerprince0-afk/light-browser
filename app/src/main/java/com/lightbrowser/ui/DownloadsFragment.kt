@@ -30,52 +30,57 @@ class DownloadsFragment : Fragment() {
     override fun onViewCreated(v: View, s: Bundle?) {
         b.recycler.layoutManager = LinearLayoutManager(requireContext())
         b.btnOpenFolder.setOnClickListener {
+            // DownloadHelper saves into sandbox/Downloads (private storage), NOT public Downloads.
+            // Old code tried to VIEW the public folder with a broken file:// Uri — always failed.
             try {
-                val intent = Intent(Intent.ACTION_VIEW).apply {
-                    setDataAndType(Uri.parse(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString()), "*/*")
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                startActivity(Intent.createChooser(intent, "Open Downloads"))
+                (activity as? com.lightbrowser.MainActivity)?.switchToTab(com.lightbrowser.R.id.nav_filemanager)
             } catch (_: Exception) {
-                startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS))
+                try { startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)) } catch (_: Exception) {}
             }
         }
         load()
     }
 
+    private fun sandboxDownloadsDir(): File {
+        return try {
+            File(requireContext().filesDir, "sandbox/Downloads").apply { if (!exists()) mkdirs() }
+        } catch (_: Exception) {
+            File(requireContext().cacheDir, "sandbox/Downloads").apply { if (!exists()) mkdirs() }
+        }
+    }
+
     private fun load() {
         val ctx = requireContext()
-        val dm = ctx.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as DownloadManager
-        val q = DownloadManager.Query()
-        val c = dm.query(q)
         val items = mutableListOf<Map<String, String>>()
-        // also list files in Downloads folder for blob saves
+        // List the REAL folder: sandbox/Downloads (where BlobBridge + enqueue save).
         try {
-            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val dir = sandboxDownloadsDir()
             dir.listFiles()?.sortedByDescending { it.lastModified() }?.take(30)?.forEach { f ->
                 items.add(mapOf("title" to f.name, "status" to "File · ${f.length()/1024} KB · ${java.text.SimpleDateFormat("MM-dd HH:mm").format(java.util.Date(f.lastModified()))}"))
             }
         } catch (_: Exception) {}
 
-        // add DownloadManager entries on top
+        // add DownloadManager entries on top (guarded close — old code leaked the cursor on throw)
         val dmItems = mutableListOf<Map<String, String>>()
-        if (c != null) {
-            while (c.moveToNext()) {
-                try {
-                    val title = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE)) ?: "download"
-                    val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                    val st = when (status) {
-                        DownloadManager.STATUS_SUCCESSFUL -> "✓ Completed"
-                        DownloadManager.STATUS_RUNNING -> "↓ Downloading"
-                        DownloadManager.STATUS_FAILED -> "✗ Failed"
-                        DownloadManager.STATUS_PAUSED -> "⏸ Paused"
-                        else -> "Pending $status"
-                    }
-                    dmItems.add(mapOf("title" to title, "status" to st))
-                } catch (_: Exception) {}
+        try {
+            val dm = ctx.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as DownloadManager
+            dm.query(DownloadManager.Query())?.use { c ->
+                while (c.moveToNext()) {
+                    try {
+                        val title = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE)) ?: "download"
+                        val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                        val st = when (status) {
+                            DownloadManager.STATUS_SUCCESSFUL -> "✓ Completed"
+                            DownloadManager.STATUS_RUNNING -> "↓ Downloading"
+                            DownloadManager.STATUS_FAILED -> "✗ Failed"
+                            DownloadManager.STATUS_PAUSED -> "⏸ Paused"
+                            else -> "Pending $status"
+                        }
+                        dmItems.add(mapOf("title" to title, "status" to st))
+                    } catch (_: Exception) {}
+                }
             }
-            c.close()
-        }
+        } catch (_: Exception) {}
         val all = dmItems + items
         b.empty.visibility = if (all.isEmpty()) View.VISIBLE else View.GONE
         b.recycler.visibility = if (all.isEmpty()) View.GONE else View.VISIBLE
@@ -87,16 +92,22 @@ class DownloadsFragment : Fragment() {
                 h.itemView.findViewById<TextView>(R.id.tvTitle).text = m["title"]
                 h.itemView.findViewById<TextView>(R.id.tvStatus).text = m["status"]
                 h.itemView.setOnClickListener {
-                    // try to open file if exists
-                    val f = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), m["title"] ?: "")
+                    // Open from sandbox/Downloads via FileProvider (old code looked in public
+                    // Downloads, which is empty since we save privately -> tap did nothing).
+                    val name = m["title"] ?: return@setOnClickListener
+                    val f = File(sandboxDownloadsDir(), name)
                     if (f.exists()) {
                         try {
                             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
+                            val mime = android.webkit.MimeTypeMap.getSingleton()
+                                .getMimeTypeFromExtension(f.extension) ?: "*/*"
                             val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, "*/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                setDataAndType(uri, mime); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
-                            startActivity(intent)
-                        } catch (_: Exception) {}
+                            startActivity(Intent.createChooser(intent, "Open $name"))
+                        } catch (e: Exception) {
+                            try { android.widget.Toast.makeText(ctx, "Open failed: ${e.message}", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                        }
                     }
                 }
             }

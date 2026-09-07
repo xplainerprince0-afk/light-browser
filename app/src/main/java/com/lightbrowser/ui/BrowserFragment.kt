@@ -81,8 +81,8 @@ class BrowserFragment : Fragment() {
             if (Prefs.desktopMode) wv.settings.userAgentString = DESKTOP_UA
         } catch (e: Exception) { Log.e(TAG, "UA fail", e) }
 
-        wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "BlobDownloader")
-        wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext()), "LightBlobBridge")
+        wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext().applicationContext), "BlobDownloader")
+        wv.addJavascriptInterface(DownloadHelper.BlobBridge(requireContext().applicationContext), "LightBlobBridge")
 
         wv.webViewClient = object : WebViewClient() {
             private val adHosts = setOf("doubleclick.net","googlesyndication.com","googletagmanager.com","facebook.net","adsystem","googletagservices.com")
@@ -130,9 +130,12 @@ class BrowserFragment : Fragment() {
                 injectVisibilityHack(v, url)
                 if (Prefs.desktopMode) injectDesktop(v)
                 v?.postDelayed({
-                    if (url != null) injectScripts(v, url, "document_end")
-                    if (url != null) injectScripts(v, url, "document_idle")
-                    injectBlobHook(v)
+                    try {
+                        if (!isAdded || _binding == null) return@postDelayed
+                        if (url != null) injectScripts(v, url, "document_end")
+                        if (url != null) injectScripts(v, url, "document_idle")
+                        injectBlobHook(v)
+                    } catch (_: Exception) {}
                 }, 350)
             }
 
@@ -176,14 +179,14 @@ class BrowserFragment : Fragment() {
             }
 
             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message?): Boolean {
-                val href = view?.hitTestResult?.extra
-                if (href != null) { view.loadUrl(href); return true }
-                val newView = WebView(view!!.context)
-                newView.webViewClient = WebViewClient()
-                val transport = resultMsg?.obj as? WebView.WebViewTransport
-                transport?.webView = newView
-                resultMsg?.sendToTarget()
-                return true
+                // Window.open / target=_blank: keep it in the SAME WebView.
+                // Creating an orphan WebView leaks it (never attached, never destroyed).
+                val href = try { view?.hitTestResult?.extra } catch (_: Exception) { null }
+                if (href != null && (href.startsWith("http://") || href.startsWith("https://"))) {
+                    try { view?.loadUrl(href) } catch (_: Exception) {}
+                    return true
+                }
+                return false
             }
         }
 
@@ -257,8 +260,20 @@ class BrowserFragment : Fragment() {
             } else false
         }
 
-        // Reload/stop on btnGo tap
+        // Reload/stop on btnGo tap. If the URL bar is expanded and text differs -> GO there.
         binding.btnGo.setOnClickListener {
+            try {
+                if (_binding == null) return@setOnClickListener
+                if (binding.urlBar.visibility == View.VISIBLE) {
+                    val typed = binding.urlBar.text.toString().trim()
+                    val current = try { binding.webView.url.orEmpty() } catch (_: Exception) { "" }
+                    if (typed.isNotEmpty() && typed != current) {
+                        loadFromBar()
+                        collapseUrlBar()
+                        return@setOnClickListener
+                    }
+                }
+            } catch (_: Exception) {}
             if (binding.btnGo.text == "✕") {
                 wv.stopLoading()
                 binding.btnGo.text = "↻"
@@ -272,6 +287,11 @@ class BrowserFragment : Fragment() {
         binding.btnForward.setOnClickListener { if (wv.canGoForward()) wv.goForward() }
         binding.btnTabCount.setOnClickListener { showTabSwitcher() }
         binding.btnMore.setOnClickListener { showMoreMenuSlideIn(it) }
+        // Long-press ⋮ opens the navigation drawer (otherwise the drawer is unreachable)
+        binding.btnMore.setOnLongClickListener {
+            try { (activity as? MainActivity)?.openDrawer() } catch (_: Exception) {}
+            true
+        }
 
         val start = pendingUrl?.also { pendingUrl = null } ?: Prefs.homePage
         if (savedInstanceState == null) {
@@ -298,11 +318,16 @@ class BrowserFragment : Fragment() {
     }
 
     private fun collapseUrlBar() {
-        if (binding.urlCollapsed.visibility == View.VISIBLE) return
-        binding.urlBar.visibility = View.GONE
-        binding.urlCollapsed.visibility = View.VISIBLE
-        val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-        imm.hideSoftInputFromWindow(binding.urlBar.windowToken, 0)
+        try {
+            val b = _binding ?: return
+            if (b.urlCollapsed.visibility == View.VISIBLE) return
+            b.urlBar.visibility = View.GONE
+            b.urlCollapsed.visibility = View.VISIBLE
+            try {
+                val imm = requireContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.hideSoftInputFromWindow(b.urlBar.windowToken, 0)
+            } catch (_: Exception) {}
+        } catch (_: Exception) {}
     }
 
     // ──── Tab management ─────────────────────────────────────────────────────
@@ -313,8 +338,8 @@ class BrowserFragment : Fragment() {
     }
 
     private fun showTabSwitcher() {
+        if (!isAdded) return
         val ctx = requireContext()
-        val dlg = android.app.AlertDialog.Builder(ctx)
         val items = tabUrls.mapIndexed { i, url ->
             val mark = if (i == currentTabIndex) "● " else "  "
             val domain = try { android.net.Uri.parse(url).host ?: url } catch (_: Exception) { url }
@@ -424,11 +449,14 @@ class BrowserFragment : Fragment() {
                         holder.itemView.findViewById<TextView>(R.id.tvHistTime).text = sdf.format(Date(e.time))
                         holder.itemView.setOnClickListener { loadUrl(e.url) }
                         holder.itemView.findViewById<TextView>(R.id.btnHistDelete).setOnClickListener {
+                            val pos = holder.bindingAdapterPosition
+                            if (pos == RecyclerView.NO_POSITION) return@setOnClickListener
+                            val rowToDelete = rows[pos].entry ?: return@setOnClickListener
                             val all = HistoryStorage.all(ctx)
-                            all.removeAll { it.url == e.url }
+                            all.removeAll { it.url == rowToDelete.url }
                             HistoryStorage.saveList(ctx, all)
-                            rows.removeAt(position)
-                            notifyItemRemoved(position)
+                            rows.removeAt(pos)
+                            notifyItemRemoved(pos)
                         }
                     }
                 }
@@ -515,7 +543,8 @@ class BrowserFragment : Fragment() {
                 try {
                     CookieManager.getInstance().removeAllCookies(null)
                     android.webkit.WebStorage.getInstance().deleteAllData()
-                    ctx.cacheDir.deleteRecursively()
+                    // Never deleteRecursively() the whole cacheDir while WebView is alive.
+                    try { binding.webView.clearCache(true) } catch (_: Exception) {}
                     Toast.makeText(ctx, "Cache cleared", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) { Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show() }
                 closeSlideInMenu(panel, overlay, decorView)
@@ -703,7 +732,7 @@ class BrowserFragment : Fragment() {
         if (toInject.isEmpty()) { Log.d(TAG, "Matched ${matched.size} but none for runAt=$runAt"); return }
         lastInjectInfo = "Inject ${toInject.size} @ $runAt for $url: ${toInject.joinToString(","){it.name}}"
         Log.d(TAG, lastInjectInfo); consoleLogs.add(lastInjectInfo)
-        try { Toast.makeText(requireContext(), lastInjectInfo.take(120), Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+        // NOTE: no Toast here on purpose — Toast on every page load is spam + jank
         toInject.forEach { sc -> injectSingle(v, sc) }
     }
 
@@ -831,7 +860,13 @@ class BrowserFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        _binding?.webView?.destroy()
+        try {
+            val wv = _binding?.webView
+            (wv?.parent as? ViewGroup)?.removeView(wv)
+            wv?.stopLoading()
+            wv?.removeAllViews()
+            wv?.destroy()
+        } catch (_: Exception) {}
         _binding = null
         super.onDestroyView()
     }

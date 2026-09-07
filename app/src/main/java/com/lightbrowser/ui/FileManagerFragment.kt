@@ -27,6 +27,9 @@ import com.lightbrowser.R
 import com.lightbrowser.databinding.FragmentFilemanagerBinding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -48,7 +51,8 @@ class FileManagerFragment : Fragment() {
     private var exportFile: File? = null
     private var importFolderLauncher: ActivityResultLauncher<Uri?>? = null
 
-    private val scope = CoroutineScope(Dispatchers.Main)
+    // Recreated per view (hide/show retains instance).
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     // Sort order: 0=name, 1=size, 2=date, 3=type
     private var sortMode = 0
@@ -82,6 +86,9 @@ class FileManagerFragment : Fragment() {
     }
 
     override fun onCreateView(inflater: LayoutInflater, c: ViewGroup?, s: Bundle?): View {
+        try { scope.ensureActive() } catch (_: Exception) {
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+        }
         return try {
             _b = FragmentFilemanagerBinding.inflate(inflater, c, false)
             b.root
@@ -237,10 +244,11 @@ class FileManagerFragment : Fragment() {
         try {
             val cur = currentDir
             val sd = sandboxDir ?: return
-            val dd = downloadsDir ?: sd
-            if (cur == sd || cur == dd) { safeToast("Already at root"); return }
+            // downloadsDir lives INSIDE sandbox (sandbox/Downloads), so ONLY sd is the root.
+            // Old code treated dd as a second root and got stuck ("Already at root" inside Downloads).
+            if (cur == sd) { safeToast("Already at root"); return }
             val parent = cur.parentFile
-            if (parent != null && try { parent.absolutePath.startsWith(sd.absolutePath) || parent.absolutePath.startsWith(dd.absolutePath) } catch (_: Exception) { false }) {
+            if (parent != null && try { parent.absolutePath.startsWith(sd.absolutePath) } catch (_: Exception) { false }) {
                 openDir(parent)
             } else openDir(sd)
         } catch (e: Exception) { safeToast(e.message) }
@@ -270,17 +278,9 @@ class FileManagerFragment : Fragment() {
 
         val files = getSortedFiles()
         val hasFiles = files.isNotEmpty()
-        bb.emptyState.layoutParams.height = if (!hasFiles) 0 else ViewGroup.LayoutParams.MATCH_PARENT
-        bb.emptyState.visibility = if (!hasFiles) View.GONE else View.VISIBLE
+        // Old code set emptyState height 0 when empty + VISIBLE, so the empty art never showed.
+        bb.emptyState.visibility = if (hasFiles) View.GONE else View.VISIBLE
         bb.recycler.visibility = if (hasFiles) View.VISIBLE else View.GONE
-
-        if (hasFiles) {
-            bb.emptyState.visibility = View.GONE
-            bb.recycler.visibility = View.VISIBLE
-        } else {
-            bb.emptyState.visibility = View.VISIBLE
-            bb.recycler.visibility = View.GONE
-        }
 
         bb.tvCount.text = "${files.size} items"
 
@@ -350,9 +350,11 @@ class FileManagerFragment : Fragment() {
             val dp = ctx.resources.displayMetrics.density
 
             val isSandbox = currentDir.absolutePath.startsWith(sd.absolutePath)
-            val isDownloads = !isSandbox && dd != null && currentDir.absolutePath.startsWith(dd.absolutePath)
-            val rootName = when { isSandbox -> "Sandbox"; isDownloads -> "Downloads"; else -> "Root" }
-            val rootPath = when { isSandbox -> sd; isDownloads -> dd!!; else -> currentDir }
+            val isDownloads = currentDir.absolutePath.startsWith(dd.absolutePath)
+            // Downloads is inside Sandbox, so check Downloads FIRST (old code checked sandbox
+            // first and the Downloads branch was dead).
+            val rootName = when { isDownloads -> "Downloads"; isSandbox -> "Sandbox"; else -> "Root" }
+            val rootPath = when { isDownloads -> dd; isSandbox -> sd; else -> currentDir }
 
             addBreadcrumbItem(breadcrumbContainer, rootName, rootPath, isRoot = true)
 
@@ -421,22 +423,33 @@ class FileManagerFragment : Fragment() {
                 .setTitle(f.name)
                 .setItems(opts) { _, which ->
                     try {
-                        when (opts[which]) {
-                            "📂 Open"         -> openFile(f)
-                            "📤 Share"        -> shareFile(f)
-                            "💾 Export (SAF)" -> {
-                                exportFile = f
-                                try { exportLauncher?.launch(f.name) ?: safeToast("Export unavailable") } catch (e: Exception) { safeToast(e.message) }
+                        // Match by INDEX, not by emoji string (old `when (opts[which])` broke
+                        // the moment any label was reworded/translated).
+                        val inSandbox = isInSandbox
+                        if (inSandbox) {
+                            when (which) {
+                                0 -> openFile(f)
+                                1 -> shareFile(f)
+                                2 -> {
+                                    exportFile = f
+                                    try { exportLauncher?.launch(f.name) ?: safeToast("Export unavailable") } catch (e: Exception) { safeToast(e.message) }
+                                }
+                                3 -> renameFile(f)
+                                4 -> {
+                                    val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    cm.setPrimaryClip(android.content.ClipData.newPlainText("path", f.absolutePath))
+                                    safeToast("Path copied")
+                                }
+                                5 -> deleteFile(f)
+                                else -> showDetails(f)
                             }
-                            "📁 Copy to Sandbox" -> copyToSandbox(f)
-                            "✏️ Rename"        -> renameFile(f)
-                            "📋 Copy path"     -> {
-                                val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                                cm.setPrimaryClip(android.content.ClipData.newPlainText("path", f.absolutePath))
-                                safeToast("Path copied")
+                        } else {
+                            when (which) {
+                                0 -> openFile(f)
+                                1 -> shareFile(f)
+                                2 -> copyToSandbox(f)
+                                else -> showDetails(f)
                             }
-                            "🗑️ Delete"       -> deleteFile(f)
-                            "ℹ️ Details"      -> showDetails(f)
                         }
                     } catch (_: Exception) {}
                 }.show()
@@ -444,17 +457,25 @@ class FileManagerFragment : Fragment() {
     }
 
     private fun importFile(uri: Uri) {
-        try {
-            val sd = sandboxDir ?: return
-            val ctx = try { requireContext() } catch (_: Exception) { return }
-            val input = ctx.contentResolver.openInputStream(uri) ?: return
-            val name = getDisplayName(uri) ?: "import_${System.currentTimeMillis()}"
-            val outFile = File(sd, name)
-            FileOutputStream(outFile).use { out -> input.copyTo(out) }
-            input.close()
-            safeToast("Imported: $name")
-            openDir(sd)
-        } catch (e: Exception) { safeToast("Import failed: ${e.message}") }
+        // File copy is I/O — old code ran copyTo on MAIN and froze on large files.
+        safeToast("Importing…")
+        scope.launch(Dispatchers.IO) {
+            try {
+                val sd = sandboxDir ?: return@launch
+                val app = try { requireContext().applicationContext } catch (_: Exception) { return@launch }
+                val name = getDisplayName(uri) ?: "import_${System.currentTimeMillis()}"
+                val outFile = File(sd, name)
+                app.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(outFile).use { out -> input.copyTo(out) }
+                }
+                withContext(Dispatchers.Main) {
+                    safeToast("Imported: $name")
+                    try { openDir(sd) } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { safeToast("Import failed: ${e.message}") }
+            }
+        }
     }
 
     private fun getDisplayName(uri: Uri): String? {
@@ -468,22 +489,32 @@ class FileManagerFragment : Fragment() {
     }
 
     private fun exportFileToUri(file: File, uri: Uri) {
-        try {
-            val ctx = try { requireContext() } catch (_: Exception) { return }
-            file.inputStream().use { input ->
-                ctx.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out) }
+        safeToast("Exporting…")
+        scope.launch(Dispatchers.IO) {
+            try {
+                val app = try { requireContext().applicationContext } catch (_: Exception) { return@launch }
+                file.inputStream().use { input ->
+                    app.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out) }
+                }
+                withContext(Dispatchers.Main) { safeToast("Exported ${file.name}") }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { safeToast("Export failed: ${e.message}") }
             }
-            safeToast("Exported ${file.name}")
-        } catch (e: Exception) { safeToast("Export failed: ${e.message}") }
+        }
     }
 
     private fun copyToSandbox(f: File) {
-        try {
-            val sd = sandboxDir ?: return
-            val out = File(sd, f.name)
-            f.inputStream().use { input -> FileOutputStream(out).use { input.copyTo(it) } }
-            safeToast("Copied to Sandbox")
-        } catch (e: Exception) { safeToast(e.message) }
+        safeToast("Copying…")
+        scope.launch(Dispatchers.IO) {
+            try {
+                val sd = sandboxDir ?: return@launch
+                val out = File(sd, f.name)
+                f.inputStream().use { input -> FileOutputStream(out).use { input.copyTo(it) } }
+                withContext(Dispatchers.Main) { safeToast("Copied to Sandbox") }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { safeToast(e.message) }
+            }
+        }
     }
 
     private fun shareFile(f: File) {
@@ -506,9 +537,14 @@ class FileManagerFragment : Fragment() {
                 .setTitle("Delete \"${f.name}\"?")
                 .setMessage(if (f.isDirectory) "This will delete the folder and all its contents." else "This action cannot be undone.")
                 .setPositiveButton("Delete") { _, _ ->
-                    val ok = try { if (f.isDirectory) f.deleteRecursively() else f.delete() } catch (_: Exception) { false }
-                    safeToast(if (ok) "Deleted" else "Failed")
-                    try { refresh() } catch (_: Exception) {}
+                    safeToast("Deleting…")
+                    scope.launch(Dispatchers.IO) {
+                        val ok = try { if (f.isDirectory) f.deleteRecursively() else f.delete() } catch (_: Exception) { false }
+                        withContext(Dispatchers.Main) {
+                            safeToast(if (ok) "Deleted" else "Failed")
+                            try { refresh() } catch (_: Exception) {}
+                        }
+                    }
                 }.setNegativeButton("Cancel", null).show()
         } catch (_: Exception) {}
     }
@@ -572,6 +608,7 @@ class FileManagerFragment : Fragment() {
     }
 
     private suspend fun copyDocumentTreeRecursive(sourceDoc: androidx.documentfile.provider.DocumentFile, destDir: File): Int {
+        val app = try { requireContext().applicationContext } catch (_: Exception) { return 0 }
         var count = 0
         sourceDoc.listFiles()?.forEach { item ->
             if (item.isDirectory) {
@@ -580,7 +617,7 @@ class FileManagerFragment : Fragment() {
             } else if (item.isFile) {
                 try {
                     val destFile = File(destDir, item.name ?: "file_${System.currentTimeMillis()}")
-                    requireContext().contentResolver.openInputStream(item.uri)?.use { input ->
+                    app.contentResolver.openInputStream(item.uri)?.use { input ->
                         FileOutputStream(destFile).use { output -> input.copyTo(output) }
                     }
                     count++
@@ -590,5 +627,5 @@ class FileManagerFragment : Fragment() {
         return count
     }
 
-    override fun onDestroyView() { _b = null; super.onDestroyView() }
+    override fun onDestroyView() { try { scope.cancel() } catch (_: Exception) {}; _b = null; super.onDestroyView() }
 }

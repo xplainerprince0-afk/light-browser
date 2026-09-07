@@ -13,6 +13,7 @@ import androidx.fragment.app.Fragment
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.Prefs
 import com.lightbrowser.databinding.FragmentSettingsBinding
+import java.io.File
 
 class SettingsFragment : Fragment() {
     private var _b: FragmentSettingsBinding? = null
@@ -89,25 +90,39 @@ class SettingsFragment : Fragment() {
                 CookieManager.getInstance().removeAllCookies(null)
                 CookieManager.getInstance().flush()
                 WebStorage.getInstance().deleteAllData()
-                requireContext().cacheDir.deleteRecursively()
+                // Old code did cacheDir.deleteRecursively() while the WebView was alive —
+                // that deletes the WebView's own data dir and crashes it. Clear via WebView
+                // API + only safe subdirs instead.
+                try {
+                    android.webkit.WebView(requireContext()).apply {
+                        clearCache(true)
+                        destroy()
+                    }
+                } catch (_: Exception) {}
+                try {
+                    val cache = requireContext().cacheDir
+                    File(cache, "image_cache").deleteRecursively()
+                    File(cache, "alpine-dl").deleteRecursively()
+                } catch (_: Exception) {}
                 Toast.makeText(requireContext(), "Cache & cookies cleared", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
         }
         b.btnClearHistory.setOnClickListener {
+            // Old code cleared lb_prefs (home/js/desktop) but NOT history/bookmarks/scripts,
+            // despite being labelled as history. Clear the real stores too.
             try {
-                requireContext().getSharedPreferences("lb_prefs", 0).edit().clear().apply()
-                Prefs.homePage = "https://www.google.com"
-                b.etHome.setText(Prefs.homePage)
-                b.swJs.isChecked = true
-                b.swDesktop.isChecked = false
-                Toast.makeText(requireContext(), "Browsing prefs reset", Toast.LENGTH_SHORT).show()
+                com.lightbrowser.data.HistoryStorage.clear(requireContext())
+                com.lightbrowser.data.BookmarkStorage.clear(requireContext())
+                Toast.makeText(requireContext(), "History & bookmarks cleared", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) { Toast.makeText(requireContext(), e.message, Toast.LENGTH_LONG).show() }
         }
     }
 
     private fun isDarkModeEnabled(): Boolean {
         val prefs = requireContext().getSharedPreferences("app_theme", Context.MODE_PRIVATE)
-        return prefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM) == AppCompatDelegate.MODE_NIGHT_YES
+        // Default must match MainActivity (MODE_NIGHT_YES) — old code defaulted to
+        // FOLLOW_SYSTEM here, so first-run toggle showed the wrong state.
+        return prefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_YES) == AppCompatDelegate.MODE_NIGHT_YES
     }
 
     private fun setDarkMode(enabled: Boolean) {

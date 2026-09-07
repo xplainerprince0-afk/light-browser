@@ -65,15 +65,27 @@ class ScriptsFragment : Fragment() {
         }
         container.addView(etName)
         container.addView(etCode)
+        // Wrap in ScrollView — old code set the raw container as dialog view and long
+        // scripts pushed buttons off-screen.
+        val scroll = android.widget.ScrollView(ctx).apply { addView(container) }
         AlertDialog.Builder(ctx)
             .setTitle(if (existing == null) "Add Userscript" else "Edit ${existing.name}")
-            .setView(container)
+            .setView(scroll)
             .setPositiveButton("Save") { _, _ ->
                 val raw = etCode.text.toString()
                 if (raw.isBlank()) { Toast.makeText(ctx, "Code empty", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
                 val parsed = UserScript.fromCode(raw)
                 val name = etName.text.toString().ifBlank { parsed.name }
-                val toSave = (existing ?: parsed).copy(name = name, code = raw, description = parsed.description, matches = parsed.matches, runAt = parsed.runAt)
+                // Preserve grants! Old code dropped `grants` on edit, silently killing GM_* polyfills.
+                val base = existing ?: parsed
+                val toSave = base.copy(
+                    name = name,
+                    code = raw,
+                    description = parsed.description,
+                    matches = parsed.matches,
+                    runAt = parsed.runAt,
+                    grants = parsed.grants
+                )
                 if (existing == null) ScriptStorage.add(ctx, toSave) else ScriptStorage.update(ctx, toSave)
                 refresh()
             }

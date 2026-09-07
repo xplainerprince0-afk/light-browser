@@ -14,7 +14,7 @@
 
     <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
         android:padding="12dp" android:textColor="#99FFFFFF" android:textSize="12sp"
-        android:text="Files are saved to Download/ via DownloadManager. Blob videos are captured via JS bridge (BlobDownloader). Tap Open folder to view."/>
+        android:text="Files are saved to Sandbox/Downloads (private storage). Blob videos are captured via the in-app JS bridge. Tap Open folder to browse them in Sandbox."/>
 
     <androidx.recyclerview.widget.RecyclerView android:id="@+id/recycler"
         android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
