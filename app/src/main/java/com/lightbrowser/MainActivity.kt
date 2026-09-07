@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
@@ -80,6 +81,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Insurance: keyboard must NEVER resize the window (that shoves the bottom
+        // nav above the keys). In bookmark-manager terms: the nav bar stays docked.
+        try {
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        } catch (_: Exception) {}
         try { AppCtx.init(this) } catch (_: Exception) {}
         val startUrl = intent?.data?.toString()?.takeIf { it.startsWith("http") }
 
@@ -138,6 +144,9 @@ private fun AppShell(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        // Drawer gesture OFF for now (opens randomly over the browser; no hamburger yet).
+        // Scripts/Downloads/Settings stay reachable via the browser ⋮ menu.
+        gesturesEnabled = false,
         drawerContent = {
             ModalDrawerSheet {
                 Text("LightBrowser", style = androidx.compose.material3.MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(20.dp))
@@ -198,18 +207,23 @@ private fun AppShell(
                                 Tab.Settings -> SettingsScreen(onThemeChange = onThemeChange)
                             }
                         }
-                        if (tab != Tab.Music) {
-                            MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
-                        }
-                        if (!wide) {
-                            NavigationBar {
-                                Tab.entries.filter { it.inBar }.forEach { t ->
-                                    NavigationBarItem(
-                                        selected = tab == t,
-                                        onClick = { tab = t },
-                                        icon = { Icon(t.icon, t.title) },
-                                        label = { Text(t.title) }
-                                    )
+                        // Bottom zone is IME-immune: even if IME insets arrive here, the
+                        // mini-player + tab bar ignore them and stay anchored at the
+                        // very bottom; the keyboard overlays them instead of pushing up.
+                        Column(modifier = Modifier.consumeWindowInsets(WindowInsets.ime)) {
+                            if (tab != Tab.Music) {
+                                MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
+                            }
+                            if (!wide) {
+                                NavigationBar {
+                                    Tab.entries.filter { it.inBar }.forEach { t ->
+                                        NavigationBarItem(
+                                            selected = tab == t,
+                                            onClick = { tab = t },
+                                            icon = { Icon(t.icon, t.title) },
+                                            label = { Text(t.title) }
+                                        )
+                                    }
                                 }
                             }
                         }

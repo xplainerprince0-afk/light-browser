@@ -228,62 +228,49 @@ fun TerminalScreen(
                 }
             }
 
-            // ── Termux two-row key grid (full-bleed, flat) ──
-            TermKeyRow(
-                keys = listOf(
-                    "ESC" to { vm.insertText("") },
-                    "/" to { applySticky(sticky, { sticky = null }, vm, "/") },
-                    "-" to { applySticky(sticky, { sticky = null }, vm, "-") },
-                    "HOME" to { vm.moveCursorTo(0) },
-                    "↑" to { vm.historyUp() },
-                    "END" to { vm.moveCursorTo(vm.input.value.text.length) },
-                    "PGUP" to { scope.launch { try { listState.animateScrollToItem(0) } catch (_: Exception) {} } }
-                ),
-                sticky = null
-            )
-            TermKeyRow(
-                keys = listOf(
-                    "⇥" to { vm.insertText("\t") },
-                    "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL" },
-                    "ALT" to { sticky = if (sticky == "ALT") null else "ALT" },
-                    "←" to { vm.moveCursor(-1) },
-                    "↓" to { vm.historyDown() },
-                    "→" to { vm.moveCursor(1) },
-                    "PGDN" to { scope.launch { try { listState.animateScrollToItem(maxOf(0, lines.size - 1)) } catch (_: Exception) {} } }
-                ),
-                sticky = sticky
-            )
-
-            // ── Input row: prompt + transparent field (tap places cursor natively) ──
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(TermBlack)
-                    .imePadding()
-                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    prompt,
-                    color = Color.White,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = (14 * fontScale).sp,
-                    modifier = Modifier.padding(start = 4.dp)
+            // ── Keys + editor ride above the keyboard as one block ──
+            Column(modifier = Modifier.fillMaxWidth().imePadding()) {
+                TermKeyRow(
+                    keys = listOf(
+                        "ESC" to { vm.insertText("") },
+                        "/" to { applySticky(sticky, { sticky = null }, vm, "/") },
+                        "-" to { applySticky(sticky, { sticky = null }, vm, "-") },
+                        "HOME" to { vm.moveCursorTo(0) },
+                        "↑" to { vm.historyUp() },
+                        "END" to { vm.moveCursorTo(vm.input.value.text.length) },
+                        "PGUP" to { scope.launch { try { listState.animateScrollToItem(0) } catch (_: Exception) {} } }
+                    ),
+                    sticky = null
                 )
+                TermKeyRow(
+                    keys = listOf(
+                        "⇥" to { vm.insertText("\t") },
+                        "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL" },
+                        "ALT" to { sticky = if (sticky == "ALT") null else "ALT" },
+                        "←" to { vm.moveCursor(-1) },
+                        "↓" to { vm.historyDown() },
+                        "→" to { vm.moveCursor(1) },
+                        "PGDN" to { scope.launch { try { listState.animateScrollToItem(maxOf(0, lines.size - 1)) } catch (_: Exception) {} } }
+                    ),
+                    sticky = sticky
+                )
+                // ── ONE terminal line: the "$" prompt lives INSIDE the editor, so you
+                // type directly in the terminal like linux — no separate mini box.
+                // Tap anywhere in it to place the cursor; double-tap selects a word.
                 BasicTextField(
                     value = input,
                     onValueChange = vm::onInputChange,
-                    modifier = Modifier.weight(1f).focusRequester(inputFocus).padding(horizontal = 2.dp),
+                    modifier = Modifier.fillMaxWidth().focusRequester(inputFocus),
                     textStyle = TextStyle(
                         color = TermWhite,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = (14 * fontScale).sp
+                        fontSize = (14 * fontScale).sp,
+                        lineHeight = (20 * fontScale).sp
                     ),
                     cursorBrush = SolidColor(Color.White),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                     keyboardActions = KeyboardActions(onSend = {
-                        // Apply sticky modifier prefix like Termux (CTRL+C etc.)
                         val mod = sticky
                         if (mod != null) {
                             val cur = vm.input.value.text
@@ -301,21 +288,35 @@ fun TerminalScreen(
                             sticky = null
                         }
                         vm.submit()
-                    })
-                )
-                IconButton(
-                    onClick = {
-                        try {
-                            clipboard.getText()?.text?.let { t ->
-                                if (t.isNotEmpty()) vm.insertText(t)
+                    }),
+                    decorationBox = { inner ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                prompt,
+                                color = Color.White,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = (14 * fontScale).sp
+                            )
+                            Box(modifier = Modifier.weight(1f)) { inner() }
+                            IconButton(
+                                onClick = {
+                                    try {
+                                        clipboard.getText()?.text?.let { t ->
+                                            if (t.isNotEmpty()) vm.insertText(t)
+                                        }
+                                    } catch (_: Exception) {}
+                                },
+                                modifier = Modifier.size(34.dp)
+                            ) { Icon(Icons.Filled.ContentPaste, "Paste", tint = TermWhite, modifier = Modifier.size(17.dp)) }
+                            IconButton(onClick = { vm.submit() }, modifier = Modifier.size(34.dp)) {
+                                Icon(Icons.Filled.Send, "Send", tint = TermGreen, modifier = Modifier.size(17.dp))
                             }
-                        } catch (_: Exception) {}
-                    },
-                    modifier = Modifier.size(36.dp)
-                ) { Icon(Icons.Filled.ContentPaste, "Paste", tint = TermWhite, modifier = Modifier.size(18.dp)) }
-                IconButton(onClick = { vm.submit() }, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Filled.Send, "Send", tint = TermGreen, modifier = Modifier.size(18.dp))
-                }
+                        }
+                    }
+                )
             }
         }
     }
