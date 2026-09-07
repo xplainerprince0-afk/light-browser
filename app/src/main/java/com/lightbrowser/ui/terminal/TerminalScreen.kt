@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
@@ -73,6 +74,8 @@ fun TerminalScreen(
     val input by vm.input.collectAsState()
     val status by vm.status.collectAsState()
     val prompt by vm.prompt.collectAsState()
+    val sessions by vm.sessions.collectAsState()
+    val activeId by vm.activeId.collectAsState()
     val scope = rememberCoroutineScope()
     val snacks = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
@@ -80,13 +83,16 @@ fun TerminalScreen(
 
     var sticky by remember { mutableStateOf<String?>(null) }
     var showFont by remember { mutableStateOf(false) }
+    var follow by remember { mutableStateOf(true) }
+    var renameId by remember { mutableStateOf<String?>(null) }
+    var renameText by remember { mutableStateOf("") }
     var fontScale by remember { mutableStateOf(try { Prefs.terminalFontScale } catch (_: Exception) { 1f }) }
     val listState = rememberLazyListState()
 
     LaunchedEffect(Unit) { vm.init() }
-    LaunchedEffect(lines.size) {
+    LaunchedEffect(lines.size, activeId) {
         try {
-            if (lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1)
+            if (follow && lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1)
         } catch (_: Exception) {}
     }
 
@@ -107,6 +113,35 @@ fun TerminalScreen(
         containerColor = Color(0xFF060A12)
     ) { _ ->
         Column(modifier = Modifier.fillMaxSize()) {
+            // ── Session strip (Termux-style) ──
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    sessions.forEach { s ->
+                        FilterChip(
+                            selected = s.id == activeId,
+                            onClick = { vm.switchSession(s.id) },
+                            label = { Text(s.name, fontFamily = FontFamily.Monospace) },
+                            trailingIcon = if (sessions.size > 1) {
+                                {
+                                    IconButton(
+                                        onClick = { vm.closeSession(s.id) },
+                                        modifier = Modifier.size(20.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Close, "Close session", modifier = Modifier.size(12.dp))
+                                    }
+                                }
+                            } else null
+                        )
+                    }
+                }
+                AssistChip(onClick = vm::newSession, label = { Text("+") })
+            }
             // Status row
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -124,6 +159,11 @@ fun TerminalScreen(
                         Text("Kill", color = red)
                     }
                 }
+                FilterChip(selected = follow, onClick = { follow = !follow }, label = { Text("Follow") })
+                IconButton(onClick = {
+                    renameId = activeId
+                    renameText = sessions.firstOrNull { it.id == activeId }?.name ?: ""
+                }) { Text("✎", color = dimGreen, style = MaterialTheme.typography.labelLarge) }
                 IconButton(onClick = {
                     clipboard.setText(AnnotatedString(vm.fullLog().take(100_000)))
                     scope.launch { snacks.showSnackbar("Log copied") }
@@ -257,6 +297,14 @@ fun TerminalScreen(
                     )
                     IconButton(onClick = vm::historyUp) { Icon(Icons.Filled.ArrowUpward, "History up", tint = dimGreen) }
                     IconButton(onClick = vm::historyDown) { Icon(Icons.Filled.ArrowDownward, "History down", tint = dimGreen) }
+                    // Paste from system clipboard (basic Termux parity)
+                    IconButton(onClick = {
+                        try {
+                            clipboard.getText()?.text?.let { t ->
+                                if (t.isNotEmpty()) vm.insertText(t)
+                            }
+                        } catch (_: Exception) {}
+                    }) { Icon(Icons.Filled.ContentPaste, "Paste", tint = dimGreen) }
                     IconButton(onClick = { vm.onInputChange(androidx.compose.ui.text.input.TextFieldValue("")) }) {
                         Icon(Icons.Filled.Close, "Clear input", tint = dimGreen)
                     }
@@ -264,5 +312,24 @@ fun TerminalScreen(
             }
             Spacer(Modifier.height(4.dp))
         }
+    }
+
+    renameId?.let { id ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { renameId = null },
+            title = { Text("Rename session") },
+            text = {
+                OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true)
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    renameId = null
+                    if (renameText.isNotBlank()) vm.renameSession(id, renameText.trim())
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { renameId = null }) { Text("Cancel") }
+            }
+        )
     }
 }

@@ -47,6 +47,16 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         }
     } catch (_: Exception) {}
 
+    val settings = wv.settings
+    // Cache + responsiveness: default cache (HTTP cache on disk), images auto-load,
+    // no per-load header overrides beyond the one in loadUrl.
+    try {
+        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+        settings.loadsImagesAutomatically = true
+        settings.blockNetworkImage = false
+        settings.loadWithOverviewMode = true
+    } catch (_: Exception) {}
+
     val bridge = DownloadHelper.BlobBridge(app)
     try {
         wv.addJavascriptInterface(bridge, "BlobDownloader")

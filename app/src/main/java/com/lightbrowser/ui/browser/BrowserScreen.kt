@@ -9,15 +9,18 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -37,7 +40,6 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FindReplace
@@ -53,8 +55,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -83,6 +83,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -119,8 +120,8 @@ fun BrowserScreen(
     var longPressUrl by remember { mutableStateOf<String?>(null) }
     var findOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
+    var sheetSearch by remember { mutableStateOf("") }
 
-    // Deep-link / tab-switch loads
     val loadReq by vm.loadRequest.collectAsState()
     LaunchedEffect(loadReq) {
         val (url, _) = loadReq ?: return@LaunchedEffect
@@ -129,10 +130,12 @@ fun BrowserScreen(
         } catch (_: Exception) {}
     }
 
-    BackHandler(enabled = webView?.canGoBack() == true && !ui.searchExpanded) {
-        try {
-            webView?.goBack()
-        } catch (_: Exception) {}
+    BackHandler(enabled = ui.searchExpanded) {
+        vm.setSearch(false)
+        focusManager.clearFocus()
+    }
+    BackHandler(enabled = !ui.searchExpanded && webView?.canGoBack() == true) {
+        try { webView?.goBack() } catch (_: Exception) {}
     }
 
     DisposableEffect(Unit) {
@@ -151,92 +154,68 @@ fun BrowserScreen(
         ui.currentUrl.ifBlank { "Search or enter URL" }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        // ── URL bar: collapsed pill / expanded editor ──
-        if (ui.searchExpanded) {
-            val focusReq = remember { FocusRequester() }
-            OutlinedTextField(
-                value = ui.searchQuery,
-                onValueChange = vm::setQuery,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                    .focusRequester(focusReq),
-                placeholder = { Text("Search or enter URL") },
-                leadingIcon = { Icon(Icons.Filled.Search, null) },
-                trailingIcon = {
-                    IconButton(onClick = {
-                        vm.setSearch(false)
-                        focusManager.clearFocus()
-                    }) { Icon(Icons.Filled.Close, "Collapse") }
-                },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = {
-                    val url = vm.resolveInput(ui.searchQuery)
-                    if (url.isNotEmpty()) {
-                        vm.onPageStarted(url)
-                        webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
+    fun goTo(url: String) {
+        vm.onPageStarted(url)
+        try { webView?.loadUrl(url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+    }
+
+    // IME visible? Suggestions hide while typing (they floated above the keyboard).
+    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+    val keyboardOpen = imeBottom > 0
+
+    Box(modifier = modifier.fillMaxSize()) {
+        // ── WebView: ALWAYS composed (never destroyed by search overlay) ──
+        AndroidView(
+            factory = { c ->
+                WebView(c).also { wv ->
+                    setupLightWebView(
+                        wv,
+                        BrowserCallbacks(
+                            onStarted = { vm.onPageStarted(it) },
+                            onProgress = {
+                                vm.onProgress(it)
+                                try {
+                                    canGoBack = webView?.canGoBack() == true
+                                    canGoForward = webView?.canGoForward() == true
+                                } catch (_: Exception) {}
+                            },
+                            onFinished = { url, title -> vm.onPageFinished(url, title) },
+                            onLongPressUrl = { longPressUrl = it },
+                            inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
+                        )
+                    )
+                    webView = wv
+                    val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
+                    try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+            update = { wv ->
+                if (webView == null) webView = wv
+                var js = true
+                var desk = false
+                try { js = Prefs.jsEnabled } catch (_: Exception) {}
+                try { desk = Prefs.desktopMode } catch (_: Exception) {}
+                try {
+                    if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
+                    if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
+                    else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
+                        wv.settings.userAgentString = System.getProperty("http.agent")
                     }
-                    vm.setSearch(false)
-                    focusManager.clearFocus()
-                }),
-                shape = MaterialTheme.shapes.extraLarge
-            )
-            LaunchedEffect(Unit) {
-                try { focusReq.requestFocus() } catch (_: Exception) {}
+                } catch (_: Exception) {}
             }
-            // Suggestions: bookmarks + history filtered
-            val q = ui.searchQuery.lowercase()
-            val sugBookmarks = bookmarks.filter {
-                q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)
-            }.take(4)
-            val sugHistory = history.filter {
-                (q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)) &&
-                    sugBookmarks.none { b -> b.url == it.url }
-            }.take(6)
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(sugBookmarks, key = { "b${it.url}" }) { b ->
-                    ListItem(
-                        headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = { Icon(Icons.Filled.Bookmark, null) },
-                        modifier = Modifier.clickable {
-                            vm.setSearch(false)
-                            focusManager.clearFocus()
-                            vm.onPageStarted(b.url)
-                            webView?.loadUrl(b.url)
-                        }
-                    )
-                }
-                items(sugHistory, key = { "h${it.url}${it.time}" }) { h ->
-                    ListItem(
-                        headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = { Icon(Icons.Filled.History, null) },
-                        modifier = Modifier.clickable {
-                            vm.setSearch(false)
-                            focusManager.clearFocus()
-                            vm.onPageStarted(h.url)
-                            webView?.loadUrl(h.url)
-                        }
-                    )
-                }
-            }
-        } else {
+        )
+
+        // ── Top chrome overlays ──
+        Column(modifier = Modifier.fillMaxWidth()) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                 shape = MaterialTheme.shapes.extraLarge,
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 tonalElevation = 2.dp,
                 onClick = { vm.setSearch(true) }
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { try { webView?.goBack() } catch (_: Exception) {} }, enabled = canGoBack) {
                         Icon(Icons.Filled.ArrowBack, "Back")
                     }
@@ -266,103 +245,131 @@ fun BrowserScreen(
                             Icon(Icons.Filled.Refresh, "Reload")
                         }
                     }
-                    BadgedBox(badge = { Badge { Text(ui.tabs.size.coerceAtLeast(1).toString()) } }) {
-                        TextButton(onClick = { showTabs = true }) { Text("Tabs") }
-                    }
+                    // Plain tabs button — no count badge (removed per feedback)
+                    TextButton(onClick = { showTabs = true }) { Text("Tabs") }
                     IconButton(onClick = { showMenu = true }) {
                         Icon(Icons.Filled.MoreVert, "Menu")
                     }
                 }
             }
-        }
 
-        AnimatedVisibility(visible = ui.loading && !ui.searchExpanded, enter = fadeIn(), exit = fadeOut()) {
-            LinearProgressIndicator(
-                progress = { (ui.progress.coerceIn(0, 100)) / 100f },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-            )
-        }
-
-        // ── Find in page ──
-        AnimatedVisibility(visible = findOpen) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = findQuery,
-                    onValueChange = {
-                        findQuery = it
-                        try { webView?.findAllAsync(it) } catch (_: Exception) {}
-                    },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Find in page") },
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.large
+            AnimatedVisibility(visible = ui.loading, enter = fadeIn(), exit = fadeOut()) {
+                LinearProgressIndicator(
+                    progress = { (ui.progress.coerceIn(0, 100)) / 100f },
+                    modifier = Modifier.fillMaxWidth().height(3.dp)
                 )
-                IconButton(onClick = { try { webView?.findNext(false) } catch (_: Exception) {} }) {
-                    Icon(Icons.Filled.KeyboardArrowUp, "Prev")
+            }
+
+            AnimatedVisibility(visible = findOpen) {
+                Surface(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), shape = MaterialTheme.shapes.large, tonalElevation = 2.dp) {
+                    Row(modifier = Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = findQuery,
+                            onValueChange = {
+                                findQuery = it
+                                try { webView?.findAllAsync(it) } catch (_: Exception) {}
+                            },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("Find in page") },
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.large
+                        )
+                        IconButton(onClick = { try { webView?.findNext(false) } catch (_: Exception) {} }) {
+                            Icon(Icons.Filled.KeyboardArrowUp, "Prev")
+                        }
+                        IconButton(onClick = { try { webView?.findNext(true) } catch (_: Exception) {} }) {
+                            Icon(Icons.Filled.KeyboardArrowDown, "Next")
+                        }
+                        IconButton(onClick = {
+                            findOpen = false
+                            try { webView?.clearMatches() } catch (_: Exception) {}
+                        }) { Icon(Icons.Filled.Close, "Close find") }
+                    }
                 }
-                IconButton(onClick = { try { webView?.findNext(true) } catch (_: Exception) {} }) {
-                    Icon(Icons.Filled.KeyboardArrowDown, "Next")
-                }
-                IconButton(onClick = {
-                    findOpen = false
-                    try { webView?.clearMatches() } catch (_: Exception) {}
-                }) { Icon(Icons.Filled.Close, "Close find") }
             }
         }
 
-        // ── WebView (no imePadding here: WebView resizes itself via adjustResize;
-        // padding it would double-count the keyboard = the old black gap bug) ──
-        if (!ui.searchExpanded) {
-            AndroidView(
-                factory = { c ->
-                    WebView(c).also { wv ->
-                        setupLightWebView(
-                            wv,
-                            BrowserCallbacks(
-                                onStarted = { vm.onPageStarted(it) },
-                                onProgress = {
-                                    vm.onProgress(it)
-                                    try {
-                                        canGoBack = webView?.canGoBack() == true
-                                        canGoForward = webView?.canGoForward() == true
-                                    } catch (_: Exception) {}
-                                },
-                                onFinished = { url, title -> vm.onPageFinished(url, title) },
-                                onLongPressUrl = { longPressUrl = it },
-                                inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
-                            )
-                        )
-                        webView = wv
-                        val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
-                        try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
-                    }
-                },
+        // ── Search overlay (WebView stays alive underneath) ──
+        if (ui.searchExpanded) {
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .weight(1f),
-                update = { wv ->
-                    if (webView == null) webView = wv
-                    var js = true
-                    var desk = false
-                    try { js = Prefs.jsEnabled } catch (_: Exception) {}
-                    try { desk = Prefs.desktopMode } catch (_: Exception) {}
-                    try {
-                        if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
-                        val want = if (desk) DESKTOP_UA else null
-                        if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
-                        else if (!desk && want == null && wv.settings.userAgentString == DESKTOP_UA) {
-                            wv.settings.userAgentString = System.getProperty("http.agent")
-                        }
-                    } catch (_: Exception) {}
-                }
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.4f))
+                    .clickable(onClick = {
+                        vm.setSearch(false)
+                        focusManager.clearFocus()
+                    })
             )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .padding(bottom = 8.dp)
+            ) {
+                val focusReq = remember { FocusRequester() }
+                OutlinedTextField(
+                    value = ui.searchQuery,
+                    onValueChange = vm::setQuery,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp).focusRequester(focusReq),
+                    placeholder = { Text("Search or enter URL") },
+                    leadingIcon = { Icon(Icons.Filled.Search, null) },
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            vm.setSearch(false)
+                            focusManager.clearFocus()
+                        }) { Icon(Icons.Filled.Close, "Collapse") }
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = {
+                        val url = vm.resolveInput(ui.searchQuery)
+                        if (url.isNotEmpty()) goTo(url)
+                        vm.setSearch(false)
+                        focusManager.clearFocus()
+                    }),
+                    shape = MaterialTheme.shapes.extraLarge
+                )
+                LaunchedEffect(Unit) {
+                    try { focusReq.requestFocus() } catch (_: Exception) {}
+                }
+                // Suggestions only when the keyboard is hidden — no more floating list above keys.
+                if (!keyboardOpen) {
+                    val q = ui.searchQuery.lowercase()
+                    val sugBookmarks = bookmarks.filter {
+                        q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)
+                    }.take(4)
+                    val sugHistory = history.filter {
+                        (q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)) &&
+                            sugBookmarks.none { b -> b.url == it.url }
+                    }.take(6)
+                    LazyColumn {
+                        items(sugBookmarks, key = { "b${it.url}" }) { b ->
+                            ListItem(
+                                headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingContent = { Icon(Icons.Filled.Bookmark, null) },
+                                modifier = Modifier.clickable {
+                                    vm.setSearch(false)
+                                    focusManager.clearFocus()
+                                    goTo(b.url)
+                                }
+                            )
+                        }
+                        items(sugHistory, key = { "h${it.url}${it.time}" }) { h ->
+                            ListItem(
+                                headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingContent = { Icon(Icons.Filled.History, null) },
+                                modifier = Modifier.clickable {
+                                    vm.setSearch(false)
+                                    focusManager.clearFocus()
+                                    goTo(h.url)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -388,8 +395,8 @@ fun BrowserScreen(
                             try { Prefs.desktopMode = !Prefs.desktopMode } catch (_: Exception) {}
                             try { webView?.reload() } catch (_: Exception) {}
                         }
-                        MenuAction.History -> showHistory = true
-                        MenuAction.Bookmarks -> showBookmarks = true
+                        MenuAction.History -> { sheetSearch = ""; showHistory = true }
+                        MenuAction.Bookmarks -> { sheetSearch = ""; showBookmarks = true }
                         MenuAction.Scripts -> onOpenScripts()
                         MenuAction.Downloads -> onOpenDownloads()
                         MenuAction.Settings -> onOpenSettings()
@@ -406,111 +413,130 @@ fun BrowserScreen(
         }
     }
 
-    // ── Tabs dialog ──
+    // ── Tabs bottom sheet (redesigned: cards, no dialog) ──
     if (showTabs) {
-        AlertDialog(
+        ModalBottomSheet(
             onDismissRequest = { showTabs = false },
-            title = { Text("Tabs (${ui.tabs.size})") },
-            text = {
-                LazyColumn {
-                    items(ui.tabs.size) { i ->
-                        val t = ui.tabs[i]
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Open tabs", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    vm.openTab(try { Prefs.homePage } catch (_: Exception) { "https://www.google.com" })
+                    showTabs = false
+                }) {
+                    Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("New tab")
+                }
+            }
+            LazyColumn(modifier = Modifier.padding(horizontal = 12.dp)) {
+                items(ui.tabs.size) { i ->
+                    val t = ui.tabs[i]
+                    val selected = i == ui.currentIndex
+                    androidx.compose.material3.Card(
+                        onClick = {
+                            vm.selectTab(i)
+                            showTabs = false
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        colors = androidx.compose.material3.CardDefaults.cardColors(
+                            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainerLow
+                        )
+                    ) {
                         ListItem(
-                            headlineContent = {
-                                Text(
-                                    t.title.ifBlank { t.url },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
+                            headlineContent = { Text(t.title.ifBlank { t.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             supportingContent = { Text(t.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             leadingContent = {
-                                Text(
-                                    if (i == ui.currentIndex) "●" else "${i + 1}",
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                if (selected) Text("●", color = MaterialTheme.colorScheme.primary)
                             },
                             trailingContent = {
                                 IconButton(onClick = { vm.closeTab(i) }, enabled = ui.tabs.size > 1) {
                                     Icon(Icons.Filled.Close, "Close tab")
                                 }
-                            },
-                            modifier = Modifier.clickable {
-                                vm.selectTab(i)
-                                showTabs = false
                             }
                         )
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.openTab(try { Prefs.homePage } catch (_: Exception) { "https://www.google.com" })
-                    showTabs = false
-                }) { Text("New tab") }
-            },
-            dismissButton = { TextButton(onClick = { showTabs = false }) { Text("Close") } }
-        )
-    }
-
-    if (showHistory) {
-        AlertDialog(
-            onDismissRequest = { showHistory = false },
-            title = { Text("History") },
-            text = {
-                if (history.isEmpty()) Text("No history yet")
-                else LazyColumn(modifier = Modifier.height(400.dp)) {
-                    items(history, key = { it.url + it.time }) { h ->
-                        ListItem(
-                            headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            modifier = Modifier.clickable {
-                                showHistory = false
-                                vm.onPageStarted(h.url)
-                                webView?.loadUrl(h.url)
-                            }
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.clearHistory()
-                    showHistory = false
-                }) { Text("Clear all") }
-            },
-            dismissButton = { TextButton(onClick = { showHistory = false }) { Text("Close") } }
-        )
-    }
-
-    if (showBookmarks) {
-        AlertDialog(
-            onDismissRequest = { showBookmarks = false },
-            title = { Text("Bookmarks") },
-            text = {
-                if (bookmarks.isEmpty()) Text("No bookmarks — use ☆ in the menu to add one")
-                else LazyColumn(modifier = Modifier.height(400.dp)) {
-                    items(bookmarks, key = { it.url }) { b ->
-                        ListItem(
-                            headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            modifier = Modifier.clickable {
-                                showBookmarks = false
-                                vm.onPageStarted(b.url)
-                                webView?.loadUrl(b.url)
-                            }
-                        )
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showBookmarks = false }) { Text("Close") } },
-            dismissButton = {
-                TextButton(onClick = {
-                    vm.clearBookmarks()
-                    showBookmarks = false
-                }) { Text("Clear") }
+                item { Spacer(Modifier.height(24.dp)) }
             }
-        )
+        }
+    }
+
+    // ── History bottom sheet with search ──
+    if (showHistory) {
+        ModalBottomSheet(
+            onDismissRequest = { showHistory = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            SheetHeader(title = "History", onClear = { vm.clearHistory() }, clearLabel = "Clear all")
+            OutlinedTextField(
+                value = sheetSearch,
+                onValueChange = { sheetSearch = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                placeholder = { Text("Search history") },
+                leadingIcon = { Icon(Icons.Filled.Search, null) },
+                singleLine = true,
+                shape = MaterialTheme.shapes.extraLarge
+            )
+            val q = sheetSearch.lowercase()
+            val list = history.filter { q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q) }
+            if (list.isEmpty()) Text("Nothing here", modifier = Modifier.padding(20.dp))
+            else LazyColumn(modifier = Modifier.padding(horizontal = 8.dp)) {
+                items(list, key = { it.url + it.time }) { h ->
+                    ListItem(
+                        headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Filled.History, null) },
+                        modifier = Modifier.clickable {
+                            showHistory = false
+                            goTo(h.url)
+                        }
+                    )
+                }
+                item { Spacer(Modifier.height(24.dp)) }
+            }
+        }
+    }
+
+    // ── Bookmarks bottom sheet with search ──
+    if (showBookmarks) {
+        ModalBottomSheet(
+            onDismissRequest = { showBookmarks = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            SheetHeader(title = "Bookmarks", onClear = { vm.clearBookmarks() }, clearLabel = "Clear")
+            OutlinedTextField(
+                value = sheetSearch,
+                onValueChange = { sheetSearch = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                placeholder = { Text("Search bookmarks") },
+                leadingIcon = { Icon(Icons.Filled.Search, null) },
+                singleLine = true,
+                shape = MaterialTheme.shapes.extraLarge
+            )
+            val q = sheetSearch.lowercase()
+            val list = bookmarks.filter { q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q) }
+            if (list.isEmpty()) Text("No bookmarks — use ☆ in the menu to add one", modifier = Modifier.padding(20.dp))
+            else LazyColumn(modifier = Modifier.padding(horizontal = 8.dp)) {
+                items(list, key = { it.url }) { b ->
+                    ListItem(
+                        headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingContent = { Icon(Icons.Filled.Bookmark, null) },
+                        modifier = Modifier.clickable {
+                            showBookmarks = false
+                            goTo(b.url)
+                        }
+                    )
+                }
+                item { Spacer(Modifier.height(24.dp)) }
+            }
+        }
     }
 
     longPressUrl?.let { url ->
@@ -521,17 +547,14 @@ fun BrowserScreen(
             confirmButton = {
                 TextButton(onClick = {
                     longPressUrl = null
-                    vm.onPageStarted(url)
-                    webView?.loadUrl(url)
+                    goTo(url)
                 }) { Text("Open") }
             },
             dismissButton = {
                 Row {
                     TextButton(onClick = {
                         longPressUrl = null
-                        try {
-                            DownloadHelper.enqueue(ctx, url, null, null, null)
-                        } catch (_: Exception) {}
+                        try { DownloadHelper.enqueue(ctx, url, null, null, null) } catch (_: Exception) {}
                     }) { Text("Download") }
                     TextButton(onClick = {
                         longPressUrl = null
@@ -540,6 +563,17 @@ fun BrowserScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun SheetHeader(title: String, onClear: () -> Unit, clearLabel: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        TextButton(onClick = onClear) { Text(clearLabel) }
     }
 }
 
@@ -569,17 +603,13 @@ private fun MenuGrid(
     )
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         items(items) { item ->
             Column(
-                modifier = Modifier
-                    .clickable { onAction(item.action) }
-                    .padding(8.dp),
+                modifier = Modifier.clickable { onAction(item.action) }.padding(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 FilledTonalIconButton(onClick = { onAction(item.action) }) {

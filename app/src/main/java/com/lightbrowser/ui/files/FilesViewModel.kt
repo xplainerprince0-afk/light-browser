@@ -25,7 +25,9 @@ data class FilesUiState(
     val selected: Set<String> = emptySet(),
     val busy: String? = null,
     val count: Int = 0,
-    val usedBytes: Long = 0L
+    val usedBytes: Long = 0L,
+    val clip: List<String> = emptyList(),
+    val clipCut: Boolean = false
 )
 
 class FilesViewModel : ViewModel() {
@@ -106,6 +108,69 @@ class FilesViewModel : ViewModel() {
         _ui.update { it.copy(selected = emptySet()) }
     }
 
+    fun selectAll() {
+        _ui.update { it.copy(selected = it.files.map { f -> f.absolutePath }.toSet()) }
+    }
+
+    // ── Clipboard: copy / cut / paste (LiteFM-style, survives navigation) ──
+    fun copyToClip(paths: List<String>) {
+        _ui.update { it.copy(clip = paths, clipCut = false, selected = emptySet()) }
+    }
+
+    fun cutToClip(paths: List<String>) {
+        _ui.update { it.copy(clip = paths, clipCut = true, selected = emptySet()) }
+    }
+
+    fun clearClip() {
+        _ui.update { it.copy(clip = emptyList(), clipCut = false) }
+    }
+
+    fun paste(done: (String) -> Unit) {
+        val dest = currentDir ?: return
+        val srcs = _ui.value.clip.mapNotNull { File(it).takeIf { f -> f.exists() } }
+        if (srcs.isEmpty()) {
+            done("Nothing to paste")
+            return
+        }
+        val move = _ui.value.clipCut
+        _ui.update { it.copy(busy = if (move) "Moving…" else "Copying…") }
+        viewModelScope.launch(Dispatchers.IO) {
+            var n = 0
+            srcs.forEach { src ->
+                try {
+                    // Guard: never paste a folder into itself
+                    if (src.isDirectory && dest.absolutePath.startsWith(src.absolutePath)) return@forEach
+                    var out = File(dest, src.name)
+                    if (out.absolutePath == src.absolutePath) return@forEach
+                    var i = 1
+                    while (out.exists()) {
+                        val dot = src.name.lastIndexOf('.')
+                        out = if (!src.isDirectory && dot > 0) {
+                            File(dest, "${src.name.substring(0, dot)}($i)${src.name.substring(dot)}")
+                        } else File(dest, "${src.name}($i)")
+                        if (++i > 999) break
+                    }
+                    if (move) {
+                        if (src.renameTo(out)) n++
+                        else {
+                            if (src.isDirectory) src.copyRecursively(out) else src.copyTo(out, overwrite = true)
+                            if (if (src.isDirectory) src.deleteRecursively() else src.delete()) n++
+                        }
+                    } else {
+                        if (src.isDirectory) src.copyRecursively(out) else src.copyTo(out, overwrite = true)
+                        n++
+                    }
+                } catch (_: Exception) {}
+            }
+            val msg = if (move) "Moved $n item(s)" else "Copied $n item(s)"
+            withContext(Dispatchers.Main) {
+                _ui.update { it.copy(busy = null, clip = if (move) emptyList() else it.clip, clipCut = false) }
+                refresh()
+                done(msg)
+            }
+        }
+    }
+
     fun refresh() {
         val dir = currentDir ?: return
         viewModelScope.launch(Dispatchers.IO) {
@@ -156,6 +221,17 @@ class FilesViewModel : ViewModel() {
         val dir = currentDir ?: return
         viewModelScope.launch(Dispatchers.IO) {
             val ok = try { File(dir, name).mkdirs() } catch (_: Exception) { false }
+            withContext(Dispatchers.Main) {
+                if (ok) refresh()
+                done(ok)
+            }
+        }
+    }
+
+    fun createFile(name: String, done: (Boolean) -> Unit) {
+        val dir = currentDir ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = try { File(dir, name).createNewFile() } catch (_: Exception) { false }
             withContext(Dispatchers.Main) {
                 if (ok) refresh()
                 done(ok)
