@@ -11,8 +11,9 @@ val AppShapes = Shapes(
     small = RoundedCornerShape(8.dp),
     medium = RoundedCornerShape(12.dp),
     large = RoundedCornerShape(16.dp),
-    largeIncreased = RoundedCornerShape(20.dp),
     extraLarge = RoundedCornerShape(28.dp)
 )
 
+// largeIncreased is @ExperimentalMaterial3Api in this BOM — use directly instead.
+val LargeIncreasedShape = RoundedCornerShape(20.dp)
 val PebbleShape = RoundedCornerShape(48.dp)
