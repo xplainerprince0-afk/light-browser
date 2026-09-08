@@ -56,9 +56,9 @@ object BrowserProfile {
             settings.safeBrowsingEnabled = true
         }
 
-        // SOFTWARE layer avoids WTR fixed-panel flicker (Wibgar used HARDWARE and flickered).
-        // Keep SOFTWARE even though it costs a bit of GPU smoothness.
-        webView.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+        // Default HARDWARE for smooth scrolling; WebViewSetup switches to SOFTWARE
+        // per navigation for flicker-prone hosts (WTR fixed panels).
+        webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)

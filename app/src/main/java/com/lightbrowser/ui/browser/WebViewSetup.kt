@@ -93,6 +93,15 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                         if (wantDesk && v.settings.userAgentString != DESKTOP_UA) v.settings.userAgentString = DESKTOP_UA
                         else if (!wantDesk && v.settings.userAgentString == DESKTOP_UA) v.settings.userAgentString = null
                     }
+                    // Render layer per site: hardware everywhere for smooth scroll,
+                    // software only where it fixes flicker (WTR fixed panels).
+                    if (v != null) {
+                        val soft = host.contains("wtr-lab.com")
+                        v.setLayerType(
+                            if (soft) android.view.View.LAYER_TYPE_SOFTWARE else android.view.View.LAYER_TYPE_HARDWARE,
+                            null
+                        )
+                    }
                 } catch (_: Exception) {}
                 cb.onStarted(url)
                 try { cb.inject(v!!, url, "document_start") } catch (_: Exception) {}
@@ -104,6 +113,8 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
             if (url != null && v != null) {
                 cb.onFinished(url, v.title ?: url)
                 try { BrowserAgent.ensureShim(v) } catch (_: Exception) {}
+                try { BrowserAgent.rearmRecorder(v) } catch (_: Exception) {}
+                injectMobileViewport(v)
                 injectVisibilityHack(v, url)
                 if (Prefs.desktopMode) injectDesktop(v)
                 v.postDelayed({
@@ -128,6 +139,11 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
             cm?.let {
                 val src = it.sourceId() ?: ""
                 val msg = it.message() ?: ""
+                // Click-recorder events ride the console: parse, don't print.
+                if (msg.startsWith("__LB_REC__:")) {
+                    try { BrowserAgent.recordEvent(msg.removePrefix("__LB_REC__:")) } catch (_: Exception) {}
+                    return@let
+                }
                 if (src.contains("challenges.cloudflare.com") || src.contains("turnstile")) return@let
                 if (msg.contains("font-size:0;color:transparent") || msg == "NaN") return@let
                 try {
@@ -180,6 +196,24 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         false
     }
     return wv
+}
+
+private fun injectMobileViewport(v: WebView) {
+    // Pages without a viewport meta render desktop-wide on phones (tiny text,
+    // sideways scroll). Insert a sane one so they fit the phone ratio.
+    v.evaluateJavascript(
+        """(function(){
+          try{
+            var m=document.querySelector('meta[name="viewport"]');
+            if(!m){
+              m=document.createElement('meta');
+              m.name='viewport';
+              m.content='width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes';
+              (document.head||document.documentElement).appendChild(m);
+            }
+          }catch(e){}
+        })();""".trimIndent(), null
+    )
 }
 
 private fun injectVisibilityHack(v: WebView, url: String) {

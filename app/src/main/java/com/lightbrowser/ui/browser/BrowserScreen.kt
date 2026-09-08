@@ -13,11 +13,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +42,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -130,6 +133,7 @@ fun BrowserScreen(
     val loadReq by vm.loadRequest.collectAsState()
     val findCount by vm.findCount.collectAsState()
     val reader by vm.reader.collectAsState()
+    val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     LaunchedEffect(loadReq) {
         val (url, _) = loadReq ?: return@LaunchedEffect
         if (url.startsWith("lb://")) return@LaunchedEffect
@@ -184,6 +188,17 @@ fun BrowserScreen(
         try { webView?.loadUrl(url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
     }
 
+    /** After a tab switch/close, load the tab's URL only if we're not on it. */
+    fun loadTabIfNeeded() {
+        try {
+            val target = ui.tabs.getOrNull(ui.currentIndex)?.url ?: return
+            if (target.startsWith("lb://")) return
+            if (webView?.url != target) vm.requestLoad(target)
+        } catch (_: Exception) {}
+    }
+
+    // ── Search overlay (WebView stays alive underneath) ──
+
     // FIXED search: pill or editor lives at the top of a plain Column, the WebView
     // below is ALWAYS composed (never destroyed). No imePadding anywhere here —
     // the keyboard overlays the bottom instead of pushing content up.
@@ -197,10 +212,10 @@ fun BrowserScreen(
                 placeholder = { Text("Search or enter URL") },
                 leadingIcon = { Icon(Icons.Filled.Search, null) },
                 trailingIcon = {
-                    IconButton(onClick = {
-                        vm.setSearch(false)
-                        focusManager.clearFocus()
-                    }) { Icon(Icons.Filled.Close, "Collapse") }
+                    if (ui.searchQuery.isNotEmpty()) {
+                        // X clears the text and stays in search (never navigates).
+                        IconButton(onClick = { vm.setQuery("") }) { Icon(Icons.Filled.Close, "Clear") }
+                    }
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
@@ -214,40 +229,6 @@ fun BrowserScreen(
             )
             LaunchedEffect(Unit) {
                 try { focusReq.requestFocus() } catch (_: Exception) {}
-            }
-            val q = ui.searchQuery.lowercase()
-            val sugBookmarks = bookmarks.filter {
-                q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)
-            }.take(4)
-            val sugHistory = history.filter {
-                (q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q)) &&
-                    sugBookmarks.none { b -> b.url == it.url }
-            }.take(6)
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(sugBookmarks, key = { "b${it.url}" }) { b ->
-                    ListItem(
-                        headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = { Icon(Icons.Filled.Bookmark, null) },
-                        modifier = Modifier.clickable {
-                            vm.setSearch(false)
-                            focusManager.clearFocus()
-                            goTo(b.url)
-                        }
-                    )
-                }
-                items(sugHistory, key = { "h${it.url}${it.time}" }) { h ->
-                    ListItem(
-                        headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = { Icon(Icons.Filled.History, null) },
-                        modifier = Modifier.clickable {
-                            vm.setSearch(false)
-                            focusManager.clearFocus()
-                            goTo(h.url)
-                        }
-                    )
-                }
             }
         } else {
             Surface(
@@ -290,7 +271,10 @@ fun BrowserScreen(
                     // Plain tabs button — no count badge
                     TextButton(onClick = { showTabs = true }) { Text("Tabs") }
                     IconButton(onClick = { showMenu = true }) {
-                        Icon(Icons.Filled.MoreVert, "Menu")
+                        Icon(
+                            Icons.Filled.MoreVert, "Menu",
+                            tint = if (recording) androidx.compose.ui.graphics.Color.Red else MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             }
@@ -339,10 +323,12 @@ fun BrowserScreen(
                     }
                 }
             }
+        } // end pill branch — WebView below is shared
 
-            // WebView fills the rest and is NEVER removed from composition.
-            // The start page covers it opaquely instead of destroying it.
-            Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+        // WebView + overlays: shared by BOTH modes, NEVER removed from composition.
+        // Searching shrinks the page area instead of destroying it; suggestions
+        // float on top only while typing.
+        Box(modifier = Modifier.fillMaxSize().weight(1f)) {
                 AndroidView(
                 factory = { c ->
                     WebView(c).also { wv ->
@@ -420,12 +406,61 @@ fun BrowserScreen(
                         onNavigate = { goTo(it) }
                     )
                 }
+                // Suggestions appear ONLY while typing, floating over the page —
+                // never a full black screen.
+                if (ui.searchExpanded && ui.searchQuery.isNotBlank()) {
+                    val q = ui.searchQuery.lowercase()
+                    val sugBookmarks = bookmarks.filter {
+                        it.url.lowercase().contains(q) || it.title.lowercase().contains(q)
+                    }.take(4)
+                    val sugHistory = history.filter {
+                        (it.url.lowercase().contains(q) || it.title.lowercase().contains(q)) &&
+                            sugBookmarks.none { b -> b.url == it.url }
+                    }.take(6)
+                    if (sugBookmarks.isNotEmpty() || sugHistory.isNotEmpty()) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(8.dp),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            tonalElevation = 6.dp,
+                            shadowElevation = 6.dp
+                        ) {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                                contentPadding = PaddingValues(vertical = 8.dp)
+                            ) {
+                                items(sugBookmarks, key = { "b${it.url}" }) { b ->
+                                    ListItem(
+                                        headlineContent = { Text(b.title.ifBlank { b.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        supportingContent = { Text(b.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        leadingContent = { Icon(Icons.Filled.Bookmark, null) },
+                                        modifier = Modifier.clickable {
+                                            vm.setSearch(false)
+                                            focusManager.clearFocus()
+                                            goTo(b.url)
+                                        }
+                                    )
+                                }
+                                items(sugHistory, key = { "h${it.url}${it.time}" }) { h ->
+                                    ListItem(
+                                        headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        supportingContent = { Text(h.url, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        leadingContent = { Icon(Icons.Filled.History, null) },
+                                        modifier = Modifier.clickable {
+                                            vm.setSearch(false)
+                                            focusManager.clearFocus()
+                                            goTo(h.url)
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    // ── Overflow menu sheet ──
-    if (showMenu) {
+    // ── Overflow menu sheet ──    if (showMenu) {
         ModalBottomSheet(
             onDismissRequest = { showMenu = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -442,6 +477,10 @@ fun BrowserScreen(
                         MenuAction.Find -> { findQuery = ""; vm.clearFind(); findOpen = true }
                         MenuAction.Reader -> { vm.loadReader(); showReader = true }
                         MenuAction.Site -> { showSite = true }
+                        MenuAction.Record -> {
+                            if (com.lightbrowser.data.BrowserAgent.isRecording()) com.lightbrowser.data.BrowserAgent.stopRecording()
+                            else com.lightbrowser.data.BrowserAgent.startRecording()
+                        }
                         MenuAction.Share -> shareUrl(ctx, ui.currentUrl)
                         MenuAction.OpenExternal -> openExternal(ctx, ui.currentUrl)
                         MenuAction.Desktop -> {
@@ -493,8 +532,14 @@ fun BrowserScreen(
                     val selected = i == ui.currentIndex
                     androidx.compose.material3.Card(
                         onClick = {
+                            val target = ui.tabs.getOrNull(i)?.url ?: return@Card
                             vm.selectTab(i)
                             showTabs = false
+                            if (!target.startsWith("lb://")) {
+                                try {
+                                    if (webView?.url != target) vm.requestLoad(target)
+                                } catch (_: Exception) {}
+                            }
                         },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -509,7 +554,15 @@ fun BrowserScreen(
                                 if (selected) Text("●", color = MaterialTheme.colorScheme.primary)
                             },
                             trailingContent = {
-                                IconButton(onClick = { vm.closeTab(i) }, enabled = ui.tabs.size > 1) {
+                                IconButton(onClick = {
+                                    val target = vm.closeTab(i)
+                                    showTabs = false
+                                    if (!target.startsWith("lb://")) {
+                                        try {
+                                            if (webView?.url != target) vm.requestLoad(target)
+                                        } catch (_: Exception) {}
+                                    }
+                                }, enabled = ui.tabs.size > 1) {
                                     Icon(Icons.Filled.Close, "Close tab")
                                 }
                             }
@@ -691,6 +744,7 @@ private fun AgentSheet(onClose: () -> Unit) {
     val ctx = LocalContext.current
     val running by com.lightbrowser.data.BrowserAgent.serverRunning.collectAsState()
     val label by com.lightbrowser.data.BrowserAgent.serverLabel.collectAsState()
+    val recordingNow by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     val scope = rememberCoroutineScope()
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -748,6 +802,25 @@ private fun AgentSheet(onClose: () -> Unit) {
             }
         }
         Spacer(Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (recordingNow) "● Recording taps (${com.lightbrowser.data.BrowserAgent.recCount()} actions)" else "○ Click recorder",
+                color = if (recordingNow) androidx.compose.ui.graphics.Color.Red else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = {
+                if (recordingNow) com.lightbrowser.data.BrowserAgent.stopRecording()
+                else com.lightbrowser.data.BrowserAgent.startRecording()
+            }) { Text(if (recordingNow) "Stop" else "Start") }
+        }
+        val recs = remember(recordingNow) { com.lightbrowser.data.BrowserAgent.listRecordings().take(5) }
+        if (recs.isNotEmpty()) {
+            recs.forEach { (f, n) ->
+                Text("• $f ($n)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(4.dp))
+        }
         Text("Terminal commands", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(4.dp))
         listOf(
@@ -757,7 +830,8 @@ private fun AgentSheet(onClose: () -> Unit) {
             "b fill <ref> <val> — type it",
             "b js <expr> — run JS",
             "b shot — save screenshot",
-            "b console — JS logs"
+            "b console — JS logs",
+            "b record start|stop|save — capture taps"
         ).forEach { cmd ->
             Text("• $cmd", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -775,7 +849,7 @@ private fun SheetHeader(title: String, onClear: () -> Unit, clearLabel: String) 
     }
 }
 
-private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Reader, Site, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, Agent, ClearCache }
+private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Reader, Site, Record, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, Agent, ClearCache }
 
 @Composable
 private fun MenuGrid(
@@ -791,6 +865,7 @@ private fun MenuGrid(
         Item(Icons.Filled.FindReplace, "Find", MenuAction.Find),
         Item(Icons.Filled.Article, "Reader", MenuAction.Reader),
         Item(Icons.Filled.Tune, "Site", MenuAction.Site),
+        Item(Icons.Filled.FiberManualRecord, "Record", MenuAction.Record),
         Item(Icons.Filled.Share, "Share", MenuAction.Share),
         Item(Icons.Filled.OpenInNew, "External", MenuAction.OpenExternal),
         Item(Icons.Filled.DesktopWindows, if (desktopOn) "Desktop ON" else "Desktop", MenuAction.Desktop),

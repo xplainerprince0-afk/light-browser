@@ -185,7 +185,40 @@ object BrowserAgent {
             getText:function(m){return document.body?document.body.innerText.slice(0,m||8000):'';},
             click:function(t){var s=refs[t]||t;var e=document.querySelector(s);if(!e)return 'ERR no-node';try{e.scrollIntoView({block:'center'});}catch(err){}e.click();return 'OK';},
             fill:function(t,v){var s=refs[t]||t;var e=document.querySelector(s);if(!e)return 'ERR no-node';e.focus();e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';},
-            scroll:function(y){try{window.scrollBy(0,y||500);}catch(err){}return 'OK';}
+            scroll:function(y){try{window.scrollBy(0,y||500);}catch(err){}return 'OK';},
+            describe:function(e){
+              try{
+                if(!e||!e.tagName) return {selector:'?',text:''};
+                var s=sel(e);
+                var t=((e.innerText||e.value||e.getAttribute('aria-label')||'')+'').slice(0,120);
+                var r={selector:s,tag:e.tagName.toLowerCase(),text:t};
+                try{var b=e.getBoundingClientRect();r.rect=[Math.round(b.x),Math.round(b.y),Math.round(b.width),Math.round(b.height)];}catch(err){}
+                return r;
+              }catch(err){return {selector:'?',text:''};}
+            },
+            record:function(on){
+              try{
+                if(window.__lb_recHandler&&window.__lb_recTarget){
+                  window.__lb_recTarget.removeEventListener('click',window.__lb_recHandler,true);
+                  window.__lb_recTarget.removeEventListener('input',window.__lb_recHandler,true);
+                  window.__lb_recHandler=null;
+                }
+                if(!on) return 'OK';
+                var h=function(ev){
+                  try{
+                    var d=window.LightAgent.describe(ev.target);
+                    d.op=(ev.type==='input')?'fill':'click';
+                    if(ev.type==='input'){d.value=(ev.target.value||'').slice(0,200);}
+                    console.log('__LB_REC__:'+JSON.stringify(d));
+                  }catch(err){}
+                };
+                window.__lb_recHandler=h;
+                window.__lb_recTarget=document;
+                document.addEventListener('click',h,true);
+                document.addEventListener('input',h,true);
+                return 'OK';
+              }catch(err){return 'ERR '+err;}
+            }
           };
         })();
     """.trimIndent()
@@ -194,6 +227,93 @@ object BrowserAgent {
         try {
             wv.evaluateJavascript(SHIM, null)
         } catch (e: Exception) { Log.w(TAG, "shim", e) }
+    }
+
+    // ── Click recorder (human automation data) ──
+    private val _recording = MutableStateFlow(false)
+    val recording: StateFlow<Boolean> = _recording.asStateFlow()
+    private val recEvents = mutableListOf<JSONObject>()
+    private var recStartUrl = ""
+    private var recStartMs = 0L
+
+    fun isRecording(): Boolean = _recording.value
+
+    fun startRecording() {
+        recEvents.clear()
+        recStartUrl = try { webViewProvider?.invoke()?.url ?: "" } catch (_: Exception) { "" }
+        recStartMs = System.currentTimeMillis()
+        _recording.value = true
+        try {
+            webViewProvider?.invoke()?.evaluateJavascript(
+                "(function(){try{if(window.LightAgent)window.LightAgent.record(true);}catch(e){}})()", null
+            )
+        } catch (_: Exception) {}
+    }
+
+    fun stopRecording() {
+        _recording.value = false
+        try {
+            webViewProvider?.invoke()?.evaluateJavascript(
+                "(function(){try{if(window.LightAgent)window.LightAgent.record(false);}catch(e){}})()", null
+            )
+        } catch (_: Exception) {}
+    }
+
+    /** Called from the shim's capture listener (re-armed after every navigation). */
+    fun rearmRecorder(wv: WebView) {
+        if (!_recording.value) return
+        try {
+            wv.evaluateJavascript(
+                "(function(){try{if(window.LightAgent)window.LightAgent.record(true);}catch(e){}})()", null
+            )
+        } catch (_: Exception) {}
+    }
+
+    @Synchronized
+    fun recordEvent(json: String) {
+        if (!_recording.value) return
+        try {
+            val o = JSONObject(json)
+            o.put("t", System.currentTimeMillis() - recStartMs)
+            recEvents.add(o)
+        } catch (_: Exception) {}
+    }
+
+    @Synchronized
+    fun recCount(): Int = recEvents.size
+
+    @Synchronized
+    fun saveRecording(name: String): String? {
+        return try {
+            if (recEvents.isEmpty()) return null
+            val app = AppCtx.ctx
+            val dir = java.io.File(app.filesDir, "sandbox/agent_recs").apply { mkdirs() }
+            val safe = name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40).ifBlank { "rec" }
+            val out = java.io.File(dir, "${safe}_${System.currentTimeMillis()}.json")
+            val root = JSONObject()
+            root.put("app", "lightbrowser-rec")
+            root.put("v", 1)
+            root.put("startUrl", recStartUrl)
+            root.put("startedAt", recStartMs)
+            val arr = org.json.JSONArray()
+            recEvents.forEach { arr.put(it) }
+            root.put("actions", arr)
+            out.writeText(root.toString(1), Charsets.UTF_8)
+            out.absolutePath
+        } catch (_: Exception) { null }
+    }
+
+    @Synchronized
+    fun listRecordings(): List<Pair<String, Int>> {
+        return try {
+            val dir = java.io.File(AppCtx.ctx.filesDir, "sandbox/agent_recs")
+            (dir.listFiles()?.filter { it.extension == "json" } ?: emptyList())
+                .sortedByDescending { it.lastModified() }
+                .map { f ->
+                    val n = try { JSONObject(f.readText()).optJSONArray("actions")?.length() ?: 0 } catch (_: Exception) { 0 }
+                    f.name to n
+                }
+        } catch (_: Exception) { emptyList() }
     }
 
     // ── Localhost HTTP server (same-device testing only) ──

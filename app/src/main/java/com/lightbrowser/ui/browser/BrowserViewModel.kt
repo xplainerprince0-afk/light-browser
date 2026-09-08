@@ -180,28 +180,30 @@ class BrowserViewModel : ViewModel() {
         _ui.update {
             val tabs = it.tabs + BrowserTab(url = url)
             val idx = if (select) tabs.size - 1 else it.currentIndex
-            it.copy(tabs = tabs, currentIndex = idx)
+            val cur = tabs[idx]
+            it.copy(tabs = tabs, currentIndex = idx, currentUrl = cur.url, currentTitle = cur.title)
         }
-        if (select) requestLoad(url)
+        if (select && !url.startsWith("lb://")) requestLoad(url)
         persistTabs()
     }
 
     fun selectTab(i: Int) {
         val tabs = _ui.value.tabs
         if (i !in tabs.indices || i == _ui.value.currentIndex) return
-        _ui.update { it.copy(currentIndex = i) }
-        requestLoad(tabs[i].url)
+        _ui.update { it.copy(currentIndex = i, currentUrl = tabs[i].url, currentTitle = tabs[i].title, loading = false) }
+        // NOTE: no requestLoad here — the screen loads only if the WebView
+        // isn't already on that URL (avoids reload churn on tab switches).
         persistTabs()
     }
 
-    fun closeTab(i: Int) {
+    fun closeTab(i: Int): String {
         val tabs = _ui.value.tabs.toMutableList()
-        if (tabs.size <= 1 || i !in tabs.indices) return
+        if (tabs.size <= 1 || i !in tabs.indices) return _ui.value.currentUrl
         tabs.removeAt(i)
         val ni = _ui.value.currentIndex.coerceAtMost(tabs.size - 1)
-        _ui.update { it.copy(tabs = tabs, currentIndex = ni) }
-        requestLoad(tabs[ni].url)
+        _ui.update { it.copy(tabs = tabs, currentIndex = ni, currentUrl = tabs[ni].url, currentTitle = tabs[ni].title, loading = false) }
         persistTabs()
+        return tabs[ni].url
     }
 
     fun onTabSettled() = persistTabs()

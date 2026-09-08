@@ -663,7 +663,7 @@ class TerminalViewModel : ViewModel() {
                             "b js <expr> | text [max] | dom [css] | snap\n" +
                             "b click <ref|css> | fill <ref|css> <val> [--submit]\n" +
                             "b scroll [px] | shot | console [n] | cookies | save <name>\n" +
-                            "b serve — server URL + token\n", TermDim
+                            "b record start|stop|save <n>|list | serve\n", TermDim
                     )
                     "open" -> {
                         val url = parts.getOrNull(1) ?: ""
@@ -748,6 +748,32 @@ class TerminalViewModel : ViewModel() {
                         if (com.lightbrowser.data.BrowserAgent.serverRunning.value) {
                             out("Agent server: ${com.lightbrowser.data.BrowserAgent.serverLabel.value}\nFrom Termux: curl 'http://127.0.0.1:8089/text?token=…'\n", TermGreen)
                         } else out("Server is OFF — enable it in Browser ⋮ → Agent bridge.\n", TermDim)
+                    }
+                    "record" -> {
+                        val sub = parts.getOrNull(1) ?: ""
+                        when (sub) {
+                            "start" -> {
+                                com.lightbrowser.data.BrowserAgent.startRecording()
+                                out("● Recording — switch to the Browser tab and tap/type. b record stop when done.\n", TermGreen)
+                            }
+                            "stop" -> {
+                                com.lightbrowser.data.BrowserAgent.stopRecording()
+                                val n = com.lightbrowser.data.BrowserAgent.recCount()
+                                out("Stopped. Captured $n action(s). b record save <name> to keep.\n", TermGreen)
+                            }
+                            "save" -> {
+                                val name = parts.getOrNull(2) ?: ""
+                                val path = com.lightbrowser.data.BrowserAgent.saveRecording(name.ifBlank { "rec" })
+                                if (path != null) out("Saved $path\n", TermGreen)
+                                else out("Nothing to save (record first).\n", TermRed)
+                            }
+                            "list" -> {
+                                val recs = com.lightbrowser.data.BrowserAgent.listRecordings()
+                                if (recs.isEmpty()) out("(no saved recordings — sandbox/agent_recs)\n", TermDim)
+                                else recs.take(10).forEach { (f, n) -> out("• $f ($n actions)\n", TermWhite) }
+                            }
+                            else -> out("Usage: b record start|stop|save <name>|list\n", TermRed)
+                        }
                     }
                     "console" -> {
                         val n = parts.getOrNull(1)?.toIntOrNull() ?: 30
