@@ -621,6 +621,17 @@ class TerminalViewModel : ViewModel() {
     /** Single-quote shell escaping (filenames with " $ ` are crafted via import/zip). */
     private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
+    /** Lenient URL resolver for `b open/new` (localhost + bare domains). */
+    private fun resolveUrlish(t: String): String? {
+        val s = t.trim()
+        if (s.isEmpty()) return null
+        if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("lb://")) return s
+        if (!s.contains(" ") && (s.contains(".") || s.startsWith("localhost") || s.startsWith("127."))) {
+            return if (s.contains("://")) s else "https://$s"
+        }
+        return null
+    }
+
     /** Split respecting single/double quotes (cp/mv with spaces). */
     private fun splitArgs(raw: String): List<String> {
         val out = mutableListOf<String>()
@@ -735,29 +746,77 @@ class TerminalViewModel : ViewModel() {
                 val parts = line.split(" ", limit = 3)
                 when (parts.getOrNull(0) ?: "") {
                     "", "help" -> out(
-                        "b open <url> | back | fwd | reload | url | title\n" +
+                        "b open <url> | back | forward | reload | stop | url | title | home\n" +
+                            "b tabs | new <url> | close [n] — tab control\n" +
                             "b js <expr> | text [max] | dom [css] | snap\n" +
                             "b click <ref|css> | fill <ref|css> <val> [--submit]\n" +
+                            "b find <text> | next | prev — find in page\n" +
                             "b scroll [px] | shot | console [n] | cookies | save <name>\n" +
                             "b record start|stop|save <n>|list | serve\n", TermDim
                     )
                     "open" -> {
                         val url = parts.getOrNull(1) ?: ""
-                        if (url.isBlank()) out("Usage: b open <url>\n", TermRed)
+                        val fixed = resolveUrlish(url)
+                        if (fixed == null) out("Usage: b open <url>\n", TermRed)
                         else {
-                            com.lightbrowser.data.BrowserAgent.navigate(url)
-                            out("Opening $url\n", TermGreen)
+                            com.lightbrowser.data.BrowserAgent.navigate(fixed)
+                            out("Opening $fixed\n", TermGreen)
                         }
+                    }
+                    "new" -> {
+                        val url = parts.getOrNull(1) ?: ""
+                        val fixed = resolveUrlish(url)
+                        if (fixed == null) out("Usage: b new <url>\n", TermRed)
+                        else {
+                            com.lightbrowser.ui.browser.TabBus.openInNewTab(fixed)
+                            out("New tab: $fixed\n", TermGreen)
+                        }
+                    }
+                    "tabs" -> {
+                        val list = try { com.lightbrowser.ui.browser.TabBus.listTabs?.invoke() } catch (_: Exception) { null }
+                        if (list.isNullOrEmpty()) out("(no tabs? open the Browser tab first)\n", TermDim)
+                        else list.forEach { t ->
+                            out("[${t.index}]${if (t.current) "●" else " "} ${(t.title.ifBlank { t.url }).take(60)} — ${t.url.take(80)}\n", TermWhite)
+                        }
+                    }
+                    "close" -> {
+                        val arg = parts.getOrNull(1)
+                        if (arg != null && arg.isNotBlank() && arg != "current") {
+                            val n = arg.toIntOrNull()
+                            if (n == null) out("Usage: b close [n]\n", TermRed)
+                            else {
+                                com.lightbrowser.ui.browser.TabBus.closeTabAt?.invoke(n)
+                                out("Closed tab $n\n", TermGreen)
+                            }
+                        } else {
+                            com.lightbrowser.ui.browser.TabBus.closeTabAt?.invoke(-1)
+                            out("Closed current tab\n", TermGreen)
+                        }
+                    }
+                    "home" -> {
+                        com.lightbrowser.ui.browser.TabBus.openHome?.invoke()
+                        out("Home\n", TermGreen)
                     }
                     "back" -> com.lightbrowser.data.BrowserAgent.runOnPage {
                         try { if (it.canGoBack()) it.goBack() } catch (_: Exception) {}
                     }
-                    "fwd" -> com.lightbrowser.data.BrowserAgent.runOnPage {
+                    "fwd", "forward" -> com.lightbrowser.data.BrowserAgent.runOnPage {
                         try { if (it.canGoForward()) it.goForward() } catch (_: Exception) {}
                     }
                     "reload" -> com.lightbrowser.data.BrowserAgent.runOnPage {
                         try { it.reload() } catch (_: Exception) {}
                     }
+                    "stop" -> {
+                        com.lightbrowser.data.BrowserAgent.stopLoad()
+                        out("Stopped\n", TermDim)
+                    }
+                    "find" -> {
+                        val q = line.removePrefix("find").trim()
+                        com.lightbrowser.data.BrowserAgent.findInPage(q)
+                        out(if (q.isBlank()) "Find cleared\n" else "Finding \"$q\"\n", TermGreen)
+                    }
+                    "next" -> com.lightbrowser.data.BrowserAgent.findNext(true)
+                    "prev" -> com.lightbrowser.data.BrowserAgent.findNext(false)
                     "url" -> out((com.lightbrowser.data.BrowserAgent.currentUrl() ?: "(none)") + "\n", TermWhite)
                     "title" -> {
                         val r = com.lightbrowser.data.BrowserAgent.eval("(function(){return document.title;})()")

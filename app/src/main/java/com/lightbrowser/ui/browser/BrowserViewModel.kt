@@ -26,11 +26,17 @@ data class BrowserTab(
     val title: String = ""
 )
 
-/** Bridge for window.open / target=_blank → open in new tab (set by BrowserScreen). */
+/** Bridge for window.open / target=_blank / terminal `b` tab commands. Set by BrowserScreen. */
 object TabBus {
     var openInNewTab: ((String) -> Unit)? = null
+    var selectTab: ((Int) -> Unit)? = null
+    var closeTabAt: ((Int) -> Unit)? = null // -1 = current tab
+    var listTabs: (() -> List<TabInfo>)? = null
+    var openHome: (() -> Unit)? = null
     fun openInNewTab(url: String) { try { openInNewTab?.invoke(url) } catch (_: Exception) {} }
 }
+
+data class TabInfo(val index: Int, val url: String, val title: String, val current: Boolean)
 
 const val HOME_URL = "lb://home"
 
@@ -145,6 +151,25 @@ class BrowserViewModel : ViewModel() {
                 tabs[it.currentIndex.coerceIn(tabs.indices)].copy(url = url)
             it.copy(tabs = tabs, currentUrl = url, loading = true, progress = 10)
         }
+    }
+
+    /** Lightweight URL sync for pushState/replaceState (no history spam, no persist storm). */
+    fun onVisited(url: String) {
+        if (url.isBlank() || url.startsWith("lb://")) return
+        _ui.update {
+            val tabs = it.tabs.toMutableList()
+            if (tabs.isEmpty()) return@update it
+            val i = it.currentIndex.coerceIn(tabs.indices)
+            if (tabs[i].url == url && it.currentUrl == url) return@update it
+            tabs[i] = tabs[i].copy(url = url)
+            it.copy(tabs = tabs, currentUrl = url)
+        }
+    }
+
+    fun goHome() {
+        val home = try { Prefs.homePage.ifBlank { HOME_URL } } catch (_: Exception) { HOME_URL }
+        val i = _ui.value.tabs.indexOfFirst { it.url == HOME_URL || it.url == home }
+        if (i >= 0) selectTab(i) else openTab(home, select = true)
     }
 
     fun onProgress(p: Int) {

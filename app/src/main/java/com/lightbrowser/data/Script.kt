@@ -33,9 +33,14 @@ data class UserScript(
             val name = meta["name"]?.firstOrNull() ?: "Unnamed"
             val desc = meta["description"]?.firstOrNull() ?: ""
             val matches = (meta["match"] ?: emptyList()) + (meta["include"] ?: emptyList())
+            // Plain JS snippets with no ==UserScript== block run everywhere (legacy
+            // behavior — that is how the first scripts were used). Scripts WITH a
+            // header but no @match/@include match nothing until fixed.
+            val hasBlock = raw.contains("==UserScript==")
+            val finalMatches = if (matches.isEmpty() && !hasBlock) listOf("<all_urls>") else matches
             val runAt = meta["run-at"]?.firstOrNull() ?: "document_idle"
             val grants = meta["grant"] ?: emptyList()
-            return UserScript(name = name, code = raw, description = desc, matches = matches, runAt = runAt, grants = grants)
+            return UserScript(name = name, code = raw, description = desc, matches = finalMatches, runAt = runAt, grants = grants)
         }
 
         fun globToRegex(glob: String): Regex {

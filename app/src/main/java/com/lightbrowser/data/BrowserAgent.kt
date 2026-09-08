@@ -127,6 +127,23 @@ object BrowserAgent {
         }
     }
 
+    fun stopLoad() {
+        runOnPage { try { it.stopLoading() } catch (_: Exception) {} }
+    }
+
+    fun findInPage(query: String) {
+        runOnPage {
+            try {
+                if (query.isBlank()) { try { it.clearMatches() } catch (_: Exception) {} }
+                else it.findAllAsync(query)
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun findNext(forward: Boolean) {
+        runOnPage { try { it.findNext(forward) } catch (_: Exception) {} }
+    }
+
     fun currentUrl(): String? = try {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             webViewProvider?.invoke()?.url
@@ -280,7 +297,8 @@ object BrowserAgent {
 
     fun startRecording() {
         recEvents.clear()
-        recStartUrl = try { webViewProvider?.invoke()?.url ?: "" } catch (_: Exception) { "" }
+        // currentUrl() hops to Main itself (direct .url here = StrictMode violation from Terminal thread).
+        recStartUrl = try { currentUrl() ?: "" } catch (_: Exception) { "" }
         recStartMs = System.currentTimeMillis()
         _recording.value = true
         // Ensure shim exists first (JS-off / pre-finish would otherwise silently record nothing).
@@ -333,7 +351,7 @@ object BrowserAgent {
             if (sel.isBlank() || sel.length > 500) return
             o.put("t", System.currentTimeMillis() - recStartMs)
             // Per-action URL so SPA replay works (was only startUrl before).
-            try { o.put("url", webViewProvider?.invoke()?.url ?: recStartUrl) } catch (_: Exception) { o.put("url", recStartUrl) }
+            try { o.put("url", try { currentUrl() } catch (_: Exception) { null } ?: recStartUrl) } catch (_: Exception) { o.put("url", recStartUrl) }
             recEvents.add(o)
             // Cap memory: keep last 500 actions.
             while (recEvents.size > 500) recEvents.removeAt(0)
@@ -528,6 +546,24 @@ object BrowserAgent {
                 runOnPage { try { if (it.canGoBack()) it.goBack() } catch (_: Exception) {} }
                 """{"ok":true}"""
             }
+            "/forward" -> {
+                runOnPage { try { if (it.canGoForward()) it.goForward() } catch (_: Exception) {} }
+                """{"ok":true}"""
+            }
+            "/stop" -> {
+                runOnPage { try { it.stopLoading() } catch (_: Exception) {} }
+                """{"ok":true}"""
+            }
+            "/find" -> {
+                val q = q["q"] ?: ""
+                runOnPage {
+                    try {
+                        if (q.isBlank()) { try { it.clearMatches() } catch (_: Exception) {} }
+                        else it.findAllAsync(q)
+                    } catch (_: Exception) {}
+                }
+                """{"ok":true}"""
+            }
             "/reload" -> {
                 runOnPage { try { it.reload() } catch (_: Exception) {} }
                 """{"ok":true}"""
@@ -574,7 +610,7 @@ object BrowserAgent {
                 if (path != null) JSONObject().put("ok", true).put("path", path).toString()
                 else """{"ok":false,"err":"shot failed"}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /text /snap /js /click /fill /back /reload /console /shot"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /text /snap /js /click /fill /back /forward /reload /stop /find /console /shot"}"""
         }
     }
 }

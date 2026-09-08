@@ -20,14 +20,19 @@ object ScriptStorage {
             for (i in 0 until arr.length()) {
                 try {
                     val o = arr.getJSONObject(i)
+                    val code = o.optString("code", "")
+                    val storedMatches = o.optJSONArray("matches")?.let { ja -> (0 until ja.length()).mapNotNull { runCatching { ja.getString(it) }.getOrNull() } } ?: emptyList()
+                    // Migrate legacy snippets (saved with matches=[] before the strict
+                    // matcher): plain JS with no header runs everywhere again.
+                    val matches = if (storedMatches.isEmpty() && !code.contains("==UserScript==") && code.isNotBlank()) listOf("<all_urls>") else storedMatches
                     out.add(
                         UserScript(
                             id = o.optString("id", java.util.UUID.randomUUID().toString()),
                             name = o.optString("name", "Unnamed"),
-                            code = o.optString("code", ""),
+                            code = code,
                             enabled = o.optBoolean("enabled", true),
                             description = o.optString("description", ""),
-                            matches = o.optJSONArray("matches")?.let { ja -> (0 until ja.length()).mapNotNull { runCatching { ja.getString(it) }.getOrNull() } } ?: emptyList(),
+                            matches = matches,
                             runAt = o.optString("runAt", "document_idle"),
                             grants = o.optJSONArray("grants")?.let { ja -> (0 until ja.length()).mapNotNull { runCatching { ja.getString(it) }.getOrNull() } } ?: emptyList()
                         )

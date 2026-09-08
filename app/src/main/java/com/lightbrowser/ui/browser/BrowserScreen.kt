@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
@@ -140,11 +142,27 @@ fun BrowserScreen(
     var showAgent by remember { mutableStateOf(false) }
     var showReader by remember { mutableStateOf(false) }
     var showSite by remember { mutableStateOf(false) }
+    var showScriptLog by remember { mutableStateOf(false) }
     var prefsVer by remember { mutableStateOf(0) }
 
     // Route TabBus window.open → new tab.
     LaunchedEffect(Unit) {
         TabBus.openInNewTab = { url -> try { vm.openTab(url, select = true) } catch (_: Exception) {} }
+        TabBus.selectTab = { i -> try { vm.selectTab(i) } catch (_: Exception) {} }
+        TabBus.closeTabAt = { i ->
+            try {
+                val idx = if (i < 0) vm.ui.value.currentIndex else i
+                vm.closeTab(idx)
+            } catch (_: Exception) {}
+        }
+        TabBus.listTabs = {
+            try {
+                vm.ui.value.tabs.mapIndexed { i, t ->
+                    TabInfo(i, t.url, t.title.ifBlank { t.url }, i == vm.ui.value.currentIndex)
+                }
+            } catch (_: Exception) { emptyList() }
+        }
+        TabBus.openHome = { try { vm.goHome() } catch (_: Exception) {} }
     }
 
     val loadReq by vm.loadRequest.collectAsState()
@@ -152,18 +170,21 @@ fun BrowserScreen(
     val reader by vm.reader.collectAsState()
     val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     // Retry load if WebView not yet created (factory race): keep pending until applied.
-    var pendingLoad by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    // Tagged with the target tab id so a quick tab switch can't load it into the wrong tab.
+    var pendingLoad by remember { mutableStateOf<Triple<String, Long, String?>?>(null) }
     LaunchedEffect(loadReq) {
         val (url, ts) = loadReq ?: return@LaunchedEffect
         if (url.startsWith("lb://")) return@LaunchedEffect
-        pendingLoad = url to ts
+        pendingLoad = Triple(url, ts, currentTabId)
     }
-    // Apply pending load to CURRENT tab's WebView only, with URL check + retry.
+    // Apply pending load to its TARGET tab's WebView only; skip when already there
+    // (redirect-final URLs equal WebView URL — reloading every switch was the churn).
     LaunchedEffect(pendingLoad, currentTabId) {
-        val (url, _) = pendingLoad ?: return@LaunchedEffect
+        val (url, _, targetId) = pendingLoad ?: return@LaunchedEffect
+        if (targetId != null && targetId != currentTabId) return@LaunchedEffect
         val wv = currentTabId?.let { webViews[it] } ?: return@LaunchedEffect
         try {
-            if (wv.url != url) wv.loadUrl(url, mapOf("X-Requested-With" to ""))
+            if (!sameUrl(wv.url, url)) wv.loadUrl(url, mapOf("X-Requested-With" to ""))
             pendingLoad = null
         } catch (_: Exception) {}
     }
@@ -187,11 +208,13 @@ fun BrowserScreen(
 
     // Pause all background WebViews when tab hidden; resume current when visible.
     // Also flush cookies on pause (BrowserProfile never got onWebViewPause before).
+    // Refresh scripts/history when returning (Scripts tab saves bypass the VM cache).
     LaunchedEffect(active) {
         try {
             if (active) {
                 activeWebView()?.onResume()
                 try { com.lightbrowser.data.BrowserProfile.onWebViewResume(activeWebView()) } catch (_: Exception) {}
+                try { vm.refreshLists() } catch (_: Exception) {}
             } else {
                 webViews.values.forEach { try { it.onPause() } catch (_: Exception) {} }
                 try { com.lightbrowser.data.BrowserProfile.onWebViewPause(activeWebView()) } catch (_: Exception) {}
@@ -208,16 +231,18 @@ fun BrowserScreen(
             try { TabBus.openInNewTab = null } catch (_: Exception) {}
         }
     }
-    // Evict closed tabs' WebViews + cap pool at 4 (destroy oldest background first).
+    // Evict closed tabs' WebViews + cap pool at 6 alive (smoothness-first RAM budget).
+    // Destroy oldest background tabs first; current tab is never evicted.
     LaunchedEffect(ui.tabs.map { it.id }, currentTabId) {
         try {
             val alive = ui.tabs.map { it.id }.toSet()
             (webViews.keys - alive).forEach { id ->
                 try { webViews.remove(id)?.destroy() } catch (_: Exception) { try { webViews.remove(id) } catch (_: Exception) {} }
             }
-            if (webViews.size > 4 && currentTabId != null) {
-                val candidates = webViews.keys.filter { it != currentTabId }.take(webViews.size - 4)
-                candidates.forEach { id -> try { webViews.remove(id)?.destroy() } catch (_: Exception) {} }
+            if (webViews.size > 6 && currentTabId != null) {
+                val order = ui.tabs.map { it.id }.filter { it != currentTabId }
+                val victims = order.take(webViews.size - 6)
+                victims.forEach { id -> try { webViews.remove(id)?.destroy() } catch (_: Exception) {} }
             }
         } catch (_: Exception) {}
     }
@@ -230,9 +255,10 @@ fun BrowserScreen(
 
     fun goTo(url: String) {
         // Same page (e.g. tapping the current suggestion) must NOT reload.
+        // Normalized compare: finished URLs (trailing slash, www) equal requests.
         try {
             val cur = webView?.url
-            if (url.isNotBlank() && cur != null && cur == url) {
+            if (url.isNotBlank() && cur != null && sameUrl(cur, url)) {
                 vm.setSearch(false)
                 focusManager.clearFocus()
                 return
@@ -286,6 +312,10 @@ fun BrowserScreen(
                 onClick = { vm.setSearch(true) }
             ) {
                 Row(modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Chrome-style home: jumps straight to homepage, same tab.
+                    IconButton(onClick = { try { vm.goHome() } catch (_: Exception) {} }) {
+                        Icon(Icons.Filled.Home, "Home")
+                    }
                     IconButton(onClick = { try { webView?.goBack() } catch (_: Exception) {} }, enabled = canGoBack) {
                         Icon(Icons.Filled.ArrowBack, "Back")
                     }
@@ -395,7 +425,7 @@ fun BrowserScreen(
                     // Never let one bad tab kill app startup — show a fallback view.
                     var webViewFailed by remember { mutableStateOf<String?>(null) }
                     if (webViewFailed != null) {
-                        Box(modifier = if (isCurrent) Modifier.fillMaxSize() else Modifier.size(1.dp), contentAlignment = Alignment.Center) {
+                        Box(modifier = if (isCurrent) Modifier.fillMaxSize() else Modifier.size(0.dp), contentAlignment = Alignment.Center) {
                             if (isCurrent) Text(
                                 "WebView unavailable (${webViewFailed}). Update System WebView / Chrome.",
                                 modifier = Modifier.padding(24.dp),
@@ -408,6 +438,7 @@ fun BrowserScreen(
                         factory = { c ->
                             try {
                             WebView(c).also { wv ->
+                                wv.visibility = if (tab.id == currentTabId) android.view.View.VISIBLE else android.view.View.GONE
                                 setupLightWebView(
                                     wv,
                                     BrowserCallbacks(
@@ -445,7 +476,8 @@ fun BrowserScreen(
                                             }
                                         },
                                         onLongPressUrl = { longPressUrl = it },
-                                        inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
+                                        inject = { w, url, runAt -> vm.injectAll(w, url, runAt) },
+                                        onVisited = { url -> vm.onVisited(url) }
                                     )
                                 )
                                 webViews[tab.id] = wv
@@ -464,9 +496,11 @@ fun BrowserScreen(
                                 android.widget.TextView(c).apply { text = "WebView unavailable" }
                             }
                         },
-                        modifier = if (isCurrent) Modifier.fillMaxSize() else Modifier.size(1.dp),
+                        modifier = if (isCurrent) Modifier.fillMaxSize() else Modifier.size(0.dp),
                         update = { v ->
                             val wv = v as? WebView ?: return@AndroidView
+                            // GONE backgrounds never draw (was 1dp slivers stacked top-left).
+                            try { wv.visibility = if (isCurrent) android.view.View.VISIBLE else android.view.View.GONE } catch (_: Exception) {}
                             try { webViews[tab.id] = wv } catch (_: Exception) {}
                             if (isCurrent) {
                                 currentWebView = wv
@@ -499,8 +533,10 @@ fun BrowserScreen(
                     val wv = activeWebView()
                     try { canGoBack = wv?.canGoBack() == true; canGoForward = wv?.canGoForward() == true } catch (_: Exception) {}
                     // Pending load retry now that target WebView exists.
-                    pendingLoad?.let { (url, _) ->
-                        try { if (wv != null && wv.url != url && !url.startsWith("lb://")) { wv.loadUrl(url, mapOf("X-Requested-With" to "")); pendingLoad = null } } catch (_: Exception) {}
+                    pendingLoad?.let { (url, _, targetId) ->
+                        if (targetId == null || targetId == currentTabId) {
+                            try { if (wv != null && !sameUrl(wv.url, url) && !url.startsWith("lb://")) { wv.loadUrl(url, mapOf("X-Requested-With" to "")); pendingLoad = null } } catch (_: Exception) {}
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -584,6 +620,7 @@ fun BrowserScreen(
                         MenuAction.Find -> { findQuery = ""; vm.clearFind(); findOpen = true }
                         MenuAction.Reader -> { vm.loadReader(); showReader = true }
                         MenuAction.Site -> { showSite = true }
+                        MenuAction.ScriptLog -> { showScriptLog = true }
                         MenuAction.Record -> {
                             if (com.lightbrowser.data.BrowserAgent.isRecording()) {
                                 com.lightbrowser.data.BrowserAgent.stopRecording()
@@ -890,6 +927,66 @@ fun BrowserScreen(
         }
     }
 
+    // ── Userscript log sheet: what did my scripts do / what broke ──
+    if (showScriptLog) {
+        ModalBottomSheet(
+            onDismissRequest = { showScriptLog = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            val logs = remember(showScriptLog) {
+                try {
+                    com.lightbrowser.data.BrowserAgent.consoleTail(200).filter {
+                        it.contains("LB inject", true) || it.contains("LB script", true) ||
+                            it.contains("GM_", true) || it.contains("userscript", true) ||
+                            it.contains("inject", true)
+                    }.takeLast(80)
+                } catch (_: Exception) { emptyList() }
+            }
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.BugReport, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Script log", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { showScriptLog = false }) { Text("Done") }
+                }
+                Text(
+                    "Injections + errors from your userscripts on this page.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                if (logs.isEmpty()) {
+                    Text(
+                        "No script output yet — open a page with matching scripts, then reopen this log.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp)
+                    )
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { copyText(ctx, logs.joinToString("\n")) }) { Text("Copy") }
+                        TextButton(onClick = { shareUrl(ctx, logs.joinToString("\n")) }) { Text("Share") }
+                    }
+                    LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
+                        items(logs) { line ->
+                            androidx.compose.foundation.text.selection.SelectionContainer {
+                                Text(
+                                    line.take(600),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    color = if (line.contains("error", true)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                )
+                            }
+                        }
+                        item { Spacer(Modifier.height(24.dp)) }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+
     if (confirmClearHistory) {
         AlertDialog(
             onDismissRequest = { confirmClearHistory = false },
@@ -1063,9 +1160,12 @@ private fun AgentSheet(onClose: () -> Unit) {
         Spacer(Modifier.height(4.dp))
         listOf(
             "b open <url> — navigate (/open?url=)",
+            "b tabs — list tabs | b new <url> | b close [n] | b home",
+            "b back | b forward | b reload | b stop",
             "b snap — page refs + text (/snap)",
             "b click <ref> — tap it (/click?sel=)",
             "b fill <ref> <val> — type it (/fill?sel=&value=)",
+            "b find <text> — find in page (/find?q=)",
             "b js <expr> — run JS (/js?expr=)",
             "b shot — save screenshot (/shot)",
             "b console — JS logs (/console)",
@@ -1087,7 +1187,7 @@ private fun SheetHeader(title: String, onClear: () -> Unit, clearLabel: String) 
     }
 }
 
-private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Reader, Site, Record, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, Agent, ClearCache }
+private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Reader, Site, ScriptLog, Record, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, Agent, ClearCache }
 
 @Composable
 private fun MenuGrid(
@@ -1104,6 +1204,7 @@ private fun MenuGrid(
         Item(Icons.Filled.FindReplace, "Find", MenuAction.Find),
         Item(Icons.Filled.Article, "Reader", MenuAction.Reader),
         Item(Icons.Filled.Tune, "Site", MenuAction.Site),
+        Item(Icons.Filled.BugReport, "Script log", MenuAction.ScriptLog),
         Item(Icons.Filled.FiberManualRecord, "Record", MenuAction.Record),
         Item(Icons.Filled.Share, "Share", MenuAction.Share),
         Item(Icons.Filled.OpenInNew, "External", MenuAction.OpenExternal),
@@ -1168,4 +1269,14 @@ private fun copyText(ctx: Context, text: String) {
         (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
             .setPrimaryClip(ClipData.newPlainText("url", text))
     } catch (_: Exception) {}
+}
+
+/** Normalized URL equality: ignores trailing slashes + fragment so redirect-final
+ *  URLs match their requests (prevents reload-every-tab-switch churn). */
+private fun sameUrl(a: String?, b: String?): Boolean {
+    if (a == null || b == null) return false
+    return try {
+        a.trim().substringBefore("#").trimEnd('/').lowercase() ==
+            b.trim().substringBefore("#").trimEnd('/').lowercase()
+    } catch (_: Exception) { a == b }
 }

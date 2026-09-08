@@ -26,8 +26,28 @@ class BrowserCallbacks(
     val onProgress: (Int) -> Unit,
     val onFinished: (url: String, title: String) -> Unit,
     val onLongPressUrl: (String) -> Unit,
-    val inject: (webView: WebView, url: String, runAt: String) -> Unit
+    val inject: (webView: WebView, url: String, runAt: String) -> Unit,
+    val onVisited: (String) -> Unit = {}
 )
+
+/**
+ * Main-thread-tracked page host per WebView.
+ * shouldInterceptRequest runs on a background thread where touching the WebView
+ * (even getUrl()) is a StrictMode violation — so the host is recorded here on
+ * the Main thread (onPageStarted/onPageFinished/doUpdateVisitedHistory) and
+ * only read off-Main. Weak keys: dead tabs drop out by themselves.
+ */
+private object PageHosts {
+    private val map = java.util.Collections.synchronizedMap(java.util.WeakHashMap<WebView, String>())
+    fun set(wv: WebView?, url: String) {
+        if (wv == null || url.isBlank()) return
+        try {
+            val h = SitePrefs.hostOf(url)
+            if (h.isNotBlank()) map[wv] = h
+        } catch (_: Exception) {}
+    }
+    fun get(wv: WebView?): String? = try { wv?.let { map[it] } } catch (_: Exception) { null }
+}
 
 @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
@@ -59,10 +79,17 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
 
     val settings = wv.settings
     // Cache respects Settings toggle (BrowserProfile already applied it) — don't force LOAD_DEFAULT.
+    // Smoothness-first: hardware layer + high render priority (extra RAM accepted).
     try {
         settings.loadsImagesAutomatically = true
         settings.blockNetworkImage = false
         settings.loadWithOverviewMode = true
+        @Suppress("DEPRECATION")
+        settings.setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH)
+    } catch (_: Exception) {}
+    try {
+        wv.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+        wv.isVerticalScrollBarEnabled = true
     } catch (_: Exception) {}
 
     val bridge = DownloadHelper.BlobBridge(app)
@@ -75,8 +102,10 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
             try {
                 val u = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
+                // NEVER touch view?.url here: this runs off-Main and any WebView
+                // method call is a StrictMode WebViewMethodCalledOnWrongThreadViolation.
                 val host = request.url?.host ?: ""
-                val pageHost = try { view?.url?.let { SitePrefs.hostOf(it) } ?: host } catch (_: Exception) { host }
+                val pageHost = PageHosts.get(view) ?: host
                 if (SitePrefs.effectiveAdblock(app, pageHost) && Adblock.isAdUrl(u)) {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
@@ -87,6 +116,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
             super.onPageStarted(v, url, favicon)
             if (url != null) {
+                try { if (v != null) PageHosts.set(v, url) } catch (_: Exception) {}
                 // Per-site overrides win over global switches.
                 try {
                     val host = SitePrefs.hostOf(url)
@@ -99,14 +129,10 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                         if (wantDesk && v.settings.userAgentString != DESKTOP_UA) v.settings.userAgentString = DESKTOP_UA
                         else if (!wantDesk && v.settings.userAgentString == DESKTOP_UA) v.settings.userAgentString = null
                     }
-                    // Render layer per site: hardware everywhere for smooth scroll,
-                    // software only where it fixes flicker (WTR fixed panels).
+                    // Smooth scrolling over flicker hacks: hardware layers everywhere
+                    // (user accepted extra RAM for smoothness).
                     if (v != null) {
-                        val soft = host.contains("wtr-lab.com")
-                        v.setLayerType(
-                            if (soft) android.view.View.LAYER_TYPE_SOFTWARE else android.view.View.LAYER_TYPE_HARDWARE,
-                            null
-                        )
+                        v.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
                     }
                 } catch (_: Exception) {}
                 cb.onStarted(url)
@@ -114,9 +140,20 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
             }
         }
 
+        override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
+            super.doUpdateVisitedHistory(v, url, isReload)
+            // Fires on pushState/replaceState too (no onPageStarted there) — keeps the
+            // tab's URL in sync for SPAs so switching tabs doesn't reload them.
+            // Runs on Main: safe to touch the WebView, but we don't need to.
+            if (url != null && !isReload) {
+                try { cb.onVisited(url) } catch (_: Exception) {}
+            }
+        }
+
         override fun onPageFinished(v: WebView?, url: String?) {
             super.onPageFinished(v, url)
             if (url != null && v != null) {
+                try { PageHosts.set(v, url) } catch (_: Exception) {}
                 cb.onFinished(url, v.title ?: url)
                 try { BrowserAgent.ensureShim(v) } catch (_: Exception) {}
                 try { BrowserAgent.rearmRecorder(v) } catch (_: Exception) {}
