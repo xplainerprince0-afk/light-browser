@@ -1028,7 +1028,7 @@ private fun AgentSheet(onClose: () -> Unit) {
         var recVersion by remember { mutableStateOf(0) }
         var recs by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
         // Loaded async — was runBlocking on Main during composition (startup ANR risk).
-        LaunchedEffect(recordingNow, recVersion, showAgent) {
+        LaunchedEffect(recordingNow, recVersion) {
             try {
                 recs = withContext(kotlinx.coroutines.Dispatchers.IO) { com.lightbrowser.data.BrowserAgent.listRecordings().take(5) }
             } catch (_: Exception) { recs = emptyList() }
