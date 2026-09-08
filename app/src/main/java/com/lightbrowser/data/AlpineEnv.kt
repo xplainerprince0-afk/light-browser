@@ -63,9 +63,11 @@ object AlpineEnv {
             extractTarGz(tarball, dest)
             tarball.delete()
             // Verify real rootfs (not a 404 HTML page): busybox must exist.
+            // Clean partial rootfs on failure so retries aren't poisoned.
             val bb = listOf(File(dest, "bin/busybox"), File(dest, "usr/bin/busybox")).firstOrNull { it.exists() }
             if (bb == null) {
-                onProgress("Extract failed (not a valid rootfs) — deleted, retry download")
+                onProgress("Extract failed (not a valid rootfs) — cleaned, retry download")
+                try { dest.deleteRecursively(); dest.mkdirs() } catch (_: Exception) {}
                 return false
             }
             try { bb.setExecutable(true) } catch (_: Exception) {}
@@ -98,6 +100,7 @@ object AlpineEnv {
 
     private fun downloadFile(urlStr: String, dest: File, onProgress: (String) -> Unit) {
         val conn = URL(urlStr).openConnection() as HttpURLConnection
+        try {
         conn.connectTimeout = 30_000
         conn.readTimeout = 120_000
         conn.instanceFollowRedirects = true
@@ -119,6 +122,9 @@ object AlpineEnv {
                     }
                 }
             }
+        }
+        } finally {
+            try { conn.disconnect() } catch (_: Exception) {}
         }
     }
 
@@ -153,7 +159,7 @@ object AlpineEnv {
                     ) {
                         unsafeEntry = true
                     }
-                } catch (_: Exception) { unsafeEntry = false }
+                } catch (_: Exception) { unsafeEntry = true }
                 if (unsafeEntry) {
                     // Consume this entry's bytes so the stream stays aligned, then skip it.
                     var toSkip = size + (512 - (size % 512)) % 512

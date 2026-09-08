@@ -144,6 +144,78 @@ object BrowserAgent {
         runOnPage { try { it.findNext(forward) } catch (_: Exception) {} }
     }
 
+    /** Real tap at CSS-pixel coords (from `locate`): full touch pipeline, trusted by pages. */
+    fun tapAt(xCss: Float, yCss: Float) {
+        mainHandler.post {
+            try {
+                val wv = webViewProvider?.invoke() ?: return@post
+                val s = try { wv.scale } catch (_: Exception) { 1f }
+                val x = xCss * s
+                val y = yCss * s
+                val now = android.os.SystemClock.uptimeMillis()
+                val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
+                try { wv.dispatchTouchEvent(down) } catch (_: Exception) {} finally {
+                    try { down.recycle() } catch (_: Exception) {}
+                }
+                wv.postDelayed({
+                    try {
+                        val up = android.view.MotionEvent.obtain(now, now + 60, android.view.MotionEvent.ACTION_UP, x, y, 0)
+                        try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
+                            try { up.recycle() } catch (_: Exception) {}
+                        }
+                    } catch (_: Exception) {}
+                }, 70)
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** Drag from (x1,y1) to (x2,y2) in CSS px over ~ms: scrolls, sliders, drawers. */
+    fun swipe(x1Css: Float, y1Css: Float, x2Css: Float, y2Css: Float, ms: Long = 300) {
+        mainHandler.post {
+            try {
+                val wv = webViewProvider?.invoke() ?: return@post
+                val s = try { wv.scale } catch (_: Exception) { 1f }
+                val x1 = x1Css * s; val y1 = y1Css * s; val x2 = x2Css * s; val y2 = y2Css * s
+                val steps = 8
+                val t0 = android.os.SystemClock.uptimeMillis()
+                try {
+                    val down = android.view.MotionEvent.obtain(t0, t0, android.view.MotionEvent.ACTION_DOWN, x1, y1, 0)
+                    try { wv.dispatchTouchEvent(down) } catch (_: Exception) {} finally {
+                        try { down.recycle() } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {}
+                for (i in 1..steps) {
+                    val f = i.toFloat() / steps
+                    val t = t0 + (ms * f).toLong()
+                    val idx = i
+                    wv.postDelayed({
+                        try {
+                            val mv = android.view.MotionEvent.obtain(t0, t, android.view.MotionEvent.ACTION_MOVE, x1 + (x2 - x1) * (idx.toFloat() / steps), y1 + (y2 - y1) * (idx.toFloat() / steps), 0)
+                            try { wv.dispatchTouchEvent(mv) } catch (_: Exception) {} finally {
+                                try { mv.recycle() } catch (_: Exception) {}
+                            }
+                        } catch (_: Exception) {}
+                    }, (ms * f).toLong())
+                }
+                wv.postDelayed({
+                    try {
+                        val t = android.os.SystemClock.uptimeMillis()
+                        val up = android.view.MotionEvent.obtain(t0, t, android.view.MotionEvent.ACTION_UP, x2, y2, 0)
+                        try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
+                            try { up.recycle() } catch (_: Exception) {}
+                        }
+                    } catch (_: Exception) {}
+                }, ms + 30)
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** Locate a ref/selector → center coords JSON (or ERR). Worker-safe. */
+    fun locateBlocking(sel: String, timeoutS: Long = 12): String {
+        val esc = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+        return evalBlockingJs("(function(){try{return JSON.stringify(window.LightAgent?window.LightAgent.locate('$esc'):'ERR no-shim');}catch(e){return 'ERR '+e;}})()", timeoutS)
+    }
+
     fun currentUrl(): String? = try {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             webViewProvider?.invoke()?.url
@@ -153,7 +225,8 @@ object BrowserAgent {
                 try { f.complete(webViewProvider?.invoke()?.url) } catch (_: Exception) { f.complete(null) }
             }
             try { f.get(2, TimeUnit.SECONDS) } catch (_: Exception) {
-                try { webViewProvider?.invoke()?.url } catch (_: Exception) { null }
+                // Timeout: Main is wedged — never touch the WebView off-Main as fallback.
+                null
             }
         }
     } catch (_: Exception) { null }
@@ -242,6 +315,7 @@ object BrowserAgent {
             getText:function(m){return document.body?document.body.innerText.slice(0,m||8000):'';},
             click:function(t){var s=refs[t]||t;var e=document.querySelector(s);if(!e)return 'ERR no-node';try{e.scrollIntoView({block:'center'});}catch(err){}e.click();return 'OK';},
             fill:function(t,v){var s=refs[t]||t;var e=document.querySelector(s);if(!e)return 'ERR no-node';e.focus();e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'OK';},
+            locate:function(t){var s=refs[t]||t;var e=null;try{e=document.querySelector(s);}catch(err){return 'ERR bad-sel';}if(!e)return 'ERR no-node';try{var b=e.getBoundingClientRect();var cx=Math.round((b.left+b.right)/2),cy=Math.round((b.top+b.bottom)/2);return JSON.stringify({x:cx,y:cy,w:Math.round(b.width),h:Math.round(b.height),left:Math.round(b.left),top:Math.round(b.top),scrollX:Math.round(window.scrollX),scrollY:Math.round(window.scrollY)});}catch(err){return 'ERR '+err;}},
             scroll:function(y){try{window.scrollBy(0,y||500);}catch(err){}return 'OK';},
             describe:function(e){
               try{
@@ -398,6 +472,24 @@ object BrowserAgent {
 
     // ── Localhost HTTP server (same-device testing only) ──
 
+    /** Blocking JS eval for worker threads: posts to Main, waits on WORKER. Shared by handle() + locateBlocking. */
+    private fun evalBlockingJs(js: String, timeoutS: Long = 12): String {
+        val f = CompletableFuture<String>()
+        mainHandler.post {
+            try {
+                val wv = webViewProvider?.invoke()
+                if (wv == null) { f.complete("ERR no-webview"); return@post }
+                try { ensureShim(wv) } catch (_: Exception) {}
+                wv.evaluateJavascript(js) { raw ->
+                    try { if (!f.isDone) f.complete(raw ?: "null") } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
+                try { if (!f.isDone) f.complete("ERR ${e.message}") } catch (_: Exception) {}
+            }
+        }
+        return try { f.get(timeoutS, TimeUnit.SECONDS) ?: "ERR timeout" } catch (_: Exception) { "ERR timeout" }
+    }
+
     @Synchronized
     fun startServer(): String {
         stopServer()
@@ -499,22 +591,7 @@ object BrowserAgent {
      *  never future.get() on Main (that deadlocks: Main waiting on Main). */
     private fun handle(path: String, q: Map<String, String>): String {
         // Blocking JS eval helper for worker threads: posts to Main, waits on WORKER.
-        fun evalBlocking(js: String, timeoutS: Long = 12): String {
-            val f = CompletableFuture<String>()
-            mainHandler.post {
-                try {
-                    val wv = webViewProvider?.invoke()
-                    if (wv == null) { f.complete("ERR no-webview"); return@post }
-                    try { ensureShim(wv) } catch (_: Exception) {}
-                    wv.evaluateJavascript(js) { raw ->
-                        try { if (!f.isDone) f.complete(raw ?: "null") } catch (_: Exception) {}
-                    }
-                } catch (e: Exception) {
-                    try { if (!f.isDone) f.complete("ERR ${e.message}") } catch (_: Exception) {}
-                }
-            }
-            return try { f.get(timeoutS, TimeUnit.SECONDS) ?: "ERR timeout" } catch (_: Exception) { "ERR timeout" }
-        }
+        fun evalBlocking(js: String, timeoutS: Long = 12): String = evalBlockingJs(js, timeoutS)
         fun awaitMain(op: () -> String): String {
             val f = CompletableFuture<String>()
             mainHandler.post {
@@ -564,6 +641,33 @@ object BrowserAgent {
                 }
                 """{"ok":true}"""
             }
+            "/pos" -> {
+                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+                val raw = locateBlocking(sel, 12).take(4_000)
+                JSONObject().put("ok", !raw.startsWith("ERR")).put("rect", raw).toString()
+            }
+            "/tap" -> {
+                val x = q["x"]?.toFloatOrNull()
+                val y = q["y"]?.toFloatOrNull()
+                if (x == null || y == null) return """{"ok":false,"err":"missing x/y"}"""
+                tapAt(x, y)
+                """{"ok":true}"""
+            }
+            "/swipe" -> {
+                val x1 = q["x1"]?.toFloatOrNull()
+                val y1 = q["y1"]?.toFloatOrNull()
+                val x2 = q["x2"]?.toFloatOrNull()
+                val y2 = q["y2"]?.toFloatOrNull()
+                if (x1 == null || y1 == null || x2 == null || y2 == null) return """{"ok":false,"err":"missing x1/y1/x2/y2"}"""
+                swipe(x1, y1, x2, y2, q["ms"]?.toLongOrNull()?.coerceIn(50, 2000) ?: 300)
+                """{"ok":true}"""
+            }
+            "/scrollto" -> {
+                val x = q["x"]?.toIntOrNull() ?: 0
+                val y = q["y"]?.toIntOrNull() ?: 0
+                val raw = evalBlockingJs("(function(){try{window.scrollTo($x,$y);return 'OK '+window.scrollX+','+window.scrollY;}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
+            }
             "/reload" -> {
                 runOnPage { try { it.reload() } catch (_: Exception) {} }
                 """{"ok":true}"""
@@ -610,7 +714,7 @@ object BrowserAgent {
                 if (path != null) JSONObject().put("ok", true).put("path", path).toString()
                 else """{"ok":false,"err":"shot failed"}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /text /snap /js /click /fill /back /forward /reload /stop /find /console /shot"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /text /snap /js /click /fill /pos /tap /swipe /scrollto /back /forward /reload /stop /find /console /shot"}"""
         }
     }
 }

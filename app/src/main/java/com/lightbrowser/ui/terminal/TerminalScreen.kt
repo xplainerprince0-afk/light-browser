@@ -91,6 +91,12 @@ fun TerminalScreen(
     val scroll = rememberScrollState()
 
     LaunchedEffect(Unit) { vm.init() }
+    LaunchedEffect(Unit) {
+        try {
+            kotlinx.coroutines.delay(300)
+            focus.requestFocus()
+        } catch (_: Exception) {}
+    }
     // Keep the caret visible when output lands; typing at the end is already there.
     LaunchedEffect(editor.text) {
         if (!follow) return@LaunchedEffect
@@ -213,23 +219,11 @@ fun TerminalScreen(
                 keyboardActions = KeyboardActions(onSend = {
                     val mod = sticky
                     if (mod != null) {
-                        val cur = vm.editor.value.text
-                        val lastLine = cur.substringAfterLast("\n")
-                        if (mod == "CTRL" && lastLine.length == 1) {
-                            val code = lastLine[0].lowercaseChar() - 'a' + 1
-                            if (code in 1..26) {
-                                // Replace typed char with control code on the last line
-                                val base = cur.substringBeforeLast("\n").let { if (cur.contains("\n")) "$it\n" else "" }
-                                val prompt = lastLine.dropLast(1)
-                                vm.onEditorChange(
-                                    androidx.compose.ui.text.input.TextFieldValue(
-                                        androidx.compose.ui.text.AnnotatedString(base + prompt + String(Character.toChars(code))),
-                                        androidx.compose.ui.text.TextRange((base + prompt).length + 1)
-                                    )
-                                )
-                            }
+                        // CTRL converts the lone typed char (prompt-aware — the old check
+                        // counted the prompt so it never fired). ALT sends ESC prefix.
+                        if (mod == "CTRL") {
+                            try { vm.consumeCtrlChar() } catch (_: Exception) {}
                         } else if (mod == "ALT") {
-                            // ALT (Meta) sends ESC prefix — consume sticky (was left armed forever).
                             try { vm.insertText("\u001B") } catch (_: Exception) {}
                         }
                         sticky = null

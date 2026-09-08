@@ -161,9 +161,94 @@ class TerminalViewModel : ViewModel() {
         s.built = b.toAnnotatedString()
     }
 
-    /** Append output text; keeps the caret glued to the end only if it was there. */
-    fun print(text: String, color: Color) {
+    // 16-color ANSI palette tuned for the black transcript background.
+    private val AnsiPalette = listOf(
+        Color(0xFF9E9E9E), Color(0xFFFF6B68), Color(0xFF4CAF50), Color(0xFFFFD54F),
+        Color(0xFF64B5F6), Color(0xFFCE93D8), Color(0xFF4DD0E1), Color(0xFFE0E0E0),
+        Color(0xFF757575), Color(0xFFFF8A80), Color(0xFF69F0AE), Color(0xFFFFE57F),
+        Color(0xFF82B1FF), Color(0xFFEA80FC), Color(0xFF84FFFF), Color(0xFFFFFFFF)
+    )
+
+    /**
+     * Print shell output with ANSI SGR colors. Handles `clear` escapes by wiping
+     * the buffer, strips cursor/OSC sequences, folds \r progress lines.
+     * (A hand-rolled SGR pass: the Termux emulator/view libs would add a full
+     * View-system renderer + GPLv3 + foreground-service rewrite for the same
+     * visible result — see the research note in the commit message.)
+     */
+    fun printAnsi(raw: String, default: Color) {
         try {
+            var s = raw
+            // Clear-screen escapes wipe the transcript (then we print what follows).
+            if (s.contains("\u001B[2J") || s.contains("\u001B[3J") || s.contains("\u001Bc")) {
+                try {
+                    val sess = active()
+                    sess.segs.clear()
+                    sess.built = AnnotatedString("")
+                    sess.editor = TextFieldValue(AnnotatedString(""))
+                    _editor.value = sess.editor
+                } catch (_: Exception) {}
+                s = s.replace(Regex("\u001B\\[(2J|3J|H|2[H])")).replace("\u001Bc", "")
+            }
+            // Drop OSC sequences + other CSI/charset escapes (keep SGR `m` for below).
+            s = s.replace(Regex("\u001B\\][^\u0007]*\u0007"), "")
+            s = s.replace(Regex("\u001B[()#][0-9A-B]"), "")
+            s = s.replace(Regex("\u001B[?0-9;]*[A-ORZcf-nq-uy=><]"), "")
+            // Progress-bar \r: keep the last segment of each line.
+            s = s.split("\n").joinToString("\n") { it.substringAfterLast("\r") }
+            if (!s.endsWith("\n")) s += "\n"
+            if (!s.contains("\u001B[")) {
+                if (s.isNotEmpty()) print(s, default)
+                return
+            }
+            var cur: Color = default
+            val parts = s.split(Regex("\u001B\\[([0-9;]*)m"))
+            // split keeps: text, codes, text, codes… — even indices are text.
+            parts.forEachIndexed { idx, part ->
+                if (idx % 2 == 0) {
+                    if (part.isNotEmpty()) print(part, cur)
+                } else {
+                    val nums = part.split(";").mapNotNull { it.toIntOrNull() }
+                    var i = 0
+                    if (nums.isEmpty()) cur = default
+                    while (i < nums.size) {
+                        when (val n = nums[i]) {
+                            0 -> cur = default
+                            1 -> { /* bold: single-color transcript, ignore */ }
+                            22, 39 -> cur = default
+                            in 30..37 -> cur = AnsiPalette[n - 30]
+                            in 90..97 -> cur = AnsiPalette[n - 90 + 8]
+                            38 -> {
+                                // 38;5;n and 38;2;r;g;b true/256-color.
+                                when (nums.getOrNull(i + 1)) {
+                                    5 -> {
+                                        val c = nums.getOrNull(i + 2)
+                                        if (c != null && c in 0..15) cur = AnsiPalette[c]
+                                        i += 2
+                                    }
+                                    2 -> {
+                                        val r = nums.getOrNull(i + 2); val g = nums.getOrNull(i + 3); val b = nums.getOrNull(i + 4)
+                                        if (r != null && g != null && b != null) {
+                                            cur = Color(r.coerceIn(0, 255), g.coerceIn(0, 255), b.coerceIn(0, 255))
+                                        }
+                                        i += 4
+                                    }
+                                    else -> i += 1
+                                }
+                            }
+                            else -> { /* bg colors etc: ignore on black bg */ }
+                        }
+                        i++
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            try { print(raw, default) } catch (_: Exception) {}
+        }
+    }
+
+    /** Append output text; keeps the caret glued to the end only if it was there. */
+    fun print(text: String, color: Color) {        try {
             val s = active()
             val wasAtEnd = s.editor.selection.start >= s.editor.text.length
             s.segs.add(Seg(text, color))
@@ -385,6 +470,29 @@ class TerminalViewModel : ViewModel() {
         replaceLastLine(s.promptText + t)
     }
 
+    /** Replace a lone typed char on the current line with its CTRL code.
+     *  Returns false when there is nothing to convert (caller then submits). */
+    fun consumeCtrlChar(): Boolean {
+        return try {
+            val s = active()
+            val cur = _editor.value
+            val raw = cur.text.substringAfterLast("\n")
+            val typed = if (raw.startsWith(s.promptText)) raw.removePrefix(s.promptText) else raw
+            if (typed.length != 1) return false
+            val code = typed[0].lowercaseChar() - 'a' + 1
+            if (code !in 1..26) return false
+            val base = cur.text.substringBeforeLast("\n").let { if (cur.text.contains("\n")) "$it\n" else "" }
+            val prompt = if (raw.startsWith(s.promptText)) s.promptText else ""
+            onEditorChange(
+                TextFieldValue(
+                    AnnotatedString(base + prompt + String(Character.toChars(code))),
+                    TextRange((base + prompt).length + 1)
+                )
+            )
+            true
+        } catch (_: Exception) { false }
+    }
+
     /** Replace everything after the last newline with [line], caret to end. */
     private fun replaceLastLine(line: String) {
         val v = _editor.value
@@ -411,7 +519,10 @@ class TerminalViewModel : ViewModel() {
             printPrompt()
             return
         }
-        if (s.history.isEmpty() || s.history.last() != trimmed) s.history.add(trimmed)
+        if (s.history.isEmpty() || s.history.last() != trimmed) {
+            s.history.add(trimmed)
+            if (s.history.size > 200) s.history.removeAt(0)
+        }
         s.histIndex = s.history.size
         print("\n", TermWhite)
         // Freeze the transcript (prompt + command line included) until done.
@@ -431,11 +542,9 @@ class TerminalViewModel : ViewModel() {
     }
 
     fun clear() {
-        // Don't wipe transcript mid-run (left lock/running dangling before).
-        if (lockBefore >= 0 || running != null) {
-            print("(busy — Ctrl+C to kill before clear)\n", TermDim)
-            return
-        }
+        // Reset the lock: submit() sets it before execCmd, so a guarded early-return
+        // here permanently bricked the terminal after every `clear` command.
+        lockBefore = -1
         try {
             val s = active()
             s.segs.clear()
@@ -520,10 +629,14 @@ class TerminalViewModel : ViewModel() {
                     afterCommand()
                 }
                 "rm" -> {
-                    if (arg.isBlank()) { print("Usage: rm <file> (use rm -r for dirs)\n", TermRed); afterCommand(); return }
-                    val st = resolve(arg)
+                    if (arg.isBlank()) { print("Usage: rm [-r] <file>\n", TermRed); afterCommand(); return }
+                    val toks = splitArgs(arg)
+                    val recursive = toks.any { it.startsWith("-") && it.contains("r") }
+                    val target = toks.lastOrNull { !it.startsWith("-") } ?: ""
+                    if (target.isBlank()) { print("Usage: rm [-r] <file>\n", TermRed); afterCommand(); return }
+                    val st = resolve(target)
                     if (st == null) { print("Access denied\n", TermRed); afterCommand(); return }
-                    if (st.isDirectory && !arg.contains("-r")) { print("rm: is a directory (use explicit path)\n", TermRed); afterCommand(); return }
+                    if (st.isDirectory && !recursive) { print("rm: is a directory (use rm -r)\n", TermRed); afterCommand(); return }
                     val ok = if (st.isDirectory) st.deleteRecursively() else st.delete()
                     print((if (ok) "Deleted" else "Failed") + "\n", TermDim)
                     afterCommand()
@@ -596,7 +709,11 @@ class TerminalViewModel : ViewModel() {
 
     private fun installAlpine() {
         val sd = sandboxDir ?: return
-        if (_status.value == "installing") { print("Already installing…\n", TermDim); lockBefore = -1; return }
+        if (_status.value == "installing") {
+            print("Already installing…\n", TermDim)
+            afterCommand()
+            return
+        }
         print("Installing Alpine Linux…\n", TermWhite)
         _status.value = "installing"
         viewModelScope.launch(Dispatchers.IO) {
@@ -621,9 +738,11 @@ class TerminalViewModel : ViewModel() {
     /** Single-quote shell escaping (filenames with " $ ` are crafted via import/zip). */
     private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
+    /** Built-ins win over user aliases. */
+    private fun isBuiltinB(head: String): Boolean = BuiltinB.contains(head.trim().lowercase())
+
     /** Lenient URL resolver for `b open/new` (localhost + bare domains). */
-    private fun resolveUrlish(t: String): String? {
-        val s = t.trim()
+    private fun resolveUrlish(t: String): String? {        val s = t.trim()
         if (s.isEmpty()) return null
         if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("lb://")) return s
         if (!s.contains(" ") && (s.contains(".") || s.startsWith("localhost") || s.startsWith("127."))) {
@@ -663,6 +782,8 @@ class TerminalViewModel : ViewModel() {
                 val env = AlpineEnv.buildEnvironment(sd, cwd)
                 process = Runtime.getRuntime().exec(arrayOf("sh", "-c", fullCmd), env, cwd)
                 running = process
+                // Nothing ever writes to stdin: close it so readers can't hang on it.
+                try { process.outputStream.close() } catch (_: Exception) {}
                 // Drain stdout+stderr CONCURRENTLY (serial drain deadlocks when stderr fills).
                 val outBuf = StringBuilder()
                 val tOut = Thread {
@@ -712,7 +833,8 @@ class TerminalViewModel : ViewModel() {
                 if (result.length > 4000) result = result.take(4000) + "\n…truncated"
                 val finalResult = result
                 withContext(Dispatchers.Main) {
-                    if (finalResult.isNotEmpty()) print("$finalResult\n", TermWhite)
+                    // ANSI-aware: colors + `clear` + progress-bar folding.
+                    if (finalResult.isNotEmpty()) printAnsi(finalResult, TermWhite)
                     // If killed while waiting, killRunning already printed prompt — don't double.
                     if (running != null) { afterCommand(); _status.value = "idle" }
                 }
@@ -743,15 +865,28 @@ class TerminalViewModel : ViewModel() {
                 out("--- END PAGE CONTENT ---\n", TermDim)
             }
             try {
-                val parts = line.split(" ", limit = 3)
+                // User-alias expansion (max 3 hops, builtins always win) so new
+                // `b` commands can be added inside the terminal, no app update.
+                var cmd = line
+                var hops = 0
+                while (hops < 3) {
+                    val head = cmd.substringBefore(" ").trim()
+                    if (head.isEmpty() || isBuiltinB(head)) break
+                    val exp = BrowserAliases.expand(cmd) ?: break
+                    cmd = exp; hops++
+                }
+                if (hops > 0) out("→ $cmd\n", TermDim)
+                val parts = cmd.split(" ", limit = 3)
                 when (parts.getOrNull(0) ?: "") {
                     "", "help" -> out(
                         "b open <url> | back | forward | reload | stop | url | title | home\n" +
                             "b tabs | new <url> | close [n] — tab control\n" +
                             "b js <expr> | text [max] | dom [css] | snap\n" +
                             "b click <ref|css> | fill <ref|css> <val> [--submit]\n" +
-                            "b find <text> | next | prev — find in page\n" +
-                            "b scroll [px] | shot | console [n] | cookies | save <name>\n" +
+                            "b pos <ref|css> → coords | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]\n" +
+                            "b find <text> | next | prev | b scroll-to <x> <y> | b scroll [px]\n" +
+                            "b shot | console [n] | cookies | save <name>\n" +
+                            "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
                             "b record start|stop|save <n>|list | serve\n", TermDim
                     )
                     "open" -> {
@@ -817,13 +952,88 @@ class TerminalViewModel : ViewModel() {
                     }
                     "next" -> com.lightbrowser.data.BrowserAgent.findNext(true)
                     "prev" -> com.lightbrowser.data.BrowserAgent.findNext(false)
+                    "pos" -> {
+                        // Resolve ref/css → screen coords (CSS px). Feed them to `b tap`.
+                        val sel = parts.getOrNull(1) ?: ""
+                        if (sel.isBlank()) out("Usage: b pos <ref|css>  (try b snap first)\n", TermRed)
+                        else {
+                            val raw = com.lightbrowser.data.BrowserAgent.locateBlocking(sel)
+                            if (raw.startsWith("ERR")) out("$raw\n", TermRed)
+                            else {
+                                try {
+                                    // Double-encoded: evaluateJavascript quotes + locate's JSON.stringify.
+                                    var s = raw.trim()
+                                    repeat(2) {
+                                        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                                            s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                                        }
+                                    }
+                                    val o = org.json.JSONObject(s)
+                                    val x = o.optInt("x", -1); val y = o.optInt("y", -1)
+                                    if (x < 0 || y < 0) out("$raw\n", TermRed)
+                                    else out("x=$x y=$y w=${o.optInt("w")} h=${o.optInt("h")}  →  b tap $x $y\n", TermGreen)
+                                } catch (_: Exception) { out("$raw\n", TermWhite) }
+                            }
+                        }
+                    }
+                    "tap" -> {
+                        val x = parts.getOrNull(1)?.toFloatOrNull()
+                        val rest = parts.getOrNull(2)?.split(" ")?.firstOrNull()?.toFloatOrNull()
+                        if (x == null || rest == null) out("Usage: b tap <x> <y>  (get coords via b pos)\n", TermRed)
+                        else {
+                            com.lightbrowser.data.BrowserAgent.tapAt(x, rest)
+                            out("Tapped $x,$rest\n", TermGreen)
+                        }
+                    }
+                    "swipe" -> {
+                        // b swipe x1 y1 x2 y2 [ms] — drags: scrolls, sliders, drawers.
+                        val nums = line.substringAfter("swipe").trim().split(Regex("\\s+")).mapNotNull { it.toFloatOrNull() }
+                        if (nums.size < 4) out("Usage: b swipe <x1> <y1> <x2> <y2> [ms]\n", TermRed)
+                        else {
+                            com.lightbrowser.data.BrowserAgent.swipe(nums[0], nums[1], nums[2], nums[3], nums.getOrNull(4)?.toLong()?.coerceIn(50, 2000) ?: 300)
+                            out("Swiped\n", TermGreen)
+                        }
+                    }
+                    "scroll-to" -> {
+                        val nums = line.substringAfter("scroll-to").trim().split(Regex("\\s+")).mapNotNull { it.toIntOrNull() }
+                        if (nums.size < 2) out("Usage: b scroll-to <x> <y>\n", TermRed)
+                        else {
+                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{window.scrollTo(${nums[0]},${nums[1]});return 'OK '+window.scrollX+','+window.scrollY;}catch(e){return 'ERR '+e;}})()")
+                            out("$r\n", TermGreen)
+                        }
+                    }
+                    "alias" -> {
+                        val sub = parts.getOrNull(1) ?: ""
+                        if (sub.isBlank()) {
+                            val all = BrowserAliases.all()
+                            if (all.isEmpty()) out("No aliases. Define: b alias <name> <expansion with \$1 \$2 \$@>\n", TermDim)
+                            else all.forEach { (k, v) -> out("$k  →  $v\n", TermWhite) }
+                        } else {
+                            val expansion = cmd.substringAfter(sub).trim()
+                            if (expansion.isBlank()) out("Usage: b alias <name> <expansion>\n", TermRed)
+                            else if (!sub.matches(Regex("[a-z0-9_-]+"))) out("Name must be [a-z0-9_-]+\n", TermRed)
+                            else if (isBuiltinB(sub)) out("'$sub' is built-in — aliases can't shadow builtins.\n", TermRed)
+                            else {
+                                BrowserAliases.set(sub, expansion)
+                                out("Alias '$sub' saved\n", TermGreen)
+                            }
+                        }
+                    }
+                    "unalias" -> {
+                        val sub = parts.getOrNull(1) ?: ""
+                        if (sub.isBlank()) out("Usage: b unalias <name>\n", TermRed)
+                        else {
+                            BrowserAliases.remove(sub)
+                            out("Removed '$sub'\n", TermGreen)
+                        }
+                    }
                     "url" -> out((com.lightbrowser.data.BrowserAgent.currentUrl() ?: "(none)") + "\n", TermWhite)
                     "title" -> {
                         val r = com.lightbrowser.data.BrowserAgent.eval("(function(){return document.title;})()")
                         out("$r\n", TermWhite)
                     }
                     "js" -> {
-                        val expr = line.removePrefix("js").trim()
+                        val expr = cmd.removePrefix("js").trim()
                         if (expr.isBlank()) out("Usage: b js <expr>\n", TermRed)
                         else {
                             val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return JSON.stringify(eval(" + expr + "));}catch(e){return 'ERR '+e;}})()")
@@ -831,7 +1041,7 @@ class TerminalViewModel : ViewModel() {
                         }
                     }
                     "text" -> {
-                        val max = parts.getOrNull(1)?.toIntOrNull() ?: 8000
+                        val max = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(100, 60_000) ?: 8000
                         val r = com.lightbrowser.data.BrowserAgent.pageText(max)
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
                     }
@@ -855,7 +1065,7 @@ class TerminalViewModel : ViewModel() {
                         }
                     }
                     "fill" -> {
-                        var rest = line.removePrefix("fill").trim()
+                        var rest = cmd.removePrefix("fill").trim()
                         var submit = false
                         if (rest.endsWith("--submit")) {
                             submit = true
@@ -951,7 +1161,9 @@ class TerminalViewModel : ViewModel() {
                             try {
                                 var s = r.trim()
                                 if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
-                                    s = s.substring(1, s.length - 1).replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+                                    s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) {
+                                        s.substring(1, s.length - 1).replace("\\n", "\n").replace("\\\"", "\"")
+                                    }
                                 }
                                 r = s
                             } catch (_: Exception) {}
@@ -968,7 +1180,7 @@ class TerminalViewModel : ViewModel() {
                             }
                         }
                     }
-                    else -> out("Unknown b command. Try: b help\n", TermRed)
+                    else -> out("Unknown b command. Try: b help (or define your own: b alias name expansion)\n", TermRed)
                 }
             } catch (e: Exception) {
                 out("b error: ${e.message}\n", TermRed)
@@ -977,8 +1189,7 @@ class TerminalViewModel : ViewModel() {
         }
     }
 
-    private fun isAllowed(path: File): Boolean {
-        val sd = sandboxDir ?: return false
+        private fun isAllowed(path: File): Boolean {        val sd = sandboxDir ?: return false
         return try {
             path.canonicalFile.absolutePath.startsWith(sd.canonicalFile.absolutePath)
         } catch (_: Exception) { false }
@@ -990,5 +1201,74 @@ class TerminalViewModel : ViewModel() {
         if (input.isBlank()) return cwd
         val f = if (input.startsWith("/")) File(input) else File(cwd, input)
         return if (isAllowed(f)) f else null
+    }
+}
+
+/** Built-in `b` command heads — aliases may not shadow these. */
+private val BuiltinB = setOf(
+    "help", "open", "new", "tabs", "close", "home", "back", "fwd", "forward",
+    "reload", "stop", "url", "title", "js", "text", "dom", "snap", "click",
+    "fill", "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
+    "prev", "shot", "console", "cookies", "save", "serve", "record",
+    "alias", "unalias"
+)
+
+/**
+ * User-defined `b` aliases, stored in SharedPreferences so new terminal
+ * commands can be added on-device without an app update.
+ * Expansion supports $1..$9 and $@ (all args). Example:
+ *   b alias read "text 4000"      →  b read runs `text 4000`
+ *   b alias g "open google.com"   →  b g runs `open google.com`
+ */
+object BrowserAliases {
+    private const val PREF = "term_aliases"
+    private const val KEY = "aliases"
+
+    private fun prefs() = try {
+        com.lightbrowser.data.AppCtx.ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+    } catch (_: Exception) { null }
+
+    fun all(): Map<String, String> {
+        return try {
+            val raw = prefs()?.getString(KEY, null) ?: return emptyMap()
+            val o = org.json.JSONObject(raw)
+            buildMap {
+                o.keys().forEach { k ->
+                    try { put(k, o.optString(k, "")) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    fun set(name: String, expansion: String) {
+        try {
+            val o = org.json.JSONObject()
+            all().forEach { (k, v) -> o.put(k, v) }
+            o.put(name, expansion.take(500))
+            prefs()?.edit()?.putString(KEY, o.toString())?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun remove(name: String) {
+        try {
+            val o = org.json.JSONObject()
+            all().filterKeys { it != name }.forEach { (k, v) -> o.put(k, v) }
+            prefs()?.edit()?.putString(KEY, o.toString())?.apply()
+        } catch (_: Exception) {}
+    }
+
+    /** Expand `name arg1 arg2…` via stored template ($1..$9, $@). Null if no alias. */
+    fun expand(line: String): String? {
+        val t = line.trim()
+        if (t.isEmpty()) return null
+        val name = t.substringBefore(" ").trim()
+        val args = t.substringAfter(" ", "").trim()
+            .split(Regex("\\s+")).filter { it.isNotEmpty() }
+        var template = all()[name] ?: return null
+        if (template.startsWith("b ")) template = template.removePrefix("b ").trim()
+        for (i in args.indices.take(9)) template = template.replace("\$${i + 1}", args[i])
+        template = template.replace(Regex("\\$[1-9]"), "")
+        template = template.replace("\$@", args.joinToString(" "))
+        return template.trim().take(1000).ifBlank { null }
     }
 }
