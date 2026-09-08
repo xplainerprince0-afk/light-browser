@@ -46,6 +46,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lightbrowser.data.AppCtx
@@ -294,7 +295,7 @@ private fun AppShell(
 /** Parks hidden tabs far offscreen: still composed (state kept), never touched. */
 private fun Modifier.offscreen(hidden: Boolean): Modifier =
     this.then(
-        androidx.compose.ui.layout.layout { measurable, constraints ->
+        layout { measurable, constraints ->
             val placeable = measurable.measure(constraints)
             layout(placeable.width, placeable.height) {
                 if (hidden) placeable.placeRelative(-100_000, -100_000)
