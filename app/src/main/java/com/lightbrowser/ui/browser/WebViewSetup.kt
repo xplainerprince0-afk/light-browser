@@ -9,11 +9,13 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import com.lightbrowser.data.Adblock
 import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.BrowserAgent
 import com.lightbrowser.data.BrowserProfile
 import com.lightbrowser.data.DownloadHelper
 import com.lightbrowser.data.Prefs
+import com.lightbrowser.data.SitePrefs
 import java.io.ByteArrayInputStream
 
 const val DESKTOP_UA =
@@ -64,25 +66,34 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         wv.addJavascriptInterface(bridge, "LightBlobBridge")
     } catch (_: Exception) {}
 
-    val adHosts = setOf(
-        "doubleclick.net", "googlesyndication.com", "googletagmanager.com",
-        "facebook.net", "adsystem", "googletagservices.com"
-    )
-
     wv.webViewClient = object : WebViewClient() {
         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-            if (Prefs.adBlock) {
+            try {
                 val host = request?.url?.host ?: ""
-                if (adHosts.any { host.contains(it, ignoreCase = true) }) {
+                val pageHost = try { view?.url?.let { SitePrefs.hostOf(it) } ?: host } catch (_: Exception) { host }
+                if (SitePrefs.effectiveAdblock(app, pageHost) && Adblock.isAd(host)) {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
-            }
+            } catch (_: Exception) {}
             return super.shouldInterceptRequest(view, request)
         }
 
         override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
             super.onPageStarted(v, url, favicon)
             if (url != null) {
+                // Per-site overrides win over global switches.
+                try {
+                    val host = SitePrefs.hostOf(url)
+                    val wantJs = SitePrefs.effectiveJs(app, host)
+                    if (v != null && v.settings.javaScriptEnabled != wantJs) {
+                        v.settings.javaScriptEnabled = wantJs
+                    }
+                    val wantDesk = SitePrefs.effectiveDesktop(app, host)
+                    if (v != null) {
+                        if (wantDesk && v.settings.userAgentString != DESKTOP_UA) v.settings.userAgentString = DESKTOP_UA
+                        else if (!wantDesk && v.settings.userAgentString == DESKTOP_UA) v.settings.userAgentString = null
+                    }
+                } catch (_: Exception) {}
                 cb.onStarted(url)
                 try { cb.inject(v!!, url, "document_start") } catch (_: Exception) {}
             }

@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -50,8 +52,10 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -95,6 +99,7 @@ import kotlinx.coroutines.launch
 fun BrowserScreen(
     modifier: Modifier = Modifier,
     active: Boolean = true,
+    keyboardOpen: Boolean = false,
     vm: BrowserViewModel = viewModel(),
     onOpenScripts: () -> Unit,
     onOpenDownloads: () -> Unit,
@@ -119,10 +124,15 @@ fun BrowserScreen(
     var findQuery by remember { mutableStateOf("") }
     var sheetSearch by remember { mutableStateOf("") }
     var showAgent by remember { mutableStateOf(false) }
+    var showReader by remember { mutableStateOf(false) }
+    var showSite by remember { mutableStateOf(false) }
 
     val loadReq by vm.loadRequest.collectAsState()
+    val findCount by vm.findCount.collectAsState()
+    val reader by vm.reader.collectAsState()
     LaunchedEffect(loadReq) {
         val (url, _) = loadReq ?: return@LaunchedEffect
+        if (url.startsWith("lb://")) return@LaunchedEffect
         try {
             webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
         } catch (_: Exception) {}
@@ -132,7 +142,7 @@ fun BrowserScreen(
         vm.setSearch(false)
         focusManager.clearFocus()
     }
-    BackHandler(enabled = active && !ui.searchExpanded && webView?.canGoBack() == true) {
+    BackHandler(enabled = active && !ui.searchExpanded && !keyboardOpen && webView?.canGoBack() == true) {
         try { webView?.goBack() } catch (_: Exception) {}
     }
 
@@ -160,7 +170,17 @@ fun BrowserScreen(
     }
 
     fun goTo(url: String) {
+        // Same page (e.g. tapping the current suggestion) must NOT reload.
+        try {
+            val cur = webView?.url
+            if (url.isNotBlank() && cur != null && cur == url) {
+                vm.setSearch(false)
+                focusManager.clearFocus()
+                return
+            }
+        } catch (_: Exception) {}
         vm.onPageStarted(url)
+        if (url.startsWith("lb://")) return // native screen, nothing to load
         try { webView?.loadUrl(url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
     }
 
@@ -299,11 +319,21 @@ fun BrowserScreen(
                         IconButton(onClick = { try { webView?.findNext(false) } catch (_: Exception) {} }) {
                             Icon(Icons.Filled.KeyboardArrowUp, "Prev")
                         }
+                        findCount?.let { (at, total) ->
+                            if (total > 0) Text(
+                                "$at/$total",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
                         IconButton(onClick = { try { webView?.findNext(true) } catch (_: Exception) {} }) {
                             Icon(Icons.Filled.KeyboardArrowDown, "Next")
                         }
                         IconButton(onClick = {
                             findOpen = false
+                            findQuery = ""
+                            vm.clearFind()
                             try { webView?.clearMatches() } catch (_: Exception) {}
                         }) { Icon(Icons.Filled.Close, "Close find") }
                     }
@@ -311,13 +341,23 @@ fun BrowserScreen(
             }
 
             // WebView fills the rest and is NEVER removed from composition.
-            AndroidView(
+            // The start page covers it opaquely instead of destroying it.
+            Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+                AndroidView(
                 factory = { c ->
                     WebView(c).also { wv ->
                         setupLightWebView(
                             wv,
                             BrowserCallbacks(
-                                onStarted = { vm.onPageStarted(it) },
+                                onStarted = {
+                                    // Remember where we were on the previous page…
+                                    try {
+                                        webView?.let { wv ->
+                                            wv.url?.let { u -> vm.saveScroll(u, wv.scrollY) }
+                                        }
+                                    } catch (_: Exception) {}
+                                    vm.onPageStarted(it)
+                                },
                                 onProgress = {
                                     vm.onProgress(it)
                                     try {
@@ -325,33 +365,62 @@ fun BrowserScreen(
                                         canGoForward = webView?.canGoForward() == true
                                     } catch (_: Exception) {}
                                 },
-                                onFinished = { url, title -> vm.onPageFinished(url, title) },
+                                onFinished = { url, title ->
+                                    vm.onPageFinished(url, title)
+                                    // …and jump back there when revisiting.
+                                    try {
+                                        vm.popScroll(url)?.let { y ->
+                                            webView?.postDelayed({
+                                                try { webView?.scrollTo(0, y) } catch (_: Exception) {}
+                                            }, 400)
+                                        }
+                                    } catch (_: Exception) {}
+                                },
                                 onLongPressUrl = { longPressUrl = it },
                                 inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
                             )
                         )
                     webView = wv
                     try { com.lightbrowser.data.BrowserAgent.webViewProvider = { webView } } catch (_: Exception) {}
+                    wv.setFindListener { ordinal, total, _ -> vm.setFind(ordinal + 1, total) }
                     val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
+                    if (!start.startsWith("lb://")) {
                         try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+                    }
                     }
                 },
                 modifier = Modifier.fillMaxSize().weight(1f),
                 update = { wv ->
                     if (webView == null) webView = wv
-                    var js = true
-                    var desk = false
-                    try { js = Prefs.jsEnabled } catch (_: Exception) {}
-                    try { desk = Prefs.desktopMode } catch (_: Exception) {}
+                    // Global switches apply only when this host has no per-site override
+                    // (per-site values are applied on every page start in WebViewSetup).
                     try {
-                        if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
-                        if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
-                        else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
-                            wv.settings.userAgentString = System.getProperty("http.agent")
+                        val host = com.lightbrowser.data.SitePrefs.hostOf(ui.currentUrl)
+                        val site = com.lightbrowser.data.SitePrefs.get(ctx, host)
+                        if (site.js == null && site.desktop == null) {
+                            var js = true
+                            var desk = false
+                            try { js = Prefs.jsEnabled } catch (_: Exception) {}
+                            try { desk = Prefs.desktopMode } catch (_: Exception) {}
+                            try {
+                                if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
+                                if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
+                                else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
+                                    wv.settings.userAgentString = System.getProperty("http.agent")
+                                }
+                            } catch (_: Exception) {}
                         }
                     } catch (_: Exception) {}
                 }
             )
+                if (ui.currentUrl == HOME_URL) {
+                    HomeScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        vm = vm,
+                        onNavigate = { goTo(it) }
+                    )
+                }
+            }
         }
     }
 
@@ -368,9 +437,11 @@ fun BrowserScreen(
                     showMenu = false
                     when (action) {
                         MenuAction.Refresh -> try { webView?.reload() } catch (_: Exception) {}
-                        MenuAction.NewTab -> vm.openTab(try { Prefs.homePage } catch (_: Exception) { "https://www.google.com" })
+                        MenuAction.NewTab -> vm.openTab(HOME_URL)
                         MenuAction.Bookmark -> vm.toggleBookmark()
-                        MenuAction.Find -> findOpen = true
+                        MenuAction.Find -> { findQuery = ""; vm.clearFind(); findOpen = true }
+                        MenuAction.Reader -> { vm.loadReader(); showReader = true }
+                        MenuAction.Site -> { showSite = true }
                         MenuAction.Share -> shareUrl(ctx, ui.currentUrl)
                         MenuAction.OpenExternal -> openExternal(ctx, ui.currentUrl)
                         MenuAction.Desktop -> {
@@ -408,7 +479,7 @@ fun BrowserScreen(
             ) {
                 Text("Open tabs", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 TextButton(onClick = {
-                    vm.openTab(try { Prefs.homePage } catch (_: Exception) { "https://www.google.com" })
+                    vm.openTab(HOME_URL)
                     showTabs = false
                 }) {
                     Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
@@ -520,6 +591,61 @@ fun BrowserScreen(
                 item { Spacer(Modifier.height(24.dp)) }
             }
         }
+    }
+
+    // ── Reader sheet ──
+    if (showReader) {
+        ModalBottomSheet(
+            onDismissRequest = { showReader = false; vm.clearReader() },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            val (title, text) = reader ?: ("" to "Extracting…")
+            Text(title.ifBlank { "Reader" }, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            if (text.isBlank()) {
+                Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator()
+                }
+            } else {
+                LazyColumn(modifier = Modifier.padding(horizontal = 20.dp)) {
+                    item {
+                        Text(text, style = MaterialTheme.typography.bodyLarge, lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.4)
+                        Spacer(Modifier.height(32.dp))
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Per-site settings dialog ──
+    if (showSite) {
+        val host = com.lightbrowser.data.SitePrefs.hostOf(ui.currentUrl)
+        val cur = com.lightbrowser.data.SitePrefs.get(ctx, host)
+        fun tri(label: String, value: Boolean?, global: Boolean, onPick: (Boolean?) -> Unit) {
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(label, modifier = Modifier.weight(1f))
+                listOf(null to "Auto", true to "On", false to "Off").forEach { (v, name) ->
+                    TextButton(onClick = { onPick(v) }) {
+                        Text(
+                            name,
+                            color = if (value == v) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showSite = false },
+            title = { Text(host.ifBlank { "This site" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Column {
+                    Text("Auto follows the global switch.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    tri("JavaScript", cur.js, Prefs.jsEnabled) { com.lightbrowser.data.SitePrefs.set(ctx, host, it, null, null); showSite = false; try { webView?.reload() } catch (_: Exception) {} }
+                    tri("Desktop site", cur.desktop, Prefs.desktopMode) { com.lightbrowser.data.SitePrefs.set(ctx, host, null, it, null); showSite = false; try { webView?.reload() } catch (_: Exception) {} }
+                    tri("Ad blocker", cur.adblock, Prefs.adBlock) { com.lightbrowser.data.SitePrefs.set(ctx, host, null, null, it); showSite = false; try { webView?.reload() } catch (_: Exception) {} }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSite = false }) { Text("Done") } }
+        )
     }
 
     // ── Agent bridge sheet (separate menu: server + terminal commands) ──
@@ -648,7 +774,7 @@ private fun SheetHeader(title: String, onClear: () -> Unit, clearLabel: String) 
     }
 }
 
-private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, Agent, ClearCache }
+private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Reader, Site, Share, OpenExternal, Desktop, History, Bookmarks, Scripts, Downloads, Settings, Agent, ClearCache }
 
 @Composable
 private fun MenuGrid(
@@ -662,6 +788,8 @@ private fun MenuGrid(
         Item(Icons.Filled.Add, "New tab", MenuAction.NewTab),
         Item(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, "Bookmark", MenuAction.Bookmark),
         Item(Icons.Filled.FindReplace, "Find", MenuAction.Find),
+        Item(Icons.Filled.Article, "Reader", MenuAction.Reader),
+        Item(Icons.Filled.Tune, "Site", MenuAction.Site),
         Item(Icons.Filled.Share, "Share", MenuAction.Share),
         Item(Icons.Filled.OpenInNew, "External", MenuAction.OpenExternal),
         Item(Icons.Filled.DesktopWindows, if (desktopOn) "Desktop ON" else "Desktop", MenuAction.Desktop),

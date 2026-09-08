@@ -25,6 +25,8 @@ data class BrowserTab(
     val title: String = ""
 )
 
+const val HOME_URL = "lb://home"
+
 data class BrowserUiState(
     val tabs: List<BrowserTab> = emptyList(),
     val currentIndex: Int = 0,
@@ -51,17 +53,68 @@ class BrowserViewModel : ViewModel() {
     private val _scripts = MutableStateFlow<List<UserScript>>(emptyList())
     val scripts: StateFlow<List<UserScript>> = _scripts.asStateFlow()
 
-    /** One-shot URL loads consumed by the WebView holder. */
     private val _loadRequest = MutableStateFlow<Pair<String, Long>?>(null)
     val loadRequest: StateFlow<Pair<String, Long>?> = _loadRequest.asStateFlow()
 
+    private val _findCount = MutableStateFlow<Pair<Int, Int>?>(null)
+    val findCount: StateFlow<Pair<Int, Int>?> = _findCount.asStateFlow()
+
+    private val _reader = MutableStateFlow<Pair<String, String>?>(null)
+    val reader: StateFlow<Pair<String, String>?> = _reader.asStateFlow()
+
     val ctx get() = AppCtx.ctx
 
+    /** url → saved scroll Y, restored when the page is revisited. */
+    private val scrollMemory = mutableMapOf<String, Int>()
+
     init {
-        val home = Prefs.homePage
-        _ui.update { it.copy(tabs = listOf(BrowserTab(url = home)), currentUrl = home) }
+        val restored = restoreTabs()
+        if (restored != null) {
+            _ui.update { it.copy(tabs = restored.first, currentIndex = restored.second, currentUrl = restored.first.getOrNull(restored.second)?.url ?: "") }
+        } else {
+            val home = HOME_URL
+            _ui.update { it.copy(tabs = listOf(BrowserTab(url = home)), currentUrl = home) }
+        }
         refreshLists()
     }
+
+    private fun persistTabs() {
+        try {
+            val tabs = _ui.value.tabs
+            val arr = org.json.JSONArray()
+            tabs.forEach { t ->
+                arr.put(org.json.JSONObject().put("url", t.url).put("title", t.title))
+            }
+            ctx.getSharedPreferences("browser_tabs", android.content.Context.MODE_PRIVATE).edit()
+                .putString("tabs", arr.toString())
+                .putInt("index", _ui.value.currentIndex)
+                .apply()
+        } catch (_: Exception) {}
+    }
+
+    private fun restoreTabs(): Pair<List<BrowserTab>, Int>? {
+        return try {
+            val p = ctx.getSharedPreferences("browser_tabs", android.content.Context.MODE_PRIVATE)
+            val raw = p.getString("tabs", null) ?: return null
+            val arr = org.json.JSONArray(raw)
+            if (arr.length() == 0) return null
+            val tabs = (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                BrowserTab(url = o.optString("url", HOME_URL), title = o.optString("title", ""))
+            }.filter { it.url.isNotBlank() }
+            if (tabs.isEmpty()) return null
+            tabs to p.getInt("index", 0).coerceIn(tabs.indices)
+        } catch (_: Exception) { null }
+    }
+
+    fun saveScroll(url: String, y: Int) {
+        if (url.isNotBlank() && !url.startsWith("lb://") && y > 0) {
+            scrollMemory[url] = y
+            if (scrollMemory.size > 60) scrollMemory.remove(scrollMemory.keys.first())
+        }
+    }
+
+    fun popScroll(url: String): Int? = scrollMemory.remove(url)
 
     fun refreshLists() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -101,6 +154,8 @@ class BrowserViewModel : ViewModel() {
             }
             it.copy(tabs = tabs, currentUrl = url, currentTitle = title, loading = false, progress = 100)
         }
+        persistTabs()
+        if (url.startsWith("lb://") || url.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 HistoryStorage.add(ctx, url, title)
@@ -127,6 +182,7 @@ class BrowserViewModel : ViewModel() {
             it.copy(tabs = tabs, currentIndex = idx)
         }
         if (select) requestLoad(url)
+        persistTabs()
     }
 
     fun selectTab(i: Int) {
@@ -134,6 +190,7 @@ class BrowserViewModel : ViewModel() {
         if (i !in tabs.indices || i == _ui.value.currentIndex) return
         _ui.update { it.copy(currentIndex = i) }
         requestLoad(tabs[i].url)
+        persistTabs()
     }
 
     fun closeTab(i: Int) {
@@ -143,7 +200,10 @@ class BrowserViewModel : ViewModel() {
         val ni = _ui.value.currentIndex.coerceAtMost(tabs.size - 1)
         _ui.update { it.copy(tabs = tabs, currentIndex = ni) }
         requestLoad(tabs[ni].url)
+        persistTabs()
     }
+
+    fun onTabSettled() = persistTabs()
 
     fun toggleBookmark(): Boolean {
         val url = _ui.value.currentUrl
@@ -174,6 +234,56 @@ class BrowserViewModel : ViewModel() {
                 _bookmarks.value = emptyList()
                 _ui.update { it.copy(bookmarked = false) }
             } catch (_: Exception) {}
+        }
+    }
+
+    fun setFind(ordinal: Int, total: Int) {
+        _findCount.value = ordinal to total
+    }
+
+    fun clearFind() {
+        _findCount.value = null
+    }
+
+    fun clearReader() {
+        _reader.value = null
+    }
+
+    fun loadReader() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val raw = com.lightbrowser.data.BrowserAgent.eval(
+                    "(function(){try{" +
+                        "var a=document.querySelector('article');var t='';if(a){t=a.innerText;}" +
+                        "else{var ps=Array.prototype.slice.call(document.querySelectorAll('p'));" +
+                        "ps=ps.filter(function(p){return p.innerText&&p.innerText.length>80;});" +
+                        "t=ps.map(function(p){return p.innerText;}).join('\\n\\n').slice(0,30000);}" +
+                        "return JSON.stringify({title:document.title,text:t});" +
+                        "}catch(e){return JSON.stringify({title:'',text:''});}})()"
+                )
+                val title = _ui.value.currentTitle.ifBlank { _ui.value.currentUrl }
+                val parsed = parseReader(raw, title)
+                withContext(Dispatchers.Main) { _reader.value = parsed }
+            } catch (_: Exception) {
+                _reader.value = _ui.value.currentUrl to "(reader failed)"
+            }
+        }
+    }
+
+    private fun parseReader(raw: String, title: String): Pair<String, String> {
+        return try {
+            // evaluateJavascript returns a JSON-encoded string: unwrap quotes/escapes.
+            var s = raw.trim()
+            if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                s = s.substring(1, s.length - 1)
+                    .replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+            }
+            val o = org.json.JSONObject(s)
+            val t = o.optString("title", title)
+            val text = o.optString("text", "")
+            (if (t.isBlank()) title else t) to text.ifBlank { "(no article text found)" }
+        } catch (_: Exception) {
+            title to "(reader failed)"
         }
     }
 

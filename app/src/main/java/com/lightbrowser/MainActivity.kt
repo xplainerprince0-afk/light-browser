@@ -70,9 +70,9 @@ private enum class Tab(
     val inBar: Boolean
 ) {
     Browser("Browser", Icons.Filled.Language, true),
-    Files("Sandbox", Icons.Filled.Folder, true),
-    Music("Player", Icons.Filled.AudioFile, true),
     Terminal("Terminal", Icons.Filled.Terminal, true),
+    Music("Player", Icons.Filled.AudioFile, true),
+    Files("Sandbox", Icons.Filled.Folder, true),
     Scripts("Scripts", Icons.Filled.Description, false),
     Downloads("Downloads", Icons.Filled.Download, false),
     Settings("Settings", Icons.Filled.Settings, false)
@@ -110,6 +110,28 @@ class MainActivity : ComponentActivity() {
             decor.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
         } catch (_: Exception) {}
 
+        // Double-back to exit. Compose BackHandlers (search collapse, web go-back)
+        // run first; this fires only when nothing else consumes back.
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (keyboardOpenFlow.value) {
+                    hideKeyboard()
+                    return
+                }
+                if (backArmed) {
+                    finish()
+                    return
+                }
+                backArmed = true
+                try {
+                    android.widget.Toast.makeText(this@MainActivity, "Press back again to exit", android.widget.Toast.LENGTH_SHORT).show()
+                } catch (_: Exception) {}
+                try {
+                    android.os.Handler(mainLooper).postDelayed({ backArmed = false }, 2000)
+                } catch (_: Exception) {}
+            }
+        })
+
         setContent {
             var themeMode by remember {
                 mutableStateOf(try { Prefs.themeMode } catch (_: Exception) { "system" })
@@ -141,6 +163,19 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+    }
+
+    // ── Double-back to exit: 1st back hides the keyboard (or arms), 2nd exits ──
+    private var backArmed = false
+
+    private fun hideKeyboard() {
+        try {
+            val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            currentFocus?.let {
+                imm.hideSoftInputFromWindow(it.windowToken, 0)
+                it.clearFocus()
+            } ?: imm.hideSoftInputFromWindow(window.decorView.windowToken, 0)
+        } catch (_: Exception) {}
     }
 }
 
@@ -236,6 +271,7 @@ private fun AppShell(
                             BrowserScreen(
                                 modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Browser),
                                 active = tab == Tab.Browser,
+                                keyboardOpen = keyboardOpen,
                                 onOpenScripts = { tab = Tab.Scripts },
                                 onOpenDownloads = { tab = Tab.Downloads },
                                 onOpenSettings = { tab = Tab.Settings },

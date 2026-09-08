@@ -8,7 +8,7 @@ object Prefs {
     private fun p(ctx: Context): SharedPreferences = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
     var homePage: String
-        get() = p(AppCtx.ctx).getString("home", "https://www.google.com") ?: "https://www.google.com"
+        get() = p(AppCtx.ctx).getString("home", "lb://home") ?: "lb://home"
         set(v) { p(AppCtx.ctx).edit().putString("home", v).apply() }
 
     var jsEnabled: Boolean
