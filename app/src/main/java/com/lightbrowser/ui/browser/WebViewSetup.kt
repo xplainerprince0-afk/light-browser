@@ -175,7 +175,8 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         override fun onCreateWindow(v: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
             try {
                 val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-                val tmp = WebView(v?.context)
+                val ctx = v?.context ?: return false
+                val tmp = WebView(ctx)
                 transport.webView = tmp
                 resultMsg.sendToTarget()
                 tmp.webViewClient = object : WebViewClient() {

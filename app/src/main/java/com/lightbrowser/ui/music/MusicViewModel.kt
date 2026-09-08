@@ -6,6 +6,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -38,7 +39,8 @@ data class PlayerUiState(
     val repeat: Int = 0, // 0 off, 1 all, 2 one
     val speed: Float = 1f,
     val sleepMinutesLeft: Int? = null,
-    val ready: Boolean = false
+    val ready: Boolean = false,
+    val error: String? = null
 )
 
 class MusicViewModel : ViewModel() {
@@ -120,8 +122,8 @@ class MusicViewModel : ViewModel() {
                     }
                 }
             }
-            override fun onPlayerError(error: PlaybackException) {
-                _player.update { it.copy(error = error.message ?: "Playback error (${error.errorCode})", isPlaying = false) }
+            override fun onPlayerErrorChanged(error: PlaybackException?) {
+                _player.update { it.copy(error = error?.message ?: "Playback error", isPlaying = false) }
             }
         })
         _player.update {

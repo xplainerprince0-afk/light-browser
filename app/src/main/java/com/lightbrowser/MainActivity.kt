@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lightbrowser.data.AppCtx
@@ -363,22 +364,15 @@ private fun AppShell(
 }
 
 /** Parks hidden tabs far offscreen: still composed (state kept), never touched.
- *  Also blocks pointer input + hides from accessibility when hidden (was still
- *  focusable/clickable, WebView kept rendering offscreen). */
+ *  Also hides from accessibility when hidden (was still focusable). */
 private fun Modifier.offscreen(hidden: Boolean): Modifier =
     this.then(
-        if (hidden) Modifier
-            .then(
-                layout { measurable, constraints ->
-                    val placeable = measurable.measure(constraints)
-                    layout(placeable.width, placeable.height) {
-                        placeable.placeRelative(-100_000, -100_000)
-                    }
+        if (hidden) {
+            Modifier.layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints)
+                layout(placeable.width, placeable.height) {
+                    placeable.placeRelative(-100_000, -100_000)
                 }
-            )
-        else Modifier
-    ).then(
-        if (hidden) Modifier
-            .then(androidx.compose.ui.semantics.clearAndSetSemantics { })
-        else Modifier
+            }.clearAndSetSemantics { }
+        } else Modifier
     )
