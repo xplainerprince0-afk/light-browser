@@ -16,19 +16,25 @@ object ScriptStorage {
         val s = prefs(ctx).getString(KEY, null) ?: return mutableListOf()
         return try {
             val arr = JSONArray(s)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                UserScript(
-                    id = o.getString("id"),
-                    name = o.getString("name"),
-                    code = o.getString("code"),
-                    enabled = o.optBoolean("enabled", true),
-                    description = o.optString("description", ""),
-                    matches = o.optJSONArray("matches")?.let { ja -> (0 until ja.length()).map { ja.getString(it) } } ?: emptyList(),
-                    runAt = o.optString("runAt", "document_idle"),
-                    grants = o.optJSONArray("grants")?.let { ja -> (0 until ja.length()).map { ja.getString(it) } } ?: emptyList()
-                )
-            }.toMutableList()
+            val out = mutableListOf<UserScript>()
+            for (i in 0 until arr.length()) {
+                try {
+                    val o = arr.getJSONObject(i)
+                    out.add(
+                        UserScript(
+                            id = o.optString("id", java.util.UUID.randomUUID().toString()),
+                            name = o.optString("name", "Unnamed"),
+                            code = o.optString("code", ""),
+                            enabled = o.optBoolean("enabled", true),
+                            description = o.optString("description", ""),
+                            matches = o.optJSONArray("matches")?.let { ja -> (0 until ja.length()).mapNotNull { runCatching { ja.getString(it) }.getOrNull() } } ?: emptyList(),
+                            runAt = o.optString("runAt", "document_idle"),
+                            grants = o.optJSONArray("grants")?.let { ja -> (0 until ja.length()).mapNotNull { runCatching { ja.getString(it) }.getOrNull() } } ?: emptyList()
+                        )
+                    )
+                } catch (_: Exception) { /* skip single corrupt entry, keep rest */ }
+            }
+            out
         } catch (_: Exception) { mutableListOf() }
     }
 

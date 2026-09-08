@@ -152,13 +152,15 @@ fun TerminalScreen(
                     DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
                         DropdownMenuItem(
                             text = { Text(if (follow) "✓ Follow output" else "Follow output") },
-                            onClick = { follow = !follow }
+                            onClick = { overflow = false; follow = !follow }
                         )
                         DropdownMenuItem(text = { Text("Text bigger") }, onClick = {
+                            overflow = false
                             fontScale = (fontScale + 0.15f).coerceAtMost(1.8f)
                             try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
                         })
                         DropdownMenuItem(text = { Text("Text smaller") }, onClick = {
+                            overflow = false
                             fontScale = (fontScale - 0.15f).coerceAtLeast(0.7f)
                             try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
                         })
@@ -226,6 +228,9 @@ fun TerminalScreen(
                                     )
                                 )
                             }
+                        } else if (mod == "ALT") {
+                            // ALT (Meta) sends ESC prefix — consume sticky (was left armed forever).
+                            try { vm.insertText("\u001B") } catch (_: Exception) {}
                         }
                         sticky = null
                     }
@@ -237,7 +242,7 @@ fun TerminalScreen(
             Column(modifier = Modifier.fillMaxWidth().imePadding()) {
                 TermKeyRow(
                     keys = listOf(
-                        "ESC" to { vm.insertText("") },
+                        "ESC" to { vm.insertText("\u001B") },
                         "/" to { applySticky(sticky, { sticky = null }, vm, "/") },
                         "-" to { applySticky(sticky, { sticky = null }, vm, "-") },
                         "HOME" to { vm.moveLineHome() },

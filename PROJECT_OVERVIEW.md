@@ -6,11 +6,12 @@
 Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux terminal, and an audiobook/music player with background playback. Scoped-storage compliant (SAF), no heavy backend.
 
 ## Feature to-do
-- [x] Browser: WebView, tabs, history, bookmarks, userscript engine (GM_* polyfill), adblock, desktop UA, blob downloads, share
-- [x] Files: sandbox browser, search/sort/grid, breadcrumb, import/export (SAF), new folder/rename/delete/details, storage meter
-- [x] Terminal: Alpine bootstrap, sandboxed shell, history, sticky CTRL/ALT, cursor scrub, font size, selectable output
-- [x] Player: ExoPlayer + MediaSession background playback, novels/chapters, shuffle/repeat/speed/sleep timer, queue, mini-player morph
-- [x] Scripts manager, Downloads, Settings (theme, search engine, data)
+- [x] Browser: TRUE multi-WebView tabs (pool 4, per-tab history), history, bookmarks, userscript engine (GM_* polyfill), adblock (host+path), desktop UA (per-site), blob downloads (escaped bridge), share, reader retry/copy/share, find debounce, agent bridge (token on all endpoints, no Main deadlock)
+- [x] Files: sandbox browser (canonical guard + name sanitize), search/sort/grid, breadcrumb, import/export (SAF, to current dir, unique names), new folder/rename/delete/details, storage meter, zip-bomb guard, preview selectable+copy
+- [x] Terminal: Alpine bootstrap (HTTP check, arch fix, busybox exec, sh link), sandboxed shell (quote-safe, concurrent stderr drain, busy guard, re-entrancy guard), history, sticky CTRL/ALT (ALT consumed), ESC \u001B, font size, selectable output
+- [x] Player: ExoPlayer + MediaSession background playback (music attrs, local wakelock, tap-to-open), novels/chapters, shuffle/repeat/speed (0.5..2)/sleep timer, queue, mini-player, error surface, atomic resume
+- [x] Scripts manager (name validation), Downloads (skip active, refresh on partial), Settings (homepage normalize+autosave, theme persist, speed clamp)
+- [x] Shell: singleTask deep-links, adjustPan keyboard, rememberSaveable tabs/theme, status-bar contrast, offscreen a11y/pointer block, allowBackup=false
 - [ ] Screenshot/preview pass on foldable/tablet
 
 ## Tech stack

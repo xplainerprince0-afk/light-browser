@@ -60,10 +60,30 @@ class FilesViewModel : ViewModel() {
         }
     }
 
+    fun isAllowed(f: File): Boolean {
+        return try {
+            val sd = sandboxDir ?: return false
+            val sdCanon = sd.canonicalFile.absolutePath
+            val fCanon = f.canonicalFile.absolutePath
+            fCanon == sdCanon || fCanon.startsWith(sdCanon + File.separator)
+        } catch (_: Exception) { false }
+    }
+
+    fun sanitizeName(raw: String): String? {
+        val t = raw.trim().trim('/', '\\')
+        if (t.isEmpty() || t == "." || t == "..") return null
+        if (t.contains("/") || t.contains("\\") || t.contains("\u0000")) return null
+        if (t == "." || t == ".." || t.startsWith("..")) return null
+        if (t.length > 120) return null
+        if (t in setOf("CON", "PRN", "AUX", "NUL")) return null
+        return t
+    }
+
     fun openDir(dir: File) {
         val sd = sandboxDir ?: return
         val target = try {
-            if (dir.absolutePath.startsWith(sd.absolutePath) && dir.exists()) dir else sd
+            val canon = dir.canonicalFile
+            if (isAllowed(canon) && dir.exists()) canon else sd
         } catch (_: Exception) { sd }
         currentDir = target
         _ui.update { it.copy(query = "", selected = emptySet()) }
@@ -76,9 +96,11 @@ class FilesViewModel : ViewModel() {
     fun navigateUp() {
         val sd = sandboxDir ?: return
         val cur = currentDir ?: return
-        if (cur == sd) return
+        try {
+            if (cur.canonicalFile.absolutePath == sd.canonicalFile.absolutePath) return
+        } catch (_: Exception) { return }
         val parent = cur.parentFile
-        if (parent != null && parent.absolutePath.startsWith(sd.absolutePath)) openDir(parent)
+        if (parent != null && isAllowed(parent)) openDir(parent)
         else openDir(sd)
     }
 
@@ -127,7 +149,9 @@ class FilesViewModel : ViewModel() {
 
     fun paste(done: (String) -> Unit) {
         val dest = currentDir ?: return
+        if (!isAllowed(dest)) { done("Invalid destination"); return }
         val srcs = _ui.value.clip.mapNotNull { File(it).takeIf { f -> f.exists() } }
+            .filter { isAllowed(it) }
         if (srcs.isEmpty()) {
             done("Nothing to paste")
             return
@@ -139,9 +163,10 @@ class FilesViewModel : ViewModel() {
             srcs.forEach { src ->
                 try {
                     // Guard: never paste a folder into itself
-                    if (src.isDirectory && dest.absolutePath.startsWith(src.absolutePath)) return@forEach
+                    if (src.isDirectory && dest.canonicalFile.absolutePath.startsWith(src.canonicalFile.absolutePath + File.separator)) return@forEach
                     var out = File(dest, src.name)
-                    if (out.absolutePath == src.absolutePath) return@forEach
+                    if (out.canonicalFile.absolutePath == src.canonicalFile.absolutePath) return@forEach
+                    if (!out.canonicalFile.absolutePath.startsWith(dest.canonicalFile.absolutePath + File.separator)) return@forEach
                     var i = 1
                     while (out.exists()) {
                         val dot = src.name.lastIndexOf('.')
@@ -150,14 +175,18 @@ class FilesViewModel : ViewModel() {
                         } else File(dest, "${src.name}($i)")
                         if (++i > 999) break
                     }
+                    if (out.exists()) {
+                        out = File(dest, "${src.nameWithoutExtension}_${System.currentTimeMillis()}.${src.extension}".trim('.'))
+                        if (out.exists()) return@forEach
+                    }
                     if (move) {
                         if (src.renameTo(out)) n++
                         else {
-                            if (src.isDirectory) src.copyRecursively(out) else src.copyTo(out, overwrite = true)
+                            if (src.isDirectory) src.copyRecursively(out) else src.copyTo(out, overwrite = false)
                             if (if (src.isDirectory) src.deleteRecursively() else src.delete()) n++
                         }
                     } else {
-                        if (src.isDirectory) src.copyRecursively(out) else src.copyTo(out, overwrite = true)
+                        if (src.isDirectory) src.copyRecursively(out) else src.copyTo(out, overwrite = false)
                         n++
                     }
                 } catch (_: Exception) {}
@@ -219,8 +248,14 @@ class FilesViewModel : ViewModel() {
 
     fun createFolder(name: String, done: (Boolean) -> Unit) {
         val dir = currentDir ?: return
+        val safe = sanitizeName(name)
+        if (safe == null) { done(false); return }
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = try { File(dir, name).mkdirs() } catch (_: Exception) { false }
+            val ok = try {
+                val out = File(dir, safe)
+                if (!out.canonicalFile.absolutePath.startsWith(dir.canonicalFile.absolutePath + File.separator)) false
+                else out.mkdirs()
+            } catch (_: Exception) { false }
             withContext(Dispatchers.Main) {
                 if (ok) refresh()
                 done(ok)
@@ -230,8 +265,14 @@ class FilesViewModel : ViewModel() {
 
     fun createFile(name: String, done: (Boolean) -> Unit) {
         val dir = currentDir ?: return
+        val safe = sanitizeName(name)
+        if (safe == null) { done(false); return }
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = try { File(dir, name).createNewFile() } catch (_: Exception) { false }
+            val ok = try {
+                val out = File(dir, safe)
+                if (!out.canonicalFile.absolutePath.startsWith(dir.canonicalFile.absolutePath + File.separator)) false
+                else out.createNewFile()
+            } catch (_: Exception) { false }
             withContext(Dispatchers.Main) {
                 if (ok) refresh()
                 done(ok)
@@ -256,15 +297,25 @@ class FilesViewModel : ViewModel() {
     }
 
     fun extractZip(file: File, done: (String) -> Unit) {
+        if (!isAllowed(file)) { done("Denied"); return }
         val dest = try { File(file.parentFile, file.nameWithoutExtension) } catch (_: Exception) { return }
         _ui.update { it.copy(busy = "Extracting…") }
         viewModelScope.launch(Dispatchers.IO) {
             var count = 0
+            var totalBytes = 0L
             try {
                 dest.mkdirs()
+                // Zip-bomb guard: max 1000 files / 500MB uncompressed.
                 java.util.zip.ZipFile(file).use { zip ->
                     val entries = zip.entries()
                     while (entries.hasMoreElements()) {
+                        if (count > 1000 || totalBytes > 500L * 1024 * 1024) {
+                            withContext(Dispatchers.Main) {
+                                _ui.update { it.copy(busy = null) }
+                                done("Stopped: zip too large (bomb guard)")
+                            }
+                            return@launch
+                        }
                         val e = entries.nextElement()
                         // Zip-slip guard
                         val out = File(dest, e.name)
@@ -273,9 +324,25 @@ class FilesViewModel : ViewModel() {
                         ) continue
                         if (e.isDirectory) out.mkdirs()
                         else {
-                            out.parentFile?.mkdirs()
+                            // Skip entries that would overwrite without prompt — uniquify.
+                            var target = out
+                            if (target.exists()) {
+                                val b = target.nameWithoutExtension
+                                val ext = target.extension.let { if (it.isBlank()) "" else ".$it" }
+                                target = File(target.parentFile, "${b}_${System.currentTimeMillis()}$ext")
+                            }
+                            target.parentFile?.mkdirs()
                             zip.getInputStream(e).use { input ->
-                                java.io.FileOutputStream(out).use { output -> input.copyTo(output) }
+                                java.io.FileOutputStream(target).use { output ->
+                                    val buf = ByteArray(64 * 1024)
+                                    while (true) {
+                                        val n = input.read(buf)
+                                        if (n < 0) break
+                                        totalBytes += n
+                                        if (totalBytes > 500L * 1024 * 1024) break
+                                        output.write(buf, 0, n)
+                                    }
+                                }
                             }
                             count++
                         }
@@ -296,8 +363,15 @@ class FilesViewModel : ViewModel() {
     }
 
     fun rename(file: File, newName: String, done: (Boolean) -> Unit) {
+        val safe = sanitizeName(newName)
+        if (safe == null || !isAllowed(file)) { done(false); return }
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = try { file.renameTo(File(file.parentFile, newName)) } catch (_: Exception) { false }
+            val ok = try {
+                val out = File(file.parentFile, safe)
+                if (!out.canonicalFile.absolutePath.startsWith(file.parentFile.canonicalFile.absolutePath + File.separator)) false
+                else if (out.exists()) false
+                else file.renameTo(out)
+            } catch (_: Exception) { false }
             withContext(Dispatchers.Main) {
                 if (ok) refresh()
                 done(ok)
@@ -306,10 +380,11 @@ class FilesViewModel : ViewModel() {
     }
 
     fun delete(files: List<File>, done: (Boolean) -> Unit) {
+        val targets = files.filter { isAllowed(it) }
         _ui.update { it.copy(busy = "Deleting…", selected = emptySet()) }
         viewModelScope.launch(Dispatchers.IO) {
             var ok = true
-            files.forEach {
+            targets.forEach {
                 try {
                     ok = (if (it.isDirectory) it.deleteRecursively() else it.delete()) && ok
                 } catch (_: Exception) { ok = false }
@@ -323,7 +398,8 @@ class FilesViewModel : ViewModel() {
     }
 
     fun importUri(uri: Uri, done: (String?) -> Unit) {
-        val sd = sandboxDir ?: return
+        val destDir = currentDir ?: sandboxDir ?: return
+        if (!isAllowed(destDir)) { done(null); return }
         _ui.update { it.copy(busy = "Importing…") }
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -335,13 +411,20 @@ class FilesViewModel : ViewModel() {
                         if (c.moveToFirst() && idx >= 0) name = c.getString(idx)
                     }
                 } catch (_: Exception) {}
-                val out = File(sd, name ?: "import_${System.currentTimeMillis()}")
+                val rawName = name ?: "import_${System.currentTimeMillis()}"
+                val safeName = sanitizeName(rawName.substringAfterLast("/").substringAfterLast("\\")) ?: "import_${System.currentTimeMillis()}"
+                var out = File(destDir, safeName)
+                if (out.exists()) {
+                    val b = out.nameWithoutExtension
+                    val ext = out.extension.let { if (it.isBlank()) "" else ".$it" }
+                    out = File(destDir, "${b}_${System.currentTimeMillis()}$ext")
+                }
                 app.contentResolver.openInputStream(uri)?.use { input ->
                     FileOutputStream(out).use { output -> input.copyTo(output) }
                 }
                 withContext(Dispatchers.Main) {
                     _ui.update { it.copy(busy = null) }
-                    openDir(sd)
+                    refresh()
                     done(out.name)
                 }
             } catch (e: Exception) {
@@ -354,14 +437,16 @@ class FilesViewModel : ViewModel() {
     }
 
     fun importTree(treeUri: Uri, done: (Int) -> Unit) {
-        val sd = sandboxDir ?: return
+        val destDir = currentDir ?: sandboxDir ?: return
+        if (!isAllowed(destDir)) { done(0); return }
         _ui.update { it.copy(busy = "Importing folder…") }
         viewModelScope.launch(Dispatchers.IO) {
             var count = 0
             try {
                 val app = AppCtx.ctx
                 val doc = DocumentFile.fromTreeUri(app, treeUri)
-                if (doc != null) count = copyTree(app, doc, sd)
+                // Cap: max 2000 files to avoid OOM (loads listFiles into memory otherwise).
+                if (doc != null) count = copyTree(app, doc, destDir, 0)
             } catch (_: Exception) {}
             withContext(Dispatchers.Main) {
                 _ui.update { it.copy(busy = null) }
@@ -371,15 +456,22 @@ class FilesViewModel : ViewModel() {
         }
     }
 
-    private fun copyTree(app: android.content.Context, doc: DocumentFile, dest: File): Int {
+    private fun copyTree(app: android.content.Context, doc: DocumentFile, dest: File, depth: Int): Int {
+        if (depth > 8) return 0
         var count = 0
-        doc.listFiles().forEach { item ->
+        val items = try { doc.listFiles().take(2000) } catch (_: Exception) { return 0 }
+        items.forEach { item ->
+            if (count > 2000) return count
             try {
+                val raw = (item.name ?: "file").substringAfterLast("/").substringAfterLast("\\").take(100)
+                val safe = sanitizeName(raw) ?: return@forEach
                 if (item.isDirectory) {
-                    val sub = File(dest, item.name ?: "folder").apply { mkdirs() }
-                    count += copyTree(app, item, sub)
+                    val sub = File(dest, safe).apply { mkdirs() }
+                    if (!sub.canonicalFile.absolutePath.startsWith(dest.canonicalFile.absolutePath + File.separator)) return@forEach
+                    count += copyTree(app, item, sub, depth + 1)
                 } else if (item.isFile) {
-                    val out = File(dest, item.name ?: "file_${System.currentTimeMillis()}")
+                    var out = File(dest, safe)
+                    if (out.exists()) out = File(dest, "${out.nameWithoutExtension}_${System.currentTimeMillis()}.${out.extension}".trim('.'))
                     app.contentResolver.openInputStream(item.uri)?.use { input ->
                         FileOutputStream(out).use { output -> input.copyTo(output) }
                     }

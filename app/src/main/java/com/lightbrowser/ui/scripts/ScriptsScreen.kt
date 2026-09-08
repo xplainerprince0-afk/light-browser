@@ -399,7 +399,11 @@ private fun ScriptEditorDialog(
                 scope.launch(Dispatchers.IO) {
                     try {
                         val parsed = UserScript.fromCode(code)
-                        val finalName = name.ifBlank { parsed.name }
+                        val finalName = name.ifBlank { parsed.name }.ifBlank { "Unnamed" }
+                        if (finalName.isBlank() || finalName == "Unnamed" && parsed.matches.isEmpty() && code.length < 20) {
+                            withContext(Dispatchers.Main) { Toast.makeText(ctx, "Add @name or a name", Toast.LENGTH_SHORT).show() }
+                            return@launch
+                        }
                         if (existing == null) {
                             val toSave = parsed.copy(name = finalName)
                             ScriptStorage.add(ctx, toSave)

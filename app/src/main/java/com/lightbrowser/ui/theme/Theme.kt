@@ -25,6 +25,17 @@ fun LightBrowserTheme(
         darkTheme -> DarkScheme
         else -> LightScheme
     }
+    // Sync status/nav icon contrast with theme (was invisible white-on-white / black-on-black).
+    val view = androidx.compose.ui.platform.LocalView.current
+    androidx.compose.runtime.SideEffect {
+        try {
+            val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
+            androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !darkTheme
+                isAppearanceLightNavigationBars = !darkTheme
+            }
+        } catch (_: Exception) {}
+    }
     MaterialTheme(
         colorScheme = colorScheme,
         shapes = AppShapes,

@@ -139,7 +139,20 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
             SettingsCard(title = "Browser") {
                 OutlinedTextField(
                     value = home,
-                    onValueChange = { home = it },
+                    onValueChange = {
+                        home = it
+                        // Auto-save on change (was IME-Done only — back/gesture lost input).
+                        val u = it.trim()
+                        if (u.isNotEmpty()) {
+                            val norm = when {
+                                u.startsWith("lb://") -> u
+                                u.startsWith("http://") || u.startsWith("https://") -> u
+                                u.contains(".") && !u.contains(" ") -> "https://$u"
+                                else -> u
+                            }
+                            try { safeSet { Prefs.homePage = norm } } catch (_: Exception) {}
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Homepage") },
                     singleLine = true,
@@ -147,7 +160,14 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                     keyboardActions = KeyboardActions(onDone = {
                         val u = home.trim()
                         if (u.isNotEmpty()) {
-                            safeSet { Prefs.homePage = u }
+                            val norm = when {
+                                u.startsWith("lb://") -> u
+                                u.startsWith("http://") || u.startsWith("https://") -> u
+                                u.contains(".") && !u.contains(" ") -> "https://$u"
+                                else -> u
+                            }
+                            safeSet { Prefs.homePage = norm }
+                            home = norm
                             Toast.makeText(ctx, "Homepage saved", Toast.LENGTH_SHORT).show()
                         }
                         focusManager.clearFocus()

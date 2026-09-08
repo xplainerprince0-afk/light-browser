@@ -45,8 +45,8 @@ object Prefs {
 
     /** Terminal font scale multiplier */
     var terminalFontScale: Float
-        get() = p(AppCtx.ctx).getFloat("term_font", 1f)
-        set(v) { p(AppCtx.ctx).edit().putFloat("term_font", v).apply() }
+        get() = p(AppCtx.ctx).getFloat("term_font", 1f).coerceIn(0.5f, 2.5f)
+        set(v) { p(AppCtx.ctx).edit().putFloat("term_font", v.coerceIn(0.5f, 2.5f)).apply() }
 
     /** Player prefs */
     var playerShuffle: Boolean
@@ -58,8 +58,8 @@ object Prefs {
         set(v) { p(AppCtx.ctx).edit().putInt("pl_repeat", v).apply() }
 
     var playerSpeed: Float
-        get() = p(AppCtx.ctx).getFloat("pl_speed", 1f)
-        set(v) { p(AppCtx.ctx).edit().putFloat("pl_speed", v).apply() }
+        get() = p(AppCtx.ctx).getFloat("pl_speed", 1f).coerceIn(0.25f, 3f)
+        set(v) { p(AppCtx.ctx).edit().putFloat("pl_speed", v.coerceIn(0.25f, 3f)).apply() }
 
     /** Resume point: novel name + chapter uri + position ms */
     var lastNovel: String
@@ -89,8 +89,8 @@ object Prefs {
         set(v) { p(AppCtx.ctx).edit().putBoolean("ui_black", v).apply() }
 
     var uiFontScale: Float
-        get() = p(AppCtx.ctx).getFloat("ui_font", 1f)
-        set(v) { p(AppCtx.ctx).edit().putFloat("ui_font", v).apply() }
+        get() = p(AppCtx.ctx).getFloat("ui_font", 1f).coerceIn(0.7f, 1.6f)
+        set(v) { p(AppCtx.ctx).edit().putFloat("ui_font", v.coerceIn(0.7f, 1.6f)).apply() }
 
     var appLang: String
         get() = p(AppCtx.ctx).getString("ui_lang", "system") ?: "system"
@@ -111,6 +111,8 @@ object Prefs {
 }
 
 object AppCtx {
-    lateinit var ctx: Context
-    fun init(c: Context) { ctx = c.applicationContext }
+    @Volatile private var _ctx: Context? = null
+    val ctx: Context get() = _ctx ?: throw IllegalStateException("AppCtx not initialized")
+    fun isInit(): Boolean = _ctx != null
+    fun init(c: Context) { _ctx = c.applicationContext }
 }

@@ -61,7 +61,7 @@ private val SHORTCUTS = listOf(
     Shortcut("DuckGo", "https://duckduckgo.com", 0xFFDE5833),
     Shortcut("WTR Lab", "https://wtr-lab.com", 0xFF0F766E),
     Shortcut("Bing", "https://www.bing.com", 0xFF008373),
-    Shortcut(" brave".trim(), "https://search.brave.com", 0xFFFB542B)
+    Shortcut("Brave", "https://search.brave.com", 0xFFFB542B)
 )
 
 /** Firefox-style start page: search, shortcuts, recents, bookmarks. */
@@ -80,6 +80,7 @@ fun HomeScreen(
         val url = vm.resolveInput(raw)
         if (url.isNotEmpty()) {
             focus.clearFocus()
+            query = ""
             onNavigate(url)
         }
     }
@@ -125,7 +126,7 @@ fun HomeScreen(
             Spacer(Modifier.height(8.dp))
             LazyVerticalGrid(
                 columns = GridCells.Fixed(4),
-                modifier = Modifier.fillMaxWidth().height(190.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp, max = 260.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {

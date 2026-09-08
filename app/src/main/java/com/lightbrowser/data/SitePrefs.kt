@@ -9,15 +9,25 @@ data class SiteSetting(val js: Boolean?, val desktop: Boolean?, val adblock: Boo
 object SitePrefs {
     private const val PREF = "site_prefs_v1"
 
+    // In-memory cache: shouldInterceptRequest fires per-resource on background threads.
+    // Reading SharedPreferences + JSONObject.parse per image/CSS/XHR = jank. Cache it.
+    @Volatile private var cache: JSONObject? = null
+    @Volatile private var cacheTs = 0L
+
     private fun all(ctx: Context): JSONObject {
-        return try {
-            JSONObject(ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString("sites", "{}") ?: "{}")
-        } catch (_: Exception) { JSONObject() }
+        try {
+            val now = System.currentTimeMillis()
+            cache?.let { if (now - cacheTs < 5_000) return it }
+            val o = JSONObject(ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString("sites", "{}") ?: "{}")
+            cache = o; cacheTs = now
+            return o
+        } catch (_: Exception) { return JSONObject() }
     }
 
     private fun save(ctx: Context, o: JSONObject) {
         try {
             ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString("sites", o.toString()).apply()
+            cache = o; cacheTs = System.currentTimeMillis()
         } catch (_: Exception) {}
     }
 

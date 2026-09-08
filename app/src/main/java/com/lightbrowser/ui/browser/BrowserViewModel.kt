@@ -26,6 +26,12 @@ data class BrowserTab(
     val title: String = ""
 )
 
+/** Bridge for window.open / target=_blank → open in new tab (set by BrowserScreen). */
+object TabBus {
+    var openInNewTab: ((String) -> Unit)? = null
+    fun openInNewTab(url: String) { try { openInNewTab?.invoke(url) } catch (_: Exception) {} }
+}
+
 const val HOME_URL = "lb://home"
 
 data class BrowserUiState(
@@ -153,6 +159,7 @@ class BrowserViewModel : ViewModel() {
                 val i = it.currentIndex.coerceIn(tabs.indices)
                 tabs[i] = tabs[i].copy(url = url, title = title)
             }
+            // Sync bookmark title if this URL is bookmarked but title was URL placeholder.
             it.copy(tabs = tabs, currentUrl = url, currentTitle = title, loading = false, progress = 100)
         }
         persistTabs()
@@ -161,7 +168,9 @@ class BrowserViewModel : ViewModel() {
             try {
                 HistoryStorage.add(ctx, url, title)
                 _history.value = HistoryStorage.all(ctx)
-                _ui.update { it.copy(bookmarked = BookmarkStorage.isBookmarked(ctx, url)) }
+                val marked = _bookmarks.value.any { it.url == url }
+                    || BookmarkStorage.isBookmarked(ctx, url)
+                withContext(Dispatchers.Main) { _ui.update { it.copy(bookmarked = marked) } }
             } catch (_: Exception) {}
         }
     }
@@ -170,7 +179,12 @@ class BrowserViewModel : ViewModel() {
         val t = input.trim()
         if (t.isEmpty()) return ""
         return when {
+            t.startsWith("lb://") -> t
             t.startsWith("http://") || t.startsWith("https://") -> t
+            t.startsWith("ftp://") || t.startsWith("file://") -> t
+            // localhost / IP with port, no dot but valid dev URL
+            t.matches(Regex("""^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(/.*)?$""", RegexOption.IGNORE_CASE)) -> "http://$t"
+            t.matches(Regex("""^[\w-]+(\.[\w-]+)+(:\d+)?(/.*)?$""")) && !t.contains(" ") -> "https://$t"
             t.contains(".") && !t.contains(" ") -> "https://$t"
             else -> Prefs.buildSearchUrl(t)
         }
@@ -190,19 +204,26 @@ class BrowserViewModel : ViewModel() {
     fun selectTab(i: Int) {
         val tabs = _ui.value.tabs
         if (i !in tabs.indices || i == _ui.value.currentIndex) return
-        _ui.update { it.copy(currentIndex = i, currentUrl = tabs[i].url, currentTitle = tabs[i].title, loading = false) }
-        // NOTE: no requestLoad here — the screen loads only if the WebView
-        // isn't already on that URL (avoids reload churn on tab switches).
+        // Save scroll of outgoing tab is done by Screen; here just switch state + request load.
+        _ui.update { it.copy(currentIndex = i, currentUrl = tabs[i].url, currentTitle = tabs[i].title, loading = tabs[i].url.startsWith("http")) }
+        if (!tabs[i].url.startsWith("lb://")) requestLoad(tabs[i].url)
         persistTabs()
     }
 
     fun closeTab(i: Int): String {
         val tabs = _ui.value.tabs.toMutableList()
         if (tabs.size <= 1 || i !in tabs.indices) return _ui.value.currentUrl
+        val cur = _ui.value.currentIndex
         tabs.removeAt(i)
-        val ni = _ui.value.currentIndex.coerceAtMost(tabs.size - 1)
+        // If closing a tab before current, shift index left; if closing current, clamp.
+        val ni = when {
+            i < cur -> (cur - 1).coerceIn(tabs.indices)
+            i == cur -> cur.coerceIn(tabs.indices)
+            else -> cur.coerceIn(tabs.indices)
+        }
         _ui.update { it.copy(tabs = tabs, currentIndex = ni, currentUrl = tabs[ni].url, currentTitle = tabs[ni].title, loading = false) }
         persistTabs()
+        if (!tabs[ni].url.startsWith("lb://")) requestLoad(tabs[ni].url)
         return tabs[ni].url
     }
 
@@ -276,10 +297,16 @@ class BrowserViewModel : ViewModel() {
     private fun parseReader(raw: String, title: String): Pair<String, String> {
         return try {
             // evaluateJavascript returns a JSON-encoded string: unwrap quotes/escapes.
+            // Order matters: \\\" -> \" first via placeholder, then \\n, then \\\\ last is wrong.
+            // Correct: unescape \\\\ first using JSON parser semantics manually.
             var s = raw.trim()
             if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
-                s = s.substring(1, s.length - 1)
-                    .replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+                // Use JSONObject to unescape properly instead of chained replace.
+                s = try { org.json.JSONObject("\"v\":$s\"".let { "{\"v\":$s}" }).optString("v", s) } catch (_: Exception) {
+                    s.substring(1, s.length - 1)
+                        .replace("\\\\", "\u0000").replace("\\n", "\n").replace("\\\"", "\"")
+                        .replace("\u0000", "\\")
+                }
             }
             val o = org.json.JSONObject(s)
             val t = o.optString("title", title)
@@ -305,11 +332,13 @@ class BrowserViewModel : ViewModel() {
         if (webView == null) return
         val matched = scriptsFor(url)
         if (matched.isEmpty()) return
+        // Exact runAt match only — previously end+idle both fired twice (WebViewSetup
+        // calls end then idle 350ms apart). document_end scripts run on end, idle on idle.
         val toInject = matched.filter { sc ->
             when (sc.runAt) {
                 "document_start" -> runAt == "document_start"
-                "document_end" -> runAt == "document_end" || runAt == "document_idle"
-                else -> runAt == "document_idle" || runAt == "document_end"
+                "document_end" -> runAt == "document_end"
+                else -> runAt == "document_idle"
             }
         }
         toInject.forEach { sc -> injectSingle(webView, sc) }

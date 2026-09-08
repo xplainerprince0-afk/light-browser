@@ -15,13 +15,14 @@ data class UserScript(
     companion object {
         fun parseMeta(code: String): Map<String, List<String>> {
             val map = mutableMapOf<String, MutableList<String>>()
-            val m = Regex("""//\s*==UserScript==([\s\S]*?)//\s*==/UserScript==""").find(code)
+            // Support both // ==UserScript== and /* ==UserScript== */ block styles.
+            val m = Regex("""==UserScript==([\s\S]*?)==/UserScript==""").find(code)
             if (m != null) {
                 val block = m.groupValues[1]
-                Regex("""//\s*@(\S+)\s+(.*)""").findAll(block).forEach { mr ->
+                Regex("""[@*]?\s*@(\S+)\s+(.*)""").findAll(block).forEach { mr ->
                     val k = mr.groupValues[1].trim()
-                    val v = mr.groupValues[2].trim()
-                    map.getOrPut(k) { mutableListOf() }.add(v)
+                    val v = mr.groupValues[2].trim().trimEnd('*', '/').trim()
+                    if (k.isNotEmpty() && v.isNotEmpty()) map.getOrPut(k) { mutableListOf() }.add(v)
                 }
             }
             return map
@@ -53,29 +54,40 @@ data class UserScript(
         }
 
         fun matchesUrl(patterns: List<String>, url: String): Boolean {
-            if (patterns.isEmpty()) return true
-            val u = url.lowercase().trim().substringBefore("#").substringBefore("?")
+            if (patterns.isEmpty()) return false
+            val full = url.lowercase().trim()
+            val u = full.substringBefore("#").substringBefore("?")
             val uHost = try { android.net.Uri.parse(u).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+            if (uHost.isEmpty()) return false
 
             return patterns.any { raw ->
                 val pat = raw.trim()
                 if (pat.isEmpty()) return@any false
                 if (pat == "<all_urls>" || pat == "*") return@any true
                 try {
-                    // 1. strict full match (Violentmonkey spec)
+                    // 1. strict full match (Violentmonkey spec) — try with and without query.
                     val strict = globToRegex(pat)
-                    if (strict.containsMatchIn(u)) return@any true
+                    if (strict.containsMatchIn(u) || strict.containsMatchIn(full)) return@any true
 
                     // 2. prefix match – allow pattern as prefix of URL (handles trailing /* case)
                     // e.g., https://wtr-lab.com/*/novel/*/ should match deeper URL with extra segments
+                    // Guard: prefix host must equal URL host (prevents example.com matching example.com.evil.com).
+                    val pHostEarly = try { android.net.Uri.parse(pat.replace("*", "x")).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+                    val hostOkEarly = pHostEarly.isEmpty() || uHost == pHostEarly || (pHostEarly.startsWith("*.") && (uHost == pHostEarly.removePrefix("*.") || uHost.endsWith(pHostEarly.removePrefix("*"))))
                     val prefix = globToPrefixRegex(pat)
-                    if (prefix.containsMatchIn(u)) return@any true
+                    if (hostOkEarly && prefix.containsMatchIn(u)) {
+                        // Extra boundary check for non-wildcard hosts: next char after host must be /, ?, #, :, or end.
+                        if (!pHostEarly.contains("*") && pHostEarly.isNotEmpty() && !pat.contains("*")) {
+                            val after = u.removePrefix(u.substringBefore(pHostEarly) + pHostEarly)
+                            if (after.isEmpty() || after[0] in listOf('/', '?', '#', ':',)) return@any true
+                        } else return@any true
+                    }
 
                     // 3. also try prefix without trailing /* and optional slash
                     val trimmed = pat.removeSuffix("/*").removeSuffix("/")
                     if (trimmed != pat) {
                         val trimmedRegex = globToPrefixRegex(trimmed)
-                        if (trimmedRegex.containsMatchIn(u)) return@any true
+                        if (hostOkEarly && trimmedRegex.containsMatchIn(u)) return@any true
                     }
 
                     // 4. fuzzy host+path check for WTR and similar sites with variable slug depth
@@ -83,17 +95,18 @@ data class UserScript(
                     // This makes manager tolerant of consecutive * depth issues
                     val pHost = try { android.net.Uri.parse(pat.replace("*", "x")).host?.lowercase() ?: "" } catch (_: Exception) { "" }
                     val hostMatch = when {
-                        pHost.isEmpty() -> true
+                        pHost.isEmpty() -> false
                         pHost.startsWith("*.") -> uHost.endsWith(pHost.removePrefix("*.")) || uHost == pHost.removePrefix("*.")
                         pHost.contains("*") -> {
                             val hostRegex = Regex.escape(pHost).replace("\\*", ".*")
-                            Regex(hostRegex, RegexOption.IGNORE_CASE).containsMatchIn(uHost)
+                            Regex("^$hostRegex$", RegexOption.IGNORE_CASE).containsMatchIn(uHost)
                         }
                         else -> uHost == pHost || uHost.endsWith(".$pHost")
                     }
                     if (!hostMatch) return@any false
 
-                    // extract required path tokens (non-wildcard literals) and ensure they appear in order in URL
+                    // extract required path tokens (non-wildcard literals) and ensure they appear in order in URL path only
+                    val urlPath = u.substringAfter("://").substringAfter("/").lowercase()
                     val tokens = pat.substringAfter("://").substringAfter("/").split("*", "/").map { it.trim() }.filter { it.isNotEmpty() && it != "/" && !it.contains(":") }
                     // keep only literal tokens that are not just wildcards
                     val literals = tokens.filter { it.length > 1 && !it.contains("*") }.map { it.lowercase() }
@@ -102,15 +115,16 @@ data class UserScript(
                         var lastIdx = -1
                         var allFound = true
                         for (lit in literals) {
-                            val idx = u.indexOf(lit, startIndex = lastIdx + 1)
+                            val idx = urlPath.indexOf(lit, startIndex = lastIdx + 1)
                             if (idx == -1 || idx < lastIdx) { allFound = false; break }
                             lastIdx = idx
                         }
                         if (allFound) return@any true
+                    } else {
+                        // host-only pattern already matched exactly above
+                        return@any true
                     }
 
-                    // 5. final fallback: simple host contains
-                    if (uHost.isNotEmpty() && pat.lowercase().contains(uHost)) return@any true
                     false
                 } catch (_: Exception) {
                     u.contains(pat.lowercase())

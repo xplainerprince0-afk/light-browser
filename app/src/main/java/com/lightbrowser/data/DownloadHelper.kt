@@ -26,10 +26,12 @@ object DownloadHelper {
     private val _active = kotlinx.coroutines.flow.MutableStateFlow<List<ActiveDl>>(emptyList())
     val active: kotlinx.coroutines.flow.StateFlow<List<ActiveDl>> = _active.asStateFlow()
     private val cancelFlags = java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.atomic.AtomicBoolean>()
+    private val cancelConns = java.util.concurrent.ConcurrentHashMap<Long, java.net.HttpURLConnection>()
     private var nextId = 1L
 
     fun cancel(id: Long) {
         try { cancelFlags[id]?.set(true) } catch (_: Exception) {}
+        try { cancelConns[id]?.disconnect() } catch (_: Exception) {}
     }
 
     private fun updateDl(dl: ActiveDl) {
@@ -39,6 +41,7 @@ object DownloadHelper {
     private fun removeDl(id: Long) {
         _active.value = _active.value.filterNot { it.id == id }
         cancelFlags.remove(id)
+        try { cancelConns.remove(id) } catch (_: Exception) {}
     }
 
     private fun toastOnMain(ctx: Context, msg: String, long: Boolean = false) {
@@ -70,18 +73,29 @@ object DownloadHelper {
             updateDl(ActiveDl(id, safeName, url, null, 0, -1))
             toastOnMain(app, "Downloading $safeName…")
             Thread {
+                var conn: java.net.HttpURLConnection? = null
                 try {
                     val sandboxDir = getSandboxDownloadsDir(app)
                     val outFile = uniqueFile(sandboxDir, safeName)
-                    val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    cancelConns[id] = conn
                     conn.connectTimeout = 30_000
                     conn.readTimeout = 120_000
                     conn.instanceFollowRedirects = true
-                    if (!userAgent.isNullOrBlank()) conn.setRequestProperty("User-Agent", userAgent)
+                    val ua = if (!userAgent.isNullOrBlank() && !userAgent.startsWith("Java/")) userAgent
+                        else try { System.getProperty("http.agent") } catch (_: Exception) { null }
+                    if (!ua.isNullOrBlank()) conn.setRequestProperty("User-Agent", ua)
                     try {
-                        CookieManager.getInstance().getCookie(url)?.let {
-                            if (it.isNotBlank()) conn.setRequestProperty("Cookie", it)
-                        }
+                        val ck = try {
+                            // CookieManager should be read on Main; post-and-wait briefly, fall back direct.
+                            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) CookieManager.getInstance().getCookie(url)
+                            else {
+                                val f = java.util.concurrent.CompletableFuture<String?>()
+                                mainHandler.post { try { f.complete(CookieManager.getInstance().getCookie(url)) } catch (_: Exception) { f.complete(null) } }
+                                try { f.get(2, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { CookieManager.getInstance().getCookie(url) }
+                            }
+                        } catch (_: Exception) { null }
+                        if (!ck.isNullOrBlank()) conn.setRequestProperty("Cookie", ck)
                     } catch (_: Exception) {}
                     conn.connect()
                     if (conn.responseCode !in 200..299) throw java.io.IOException("HTTP ${conn.responseCode}")
@@ -120,7 +134,16 @@ object DownloadHelper {
                 } catch (e: Exception) {
                     removeDl(id)
                     android.util.Log.e("LightBrowser", "download fail", e)
-                    toastOnMain(app, "Download failed: ${e.message}", long = true)
+                    val friendly = when {
+                        e.message?.contains("Cancelled", true) == true -> "Download cancelled"
+                        e.message?.contains("HTTP 404", true) == true -> "Download failed: file not found (404)"
+                        e.message?.contains("HTTP 403", true) == true -> "Download failed: forbidden (403)"
+                        else -> "Download failed. Tap to retry."
+                    }
+                    toastOnMain(app, friendly, long = true)
+                } finally {
+                    try { cancelConns.remove(id) } catch (_: Exception) {}
+                    try { conn?.disconnect() } catch (_: Exception) {}
                 }
             }.also { it.isDaemon = true }.start()
         } catch (e: Exception) {
@@ -139,6 +162,7 @@ object DownloadHelper {
             f = File(dir, "$base($i)$ext")
             i++
         }
+        if (f.exists()) f = File(dir, "${base}_${System.currentTimeMillis()}$ext")
         return f
     }
 
@@ -168,8 +192,18 @@ object DownloadHelper {
         private fun saveBlob(base64data: String, mime: String?, disposition: String?) {
             try {
                 // base64data is data: URL like data:application/zip;base64,....
+                // Guard: huge videos as base64 dataURL = 2-3x RAM → OOM. Cap at ~80MB string.
+                if (base64data.length > 110_000_000) {
+                    toastOnMain(appCtx, "Blob too large to save in-app", long = true)
+                    return
+                }
                 val dataPart = base64data.substringAfter(",", base64data)
-                val bytes = android.util.Base64.decode(dataPart, android.util.Base64.DEFAULT)
+                val bytes = try {
+                    android.util.Base64.decode(dataPart, android.util.Base64.DEFAULT)
+                } catch (e: OutOfMemoryError) {
+                    toastOnMain(appCtx, "Blob too large (out of memory)", long = true)
+                    return
+                }
                 val fileName = try {
                     URLUtil.guessFileName("blob", disposition, mime)
                 } catch (_: Exception) { "download_${System.currentTimeMillis()}.bin" }

@@ -41,20 +41,25 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             val sw = android.webkit.ServiceWorkerController.getInstance()
             sw.setServiceWorkerClient(object : android.webkit.ServiceWorkerClient() {
-                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? = null
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
+                    return try {
+                        val u = request.url?.toString() ?: return null
+                        if (Prefs.adBlock && Adblock.isAdUrl(u)) {
+                            WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                        } else null
+                    } catch (_: Exception) { null }
+                }
             })
             sw.serviceWorkerWebSettings.apply {
                 allowContentAccess = true
-                allowFileAccess = true
+                allowFileAccess = false
             }
         }
     } catch (_: Exception) {}
 
     val settings = wv.settings
-    // Cache + responsiveness: default cache (HTTP cache on disk), images auto-load,
-    // no per-load header overrides beyond the one in loadUrl.
+    // Cache respects Settings toggle (BrowserProfile already applied it) — don't force LOAD_DEFAULT.
     try {
-        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         settings.loadsImagesAutomatically = true
         settings.blockNetworkImage = false
         settings.loadWithOverviewMode = true
@@ -69,9 +74,10 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
     wv.webViewClient = object : WebViewClient() {
         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
             try {
-                val host = request?.url?.host ?: ""
+                val u = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
+                val host = request.url?.host ?: ""
                 val pageHost = try { view?.url?.let { SitePrefs.hostOf(it) } ?: host } catch (_: Exception) { host }
-                if (SitePrefs.effectiveAdblock(app, pageHost) && Adblock.isAd(host)) {
+                if (SitePrefs.effectiveAdblock(app, pageHost) && Adblock.isAdUrl(u)) {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
             } catch (_: Exception) {}
@@ -104,7 +110,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                     }
                 } catch (_: Exception) {}
                 cb.onStarted(url)
-                try { cb.inject(v!!, url, "document_start") } catch (_: Exception) {}
+                try { v?.let { cb.inject(it, url, "document_start") } } catch (_: Exception) {}
             }
         }
 
@@ -114,24 +120,78 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                 cb.onFinished(url, v.title ?: url)
                 try { BrowserAgent.ensureShim(v) } catch (_: Exception) {}
                 try { BrowserAgent.rearmRecorder(v) } catch (_: Exception) {}
-                injectMobileViewport(v)
+                try {
+                    val host = SitePrefs.hostOf(url)
+                    if (!SitePrefs.effectiveDesktop(app, host)) injectMobileViewport(v)
+                    else injectDesktop(v)
+                } catch (_: Exception) { injectMobileViewport(v) }
                 injectVisibilityHack(v, url)
-                if (Prefs.desktopMode) injectDesktop(v)
                 v.postDelayed({
                     try {
+                        // Single call: injectAll filters by exact runAt, so call idle once.
+                        // document_end scripts run on the immediate inject below via end pass.
                         cb.inject(v, url, "document_end")
-                        cb.inject(v, url, "document_idle")
                     } catch (_: Exception) {}
-                }, 350)
+                    try {
+                        v.postDelayed({ try { cb.inject(v, url, "document_idle") } catch (_: Exception) {} }, 350)
+                    } catch (_: Exception) {}
+                }, 150)
             }
         }
 
-        override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean = false
+        override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+            val raw = req?.url?.toString() ?: return false
+            val scheme = try { req?.url?.scheme?.lowercase() ?: "" } catch (_: Exception) { "" }
+            // External schemes → system handler, not WebView.
+            if (scheme == "tel" || scheme == "mailto" || scheme == "sms" || scheme == "smsto" ||
+                scheme == "geo" || scheme == "intent" || scheme == "market" || scheme == "whatsapp"
+            ) {
+                try {
+                    val i = android.content.Intent(android.content.Intent.ACTION_VIEW, req?.url)
+                    i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    app.startActivity(i)
+                } catch (_: Exception) {
+                    try { android.widget.Toast.makeText(app, "No app for $scheme link", android.widget.Toast.LENGTH_SHORT).show() } catch (_: Exception) {}
+                }
+                return true
+            }
+            if (!raw.startsWith("http://") && !raw.startsWith("https://") && !raw.startsWith("lb://")) return true
+            return false
+        }
     }
 
     wv.webChromeClient = object : WebChromeClient() {
+        // Throttle progress → StateFlow to avoid recompose per 1%.
+        private var lastP = -1
+        private var lastT = 0L
         override fun onProgressChanged(v: WebView?, p: Int) {
-            cb.onProgress(p)
+            val now = System.currentTimeMillis()
+            if (p == 100 || p - lastP >= 5 || now - lastT > 400) {
+                lastP = p; lastT = now
+                cb.onProgress(p)
+            }
+        }
+        // Popup / target=_blank / window.open (OAuth, checkout) → open in new tab.
+        override fun onCreateWindow(v: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+            try {
+                val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                val tmp = WebView(v?.context)
+                transport.webView = tmp
+                resultMsg.sendToTarget()
+                tmp.webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView?, req: WebResourceRequest?): Boolean {
+                        val u = req?.url?.toString() ?: return true
+                        if (u.startsWith("http://") || u.startsWith("https://")) {
+                            try { com.lightbrowser.ui.browser.TabBus.openInNewTab(u) } catch (_: Exception) {
+                                try { view?.context?.let { c -> android.content.Intent(android.content.Intent.ACTION_VIEW, req?.url).let { c.startActivity(it) } } } catch (_: Exception) {}
+                            }
+                        }
+                        try { tmp.destroy() } catch (_: Exception) {}
+                        return true
+                    }
+                }
+                return true
+            } catch (_: Exception) { return false }
         }
 
         override fun onConsoleMessage(cm: ConsoleMessage?): Boolean {
@@ -140,8 +200,12 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                 val src = it.sourceId() ?: ""
                 val msg = it.message() ?: ""
                 // Click-recorder events ride the console: parse, don't print.
+                // Length/shape guard here too (BrowserAgent.recordEvent also guards).
                 if (msg.startsWith("__LB_REC__:")) {
-                    try { BrowserAgent.recordEvent(msg.removePrefix("__LB_REC__:")) } catch (_: Exception) {}
+                    try {
+                        val payload = msg.removePrefix("__LB_REC__:")
+                        if (payload.length <= 4_000) BrowserAgent.recordEvent(payload)
+                    } catch (_: Exception) {}
                     return@let
                 }
                 if (src.contains("challenges.cloudflare.com") || src.contains("turnstile")) return@let
@@ -156,23 +220,27 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
 
     wv.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
         if (url.startsWith("blob:")) {
+            // Escape quotes/newlines — unescaped interpolation breaks JS and can inject.
+            fun jsStr(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r").take(2000)
             val js = """
                 (function(){
                   try{
                     var xhr=new XMLHttpRequest();
-                    xhr.open('GET', "$url", true);
+                    xhr.open('GET', "${jsStr(url)}", true);
                     xhr.responseType='blob';
                     xhr.onload=function(){
                       if(this.status==200){
                         var reader=new FileReader();
                         reader.readAsDataURL(this.response);
                         reader.onloadend=function(){
-                          try{window.BlobDownloader.onBlobDownload(reader.result, "$mimeType", "$contentDisposition");}catch(e){console.error(e);}
+                          try{window.BlobDownloader.onBlobDownload(reader.result, "${jsStr(mimeType ?: "")}", "${jsStr(contentDisposition ?: "")}");}catch(e){console.error('blob-bridge',e);}
                         };
-                      }
+                        reader.onerror=function(){console.error('blob-read-failed');};
+                      } else { console.error('blob-xhr-status:'+this.status); }
                     };
+                    xhr.onerror=function(){console.error('blob-xhr-error');};
                     xhr.send();
-                  }catch(e){console.error(e);}
+                  }catch(e){console.error('blob-setup',e);}
                 })();
             """.trimIndent()
             wv.evaluateJavascript(js, null)

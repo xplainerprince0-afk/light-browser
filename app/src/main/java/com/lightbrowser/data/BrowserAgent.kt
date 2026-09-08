@@ -61,29 +61,13 @@ object BrowserAgent {
     @Synchronized
     fun clearConsole() { consoleBuf.clear() }
 
-    /** Viewport screenshot → sandbox/shots file. Returns path or null. */
+    /** Viewport screenshot → sandbox/shots file. Returns path or null. Main-safe (no deadlock). */
     fun captureShot(): String? {
+        // Fast path: already on Main — do directly, no post+wait.
+        if (Looper.myLooper() == Looper.getMainLooper()) return captureShotOnMain()
         val f = CompletableFuture<String?>()
         mainHandler.post {
-            try {
-                val wv = webViewProvider?.invoke()
-                if (wv == null || wv.width <= 0 || wv.height <= 0) {
-                    f.complete(null)
-                    return@post
-                }
-                val scale = (1280f / wv.width).coerceAtMost(1f)
-                val bw = (wv.width * scale).toInt().coerceAtLeast(1)
-                val bh = (wv.height * scale).toInt().coerceAtLeast(1)
-                val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
-                val c = android.graphics.Canvas(bmp)
-                c.scale(scale, scale)
-                wv.draw(c)
-                val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
-                val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
-                java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
-                try { bmp.recycle() } catch (_: Exception) {}
-                f.complete(out.absolutePath)
-            } catch (e: Exception) {
+            try { f.complete(captureShotOnMain()) } catch (e: Exception) {
                 Log.w(TAG, "shot", e)
                 try { f.complete(null) } catch (_: Exception) {}
             }
@@ -91,6 +75,36 @@ object BrowserAgent {
         return try {
             f.get(15, TimeUnit.SECONDS)
         } catch (_: Exception) { null }
+    }
+
+    private fun captureShotOnMain(): String? {
+        return try {
+            val wv = webViewProvider?.invoke()
+            if (wv == null || wv.width <= 0 || wv.height <= 0) return null
+            val scale = (1280f / wv.width).coerceAtMost(1f)
+            val bw = (wv.width * scale).toInt().coerceAtLeast(1)
+            val bh = (wv.height * scale).toInt().coerceAtLeast(1)
+            val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(bmp)
+            c.scale(scale, scale)
+            wv.draw(c)
+            val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
+            pruneDir(dir, 30)
+            val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
+            java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+            try { bmp.recycle() } catch (_: Exception) {}
+            out.absolutePath
+        } catch (e: Exception) {
+            Log.w(TAG, "shot", e)
+            null
+        }
+    }
+
+    private fun pruneDir(dir: java.io.File, keep: Int) {
+        try {
+            val files = dir.listFiles()?.sortedByDescending { it.lastModified() } ?: return
+            files.drop(keep).forEach { try { it.delete() } catch (_: Exception) {} }
+        } catch (_: Exception) {}
     }
 
     // ── WebView ops (always on Main) ──
@@ -114,12 +128,38 @@ object BrowserAgent {
     }
 
     fun currentUrl(): String? = try {
-        webViewProvider?.invoke()?.url
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            webViewProvider?.invoke()?.url
+        } else {
+            val f = CompletableFuture<String?>()
+            mainHandler.post {
+                try { f.complete(webViewProvider?.invoke()?.url) } catch (_: Exception) { f.complete(null) }
+            }
+            try { f.get(2, TimeUnit.SECONDS) } catch (_: Exception) {
+                try { webViewProvider?.invoke()?.url } catch (_: Exception) { null }
+            }
+        }
     } catch (_: Exception) { null }
 
-    /** Suspend eval with timeout + size cap. Returns raw JSON-ish string. */
+    /** Suspend eval with timeout + size cap. Returns raw JSON-ish string. Main-safe. */
     suspend fun eval(expr: String, timeoutMs: Long = 12_000, maxChars: Int = 60_000): String {
         return try {
+            // Fast path: already on Main — call evaluateJavascript directly.
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                val future = CompletableFuture<String>()
+                try {
+                    val wv = webViewProvider?.invoke()
+                    if (wv == null) future.complete("ERR no-webview")
+                    else wv.evaluateJavascript(expr) { raw ->
+                        try { if (!future.isDone) future.complete(raw ?: "null") } catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    try { if (!future.isDone) future.complete("ERR ${e.message}") } catch (_: Exception) {}
+                }
+                var out = try { future.get(timeoutMs, TimeUnit.MILLISECONDS) ?: "null" } catch (_: Exception) { "ERR timeout" }
+                if (out.length > maxChars) out = out.take(maxChars) + "…[truncated]"
+                return out
+            }
             val future = CompletableFuture<String>()
             mainHandler.post {
                 try {
@@ -243,20 +283,31 @@ object BrowserAgent {
         recStartUrl = try { webViewProvider?.invoke()?.url ?: "" } catch (_: Exception) { "" }
         recStartMs = System.currentTimeMillis()
         _recording.value = true
-        try {
-            webViewProvider?.invoke()?.evaluateJavascript(
-                "(function(){try{if(window.LightAgent)window.LightAgent.record(true);}catch(e){}})()", null
-            )
-        } catch (_: Exception) {}
+        // Ensure shim exists first (JS-off / pre-finish would otherwise silently record nothing).
+        mainHandler.post {
+            try {
+                val wv = webViewProvider?.invoke() ?: return@post
+                ensureShim(wv)
+                wv.postDelayed({
+                    try {
+                        wv.evaluateJavascript(
+                            "(function(){try{if(window.LightAgent)window.LightAgent.record(true);}catch(e){}})()", null
+                        )
+                    } catch (_: Exception) {}
+                }, 300)
+            } catch (_: Exception) {}
+        }
     }
 
     fun stopRecording() {
         _recording.value = false
-        try {
-            webViewProvider?.invoke()?.evaluateJavascript(
-                "(function(){try{if(window.LightAgent)window.LightAgent.record(false);}catch(e){}})()", null
-            )
-        } catch (_: Exception) {}
+        mainHandler.post {
+            try {
+                webViewProvider?.invoke()?.evaluateJavascript(
+                    "(function(){try{if(window.LightAgent)window.LightAgent.record(false);}catch(e){}})()", null
+                )
+            } catch (_: Exception) {}
+        }
     }
 
     /** Called from the shim's capture listener (re-armed after every navigation). */
@@ -272,10 +323,20 @@ object BrowserAgent {
     @Synchronized
     fun recordEvent(json: String) {
         if (!_recording.value) return
+        // Shape/rate guard: page could forge __LB_REC__ console lines.
+        if (json.length > 4_000) return
         try {
             val o = JSONObject(json)
+            val op = o.optString("op", "")
+            if (op != "click" && op != "fill") return
+            val sel = o.optString("selector", "")
+            if (sel.isBlank() || sel.length > 500) return
             o.put("t", System.currentTimeMillis() - recStartMs)
+            // Per-action URL so SPA replay works (was only startUrl before).
+            try { o.put("url", webViewProvider?.invoke()?.url ?: recStartUrl) } catch (_: Exception) { o.put("url", recStartUrl) }
             recEvents.add(o)
+            // Cap memory: keep last 500 actions.
+            while (recEvents.size > 500) recEvents.removeAt(0)
         } catch (_: Exception) {}
     }
 
@@ -288,6 +349,7 @@ object BrowserAgent {
             if (recEvents.isEmpty()) return null
             val app = AppCtx.ctx
             val dir = java.io.File(app.filesDir, "sandbox/agent_recs").apply { mkdirs() }
+            pruneDir(dir, 30)
             val safe = name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40).ifBlank { "rec" }
             val out = java.io.File(dir, "${safe}_${System.currentTimeMillis()}.json")
             val root = JSONObject()
@@ -380,7 +442,8 @@ object BrowserAgent {
             val path = rawTarget.substringBefore("?")
             val query = if (rawTarget.contains("?")) rawTarget.substringAfter("?") else ""
             val q = parseQuery(query)
-            if (path != "/status" && q["token"] != token) {
+            // All endpoints (incl /status) require token — URL itself is private.
+            if (q["token"] != token) {
                 respondRaw(sock.getOutputStream(), 403, """{"ok":false,"err":"bad token"}""")
                 return
             }
@@ -413,8 +476,27 @@ object BrowserAgent {
         }.toMap()
     }
 
-    /** Runs on the HTTP worker thread; WebView ops hop to Main and block-await. */
+    /** Runs on the HTTP worker thread; WebView ops hop to Main and block-await.
+     *  IMPORTANT: op() already runs ON Main — it must do WebView work DIRECTLY,
+     *  never future.get() on Main (that deadlocks: Main waiting on Main). */
     private fun handle(path: String, q: Map<String, String>): String {
+        // Blocking JS eval helper for worker threads: posts to Main, waits on WORKER.
+        fun evalBlocking(js: String, timeoutS: Long = 12): String {
+            val f = CompletableFuture<String>()
+            mainHandler.post {
+                try {
+                    val wv = webViewProvider?.invoke()
+                    if (wv == null) { f.complete("ERR no-webview"); return@post }
+                    try { ensureShim(wv) } catch (_: Exception) {}
+                    wv.evaluateJavascript(js) { raw ->
+                        try { if (!f.isDone) f.complete(raw ?: "null") } catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    try { if (!f.isDone) f.complete("ERR ${e.message}") } catch (_: Exception) {}
+                }
+            }
+            return try { f.get(timeoutS, TimeUnit.SECONDS) ?: "ERR timeout" } catch (_: Exception) { "ERR timeout" }
+        }
         fun awaitMain(op: () -> String): String {
             val f = CompletableFuture<String>()
             mainHandler.post {
@@ -452,86 +534,26 @@ object BrowserAgent {
             }
             "/js" -> {
                 val expr = q["expr"] ?: return """{"ok":false,"err":"missing expr"}"""
-                awaitMain {
-                    val f = CompletableFuture<String>()
-                    try {
-                        webViewProvider?.invoke()?.evaluateJavascript(expr) { raw ->
-                            try { f.complete(raw ?: "null") } catch (_: Exception) {}
-                        } ?: f.complete("ERR no-webview")
-                    } catch (e: Exception) { f.complete("ERR ${e.message}") }
-                    val raw = try { f.get(12, TimeUnit.SECONDS) } catch (_: Exception) { "ERR timeout" }
-                    JSONObject().put("ok", !raw.startsWith("ERR")).put("result", raw.take(60_000)).toString()
-                }
+                val raw = evalBlocking(expr, 12).take(60_000)
+                JSONObject().put("ok", !raw.startsWith("ERR")).put("result", raw).toString()
             }
-            "/text" -> awaitMain {
-                val f = CompletableFuture<String>()
-                try {
-                    val wv = webViewProvider?.invoke()
-                    if (wv == null) f.complete("ERR no-webview")
-                    else {
-                        ensureShim(wv)
-                        wv.evaluateJavascript("(function(){try{return JSON.stringify(window.LightAgent.getText(8000));}catch(e){return 'ERR '+e;}})()") { raw ->
-                            try { f.complete(raw ?: "null") } catch (_: Exception) {}
-                        }
-                    }
-                } catch (e: Exception) { f.complete("ERR ${e.message}") }
-                val raw = try { f.get(12, TimeUnit.SECONDS) } catch (_: Exception) { "ERR timeout" }
-                JSONObject().put("ok", !raw.startsWith("ERR")).put("text", raw.take(60_000)).toString()
+            "/text" -> {
+                val raw = evalBlocking("(function(){try{return JSON.stringify(window.LightAgent?window.LightAgent.getText(8000):(document.body?document.body.innerText.slice(0,8000):''));}catch(e){return 'ERR '+e;}})()", 12).take(60_000)
+                JSONObject().put("ok", !raw.startsWith("ERR")).put("text", raw).toString()
             }
-            "/snap" -> awaitMain {
-                val f = CompletableFuture<String>()
-                try {
-                    val wv = webViewProvider?.invoke()
-                    if (wv == null) f.complete("ERR no-webview")
-                    else {
-                        ensureShim(wv)
-                        wv.evaluateJavascript("(function(){try{return window.LightAgent.snapshot();}catch(e){return 'ERR '+e;}})()") { raw ->
-                            try { f.complete(raw ?: "null") } catch (_: Exception) {}
-                        }
-                    }
-                } catch (e: Exception) { f.complete("ERR ${e.message}") }
-                try {
-                    f.get(12, TimeUnit.SECONDS)
-                } catch (_: Exception) { "ERR timeout" }
-            }
+            "/snap" -> evalBlocking("(function(){try{return window.LightAgent?window.LightAgent.snapshot():'ERR no-shim';}catch(e){return 'ERR '+e;}})()", 12)
             "/click" -> {
                 val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
-                awaitMain {
-                    val f = CompletableFuture<String>()
-                    try {
-                        val wv = webViewProvider?.invoke()
-                        if (wv == null) f.complete("ERR no-webview")
-                        else {
-                            ensureShim(wv)
-                            val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
-                            wv.evaluateJavascript("(function(){try{return window.LightAgent.click('$esc');}catch(e){return 'ERR '+e;}})()") { raw ->
-                                try { f.complete(raw ?: "null") } catch (_: Exception) {}
-                            }
-                        }
-                    } catch (e: Exception) { f.complete("ERR ${e.message}") }
-                    val raw = try { f.get(12, TimeUnit.SECONDS) } catch (_: Exception) { "ERR timeout" }
-                    JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
-                }
+                val esc = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val raw = evalBlocking("(function(){try{return window.LightAgent?window.LightAgent.click('$esc'):'ERR no-shim';}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
             }
             "/fill" -> {                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
                 val value = q["value"] ?: ""
-                awaitMain {
-                    val f = CompletableFuture<String>()
-                    try {
-                        val wv = webViewProvider?.invoke()
-                        if (wv == null) f.complete("ERR no-webview")
-                        else {
-                            ensureShim(wv)
-                            val e1 = sel.replace("\\", "\\\\").replace("'", "\\'")
-                            val e2 = value.replace("\\", "\\\\").replace("'", "\\'")
-                            wv.evaluateJavascript("(function(){try{return window.LightAgent.fill('$e1','$e2');}catch(e){return 'ERR '+e;}})()") { raw ->
-                                try { f.complete(raw ?: "null") } catch (_: Exception) {}
-                            }
-                        }
-                    } catch (e: Exception) { f.complete("ERR ${e.message}") }
-                    val raw = try { f.get(12, TimeUnit.SECONDS) } catch (_: Exception) { "ERR timeout" }
-                    JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
-                }
+                val e1 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val e2 = value.replace("\\", "\\\\").replace("'", "\\'").take(2000)
+                val raw = evalBlocking("(function(){try{return window.LightAgent?window.LightAgent.fill('$e1','$e2'):'ERR no-shim';}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
             }
             "/console" -> {
                 val n = q["n"]?.toIntOrNull() ?: 30
@@ -540,42 +562,15 @@ object BrowserAgent {
                 JSONObject().put("ok", true).put("lines", arr).toString()
             }
             "/cookies" -> awaitMain {
-                val f = CompletableFuture<String?>()
-                mainHandler.post {
-                    try {
-                        val wv = webViewProvider?.invoke()
-                        val url = wv?.url ?: ""
-                        f.complete(
-                            try { android.webkit.CookieManager.getInstance().getCookie(url) } catch (_: Exception) { null }
-                        )
-                    } catch (_: Exception) { f.complete(null) }
-                }
-                val ck = try { f.get(5, TimeUnit.SECONDS) } catch (_: Exception) { null }
+                // Already on Main — read CookieManager directly, no inner post+get.
+                val wv = webViewProvider?.invoke()
+                val url = wv?.url ?: ""
+                val ck = try { android.webkit.CookieManager.getInstance().getCookie(url) } catch (_: Exception) { null }
                 JSONObject().put("ok", true).put("cookies", ck ?: JSONObject.NULL).toString()
             }
             "/shot" -> awaitMain {
-                val f = CompletableFuture<String?>()
-                try {
-                    val wv = webViewProvider?.invoke()
-                    if (wv == null || wv.width <= 0 || wv.height <= 0) f.complete(null)
-                    else {
-                        val scale = (1280f / wv.width).coerceAtMost(1f)
-                        val bmp = android.graphics.Bitmap.createBitmap(
-                            (wv.width * scale).toInt().coerceAtLeast(1),
-                            (wv.height * scale).toInt().coerceAtLeast(1),
-                            android.graphics.Bitmap.Config.ARGB_8888
-                        )
-                        val c = android.graphics.Canvas(bmp)
-                        c.scale(scale, scale)
-                        wv.draw(c)
-                        val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
-                        val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
-                        java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
-                        try { bmp.recycle() } catch (_: Exception) {}
-                        f.complete(out.absolutePath)
-                    }
-                } catch (e: Exception) { f.complete(null) }
-                val path = try { f.get(15, TimeUnit.SECONDS) } catch (_: Exception) { null }
+                // Already on Main — capture directly.
+                val path = try { captureShotOnMain() } catch (_: Exception) { null }
                 if (path != null) JSONObject().put("ok", true).put("path", path).toString()
                 else """{"ok":false,"err":"shot failed"}"""
             }

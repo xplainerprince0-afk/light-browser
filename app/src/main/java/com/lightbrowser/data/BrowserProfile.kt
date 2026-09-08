@@ -27,7 +27,7 @@ object BrowserProfile {
         settings.javaScriptEnabled = Prefs.jsEnabled
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
-        settings.allowFileAccess = true
+        settings.allowFileAccess = false
         settings.allowContentAccess = true
 
         try {
@@ -48,8 +48,8 @@ object BrowserProfile {
         settings.loadWithOverviewMode = true
         settings.setSupportMultipleWindows(true)
         settings.javaScriptCanOpenWindowsAutomatically = true
-        settings.mediaPlaybackRequiresUserGesture = false
-        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        settings.mediaPlaybackRequiresUserGesture = true
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         settings.setGeolocationEnabled(false)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

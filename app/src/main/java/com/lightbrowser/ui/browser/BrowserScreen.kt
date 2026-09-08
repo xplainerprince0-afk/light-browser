@@ -77,6 +77,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -115,7 +116,16 @@ fun BrowserScreen(
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
-    var webView by remember { mutableStateOf<WebView?>(null) }
+    // ── True multi-WebView pool: tabId → WebView (max 4, evict oldest background) ──
+    // Each tab keeps its own history/scroll/form. Only current is visible; others are
+    // kept alive offscreen so back/forward works per-tab like Chrome.
+    val webViews = remember { androidx.compose.runtime.mutableStateMapOf<String, WebView>() }
+    // Current tab id derived from index; stable across recompositions.
+    val currentTabId = ui.tabs.getOrNull(ui.currentIndex)?.id
+    var currentWebView by remember { mutableStateOf<WebView?>(null) }
+    fun activeWebView(): WebView? = currentTabId?.let { webViews[it] } ?: currentWebView
+    // Current WebView (recomputed each recomposition from pool).
+    val webView: WebView? = activeWebView()
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
@@ -129,42 +139,86 @@ fun BrowserScreen(
     var showAgent by remember { mutableStateOf(false) }
     var showReader by remember { mutableStateOf(false) }
     var showSite by remember { mutableStateOf(false) }
+    var prefsVer by remember { mutableStateOf(0) }
+
+    // Route TabBus window.open → new tab.
+    LaunchedEffect(Unit) {
+        TabBus.openInNewTab = { url -> try { vm.openTab(url, select = true) } catch (_: Exception) {} }
+    }
 
     val loadReq by vm.loadRequest.collectAsState()
     val findCount by vm.findCount.collectAsState()
     val reader by vm.reader.collectAsState()
     val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
+    // Retry load if WebView not yet created (factory race): keep pending until applied.
+    var pendingLoad by remember { mutableStateOf<Pair<String, Long>?>(null) }
     LaunchedEffect(loadReq) {
-        val (url, _) = loadReq ?: return@LaunchedEffect
+        val (url, ts) = loadReq ?: return@LaunchedEffect
         if (url.startsWith("lb://")) return@LaunchedEffect
+        pendingLoad = url to ts
+    }
+    // Apply pending load to CURRENT tab's WebView only, with URL check + retry.
+    LaunchedEffect(pendingLoad, currentTabId) {
+        val (url, _) = pendingLoad ?: return@LaunchedEffect
+        val wv = currentTabId?.let { webViews[it] } ?: return@LaunchedEffect
         try {
-            webView?.loadUrl(url, mapOf("X-Requested-With" to ""))
+            if (wv.url != url) wv.loadUrl(url, mapOf("X-Requested-With" to ""))
+            pendingLoad = null
         } catch (_: Exception) {}
+    }
+    // Keep agent pointed at current WebView.
+    LaunchedEffect(currentTabId, webViews.size) {
+        try { com.lightbrowser.data.BrowserAgent.webViewProvider = { activeWebView() } } catch (_: Exception) {}
     }
 
     BackHandler(enabled = active && ui.searchExpanded) {
         vm.setSearch(false)
         focusManager.clearFocus()
     }
-    BackHandler(enabled = active && !ui.searchExpanded && !keyboardOpen && webView?.canGoBack() == true) {
-        try { webView?.goBack() } catch (_: Exception) {}
+    // canGoBack state (updated on progress/finish) drives enablement — not webView?.canGoBack()
+    // directly (non-reactive). Falls back to live check for safety.
+    BackHandler(enabled = active && !ui.searchExpanded && !keyboardOpen && (canGoBack || webView?.canGoBack() == true)) {
+        try {
+            val wv = activeWebView()
+            if (wv?.canGoBack() == true) wv.goBack()
+        } catch (_: Exception) {}
     }
 
-    // Parked offscreen but alive: pause timers when hidden, resume on return.
+    // Pause all background WebViews when tab hidden; resume current when visible.
+    // Also flush cookies on pause (BrowserProfile never got onWebViewPause before).
     LaunchedEffect(active) {
         try {
-            if (active) webView?.onResume() else webView?.onPause()
+            if (active) {
+                activeWebView()?.onResume()
+                try { com.lightbrowser.data.BrowserProfile.onWebViewResume(activeWebView()) } catch (_: Exception) {}
+            } else {
+                webViews.values.forEach { try { it.onPause() } catch (_: Exception) {} }
+                try { com.lightbrowser.data.BrowserProfile.onWebViewPause(activeWebView()) } catch (_: Exception) {}
+            }
         } catch (_: Exception) {}
     }
 
     DisposableEffect(Unit) {
         onDispose {
             try {
-                webView?.stopLoading()
-                webView?.destroy()
+                webViews.values.forEach { try { it.stopLoading(); it.destroy() } catch (_: Exception) {} }
+                webViews.clear()
             } catch (_: Exception) {}
-            webView = null
+            try { TabBus.openInNewTab = null } catch (_: Exception) {}
         }
+    }
+    // Evict closed tabs' WebViews + cap pool at 4 (destroy oldest background first).
+    LaunchedEffect(ui.tabs.map { it.id }, currentTabId) {
+        try {
+            val alive = ui.tabs.map { it.id }.toSet()
+            (webViews.keys - alive).forEach { id ->
+                try { webViews.remove(id)?.destroy() } catch (_: Exception) { try { webViews.remove(id) } catch (_: Exception) {} }
+            }
+            if (webViews.size > 4 && currentTabId != null) {
+                val candidates = webViews.keys.filter { it != currentTabId }.take(webViews.size - 4)
+                candidates.forEach { id -> try { webViews.remove(id)?.destroy() } catch (_: Exception) {} }
+            }
+        } catch (_: Exception) {}
     }
 
     fun currentDomain(): String = try {
@@ -193,7 +247,7 @@ fun BrowserScreen(
     // the keyboard overlays the bottom instead of pushing content up.
     Column(modifier = modifier.fillMaxSize()) {
         if (ui.searchExpanded) {
-            val focusReq = remember { FocusRequester() }
+            val focusReq = remember(ui.searchExpanded) { FocusRequester() }
             OutlinedTextField(
                 value = ui.searchQuery,
                 onValueChange = vm::setQuery,
@@ -211,13 +265,16 @@ fun BrowserScreen(
                 keyboardActions = KeyboardActions(onGo = {
                     val url = vm.resolveInput(ui.searchQuery)
                     if (url.isNotEmpty()) goTo(url)
-                    vm.setSearch(false)
-                    focusManager.clearFocus()
+                    // Don't collapse on empty input — keeps context.
+                    if (ui.searchQuery.isNotBlank()) { vm.setSearch(false); focusManager.clearFocus() }
                 }),
                 shape = MaterialTheme.shapes.extraLarge
             )
-            LaunchedEffect(Unit) {
-                try { focusReq.requestFocus() } catch (_: Exception) {}
+            LaunchedEffect(ui.searchExpanded) {
+                try {
+                    kotlinx.coroutines.delay(80)
+                    focusReq.requestFocus()
+                } catch (_: Exception) {}
             }
         } else {
             Surface(
@@ -282,21 +339,34 @@ fun BrowserScreen(
                             value = findQuery,
                             onValueChange = {
                                 findQuery = it
-                                try { webView?.findAllAsync(it) } catch (_: Exception) {}
+                                // Debounce: delay then find (cancels previous via scope).
+                                scope.launch {
+                                    kotlinx.coroutines.delay(250)
+                                    if (findQuery == it) {
+                                        try {
+                                            if (it.isBlank()) activeWebView()?.findAllAsync("")
+                                            else activeWebView()?.findAllAsync(it)
+                                        } catch (_: Exception) {}
+                                    }
+                                }
                             },
                             modifier = Modifier.weight(1f),
                             placeholder = { Text("Find in page") },
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = {
+                                try { activeWebView()?.findNext(true) } catch (_: Exception) {}
+                            }),
                             shape = MaterialTheme.shapes.large
                         )
                         IconButton(onClick = { try { webView?.findNext(false) } catch (_: Exception) {} }) {
                             Icon(Icons.Filled.KeyboardArrowUp, "Prev")
                         }
                         findCount?.let { (at, total) ->
-                            if (total > 0) Text(
-                                "$at/$total",
+                            Text(
+                                if (total > 0) "$at/$total" else "0/0",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (total > 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
                                 modifier = Modifier.padding(horizontal = 4.dp)
                             )
                         }
@@ -307,86 +377,111 @@ fun BrowserScreen(
                             findOpen = false
                             findQuery = ""
                             vm.clearFind()
-                            try { webView?.clearMatches() } catch (_: Exception) {}
+                            try { activeWebView()?.findAllAsync(""); activeWebView()?.clearMatches() } catch (_: Exception) {}
                         }) { Icon(Icons.Filled.Close, "Close find") }
                     }
                 }
             }
         }
 
-        // WebView shared by BOTH modes — NEVER removed from composition.
-        // Searching shrinks the page; suggestions float on top only while typing.
+        // ── Multi-WebView pool: one AndroidView per tab (capped at 4 alive) ──
+        // Only current is full-size; background tabs are 1dp (kept alive, no rendering cost).
         Box(modifier = Modifier.fillMaxSize().weight(1f)) {
-                AndroidView(
-                factory = { c ->
-                    WebView(c).also { wv ->
-                        setupLightWebView(
-                            wv,
-                            BrowserCallbacks(
-                                onStarted = {
-                                    // Remember where we were on the previous page…
-                                    try {
-                                        webView?.let { wv ->
-                                            wv.url?.let { u -> vm.saveScroll(u, wv.scrollY) }
-                                        }
-                                    } catch (_: Exception) {}
-                                    vm.onPageStarted(it)
-                                },
-                                onProgress = {
-                                    vm.onProgress(it)
-                                    try {
-                                        canGoBack = webView?.canGoBack() == true
-                                        canGoForward = webView?.canGoForward() == true
-                                    } catch (_: Exception) {}
-                                },
-                                onFinished = { url, title ->
-                                    vm.onPageFinished(url, title)
-                                    // …and jump back there when revisiting.
-                                    try {
-                                        vm.popScroll(url)?.let { y ->
-                                            webView?.postDelayed({
-                                                try { webView?.scrollTo(0, y) } catch (_: Exception) {}
-                                            }, 400)
-                                        }
-                                    } catch (_: Exception) {}
-                                },
-                                onLongPressUrl = { longPressUrl = it },
-                                inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
-                            )
-                        )
-                    webView = wv
-                    try { com.lightbrowser.data.BrowserAgent.webViewProvider = { webView } } catch (_: Exception) {}
-                    wv.setFindListener { ordinal, total, _ -> vm.setFind(ordinal + 1, total) }
-                    val start = ui.tabs.firstOrNull()?.url ?: Prefs.homePage
-                    if (!start.startsWith("lb://")) {
-                        try { wv.loadUrl(start, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
-                    }
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-                update = { wv ->
-                    if (webView == null) webView = wv
-                    // Global switches apply only when this host has no per-site override
-                    // (per-site values are applied on every page start in WebViewSetup).
-                    try {
-                        val host = com.lightbrowser.data.SitePrefs.hostOf(ui.currentUrl)
-                        val site = com.lightbrowser.data.SitePrefs.get(ctx, host)
-                        if (site.js == null && site.desktop == null) {
-                            var js = true
-                            var desk = false
-                            try { js = Prefs.jsEnabled } catch (_: Exception) {}
-                            try { desk = Prefs.desktopMode } catch (_: Exception) {}
-                            try {
-                                if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
-                                if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
-                                else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
-                                    wv.settings.userAgentString = System.getProperty("http.agent")
+            ui.tabs.forEach { tab ->
+                val isCurrent = tab.id == currentTabId
+                key(tab.id) {
+                    AndroidView(
+                        factory = { c ->
+                            WebView(c).also { wv ->
+                                setupLightWebView(
+                                    wv,
+                                    BrowserCallbacks(
+                                        onStarted = {
+                                            try {
+                                                activeWebView()?.let { cur ->
+                                                    cur.url?.let { u -> vm.saveScroll(u, cur.scrollY) }
+                                                }
+                                            } catch (_: Exception) {}
+                                            // Only current tab drives global UI state.
+                                            if (tab.id == vm.ui.value.tabs.getOrNull(vm.ui.value.currentIndex)?.id) vm.onPageStarted(it)
+                                        },
+                                        onProgress = {
+                                            if (tab.id == vm.ui.value.tabs.getOrNull(vm.ui.value.currentIndex)?.id) {
+                                                vm.onProgress(it)
+                                                try {
+                                                    canGoBack = wv.canGoBack()
+                                                    canGoForward = wv.canGoForward()
+                                                } catch (_: Exception) {}
+                                            }
+                                        },
+                                        onFinished = { url, title ->
+                                            if (tab.id == vm.ui.value.tabs.getOrNull(vm.ui.value.currentIndex)?.id) {
+                                                vm.onPageFinished(url, title)
+                                                try { canGoBack = wv.canGoBack(); canGoForward = wv.canGoForward() } catch (_: Exception) {}
+                                                // Scroll restore only if still on same URL (no jump after nav-away).
+                                                try {
+                                                    val y = vm.popScroll(url)
+                                                    if (y != null && y > 0) {
+                                                        wv.postDelayed({
+                                                            try { if (wv.url == url) wv.scrollTo(0, y) } catch (_: Exception) {}
+                                                        }, 400)
+                                                    }
+                                                } catch (_: Exception) {}
+                                            }
+                                        },
+                                        onLongPressUrl = { longPressUrl = it },
+                                        inject = { w, url, runAt -> vm.injectAll(w, url, runAt) }
+                                    )
+                                )
+                                webViews[tab.id] = wv
+                                if (tab.id == currentTabId) {
+                                    currentWebView = wv
+                                    try { com.lightbrowser.data.BrowserAgent.webViewProvider = { activeWebView() } } catch (_: Exception) {}
                                 }
-                            } catch (_: Exception) {}
+                                wv.setFindListener { ordinal, total, _ -> vm.setFind(ordinal + 1, total) }
+                                if (!tab.url.startsWith("lb://")) {
+                                    try { wv.loadUrl(tab.url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+                                }
+                            }
+                        },
+                        modifier = if (isCurrent) Modifier.fillMaxSize() else Modifier.size(1.dp),
+                        update = { wv ->
+                            try { webViews[tab.id] = wv } catch (_: Exception) {}
+                            if (isCurrent) {
+                                currentWebView = wv
+                                // Global switches apply independently per setting (was: skip both if either override set).
+                                try {
+                                    val host = com.lightbrowser.data.SitePrefs.hostOf(tab.url.ifBlank { ui.currentUrl })
+                                    val site = com.lightbrowser.data.SitePrefs.get(ctx, host)
+                                    var js = true
+                                    var desk = false
+                                    try { js = site.js ?: Prefs.jsEnabled } catch (_: Exception) {}
+                                    try { desk = site.desktop ?: Prefs.desktopMode } catch (_: Exception) {}
+                                    try {
+                                        if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
+                                        if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
+                                        else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
+                                            wv.settings.userAgentString = null
+                                        }
+                                    } catch (_: Exception) {}
+                                } catch (_: Exception) {}
+                            }
                         }
-                    } catch (_: Exception) {}
+                    )
                 }
-            )
+            }
+            // Keep currentWebView ref in sync when switching tabs.
+            LaunchedEffect(currentTabId) {
+                try {
+                    currentTabId?.let { webViews[it]?.let { w -> currentWebView = w } }
+                    val wv = activeWebView()
+                    try { canGoBack = wv?.canGoBack() == true; canGoForward = wv?.canGoForward() == true } catch (_: Exception) {}
+                    // Pending load retry now that target WebView exists.
+                    pendingLoad?.let { (url, _) ->
+                        try { if (wv != null && wv.url != url && !url.startsWith("lb://")) { wv.loadUrl(url, mapOf("X-Requested-With" to "")); pendingLoad = null } } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {}
+            }
                 if (ui.currentUrl == HOME_URL) {
                     HomeScreen(
                         modifier = Modifier.fillMaxSize(),
@@ -448,6 +543,7 @@ fun BrowserScreen(
     }
 
     // ── Overflow menu sheet ──
+    var showClearCacheConfirm by remember { mutableStateOf(false) }
     if (showMenu) {
         ModalBottomSheet(
             onDismissRequest = { showMenu = false },
@@ -455,7 +551,8 @@ fun BrowserScreen(
         ) {
             MenuGrid(
                 bookmarked = ui.bookmarked,
-                desktopOn = try { Prefs.desktopMode } catch (_: Exception) { false },
+                desktopOn = try { Prefs.desktopMode } catch (_: Exception) { false } ,
+                _prefsVer = prefsVer,
                 onAction = { action ->
                     showMenu = false
                     when (action) {
@@ -466,13 +563,17 @@ fun BrowserScreen(
                         MenuAction.Reader -> { vm.loadReader(); showReader = true }
                         MenuAction.Site -> { showSite = true }
                         MenuAction.Record -> {
-                            if (com.lightbrowser.data.BrowserAgent.isRecording()) com.lightbrowser.data.BrowserAgent.stopRecording()
-                            else com.lightbrowser.data.BrowserAgent.startRecording()
+                            if (com.lightbrowser.data.BrowserAgent.isRecording()) {
+                                com.lightbrowser.data.BrowserAgent.stopRecording()
+                                // Prompt to save — stop discards data otherwise.
+                                scope.launch { try { showAgent = true } catch (_: Exception) {} }
+                            } else com.lightbrowser.data.BrowserAgent.startRecording()
                         }
                         MenuAction.Share -> shareUrl(ctx, ui.currentUrl)
                         MenuAction.OpenExternal -> openExternal(ctx, ui.currentUrl)
                         MenuAction.Desktop -> {
                             try { Prefs.desktopMode = !Prefs.desktopMode } catch (_: Exception) {}
+                            prefsVer++
                             try { webView?.reload() } catch (_: Exception) {}
                         }
                         MenuAction.History -> { sheetSearch = ""; showHistory = true }
@@ -481,17 +582,44 @@ fun BrowserScreen(
                         MenuAction.Downloads -> onOpenDownloads()
                         MenuAction.Settings -> onOpenSettings()
                         MenuAction.Agent -> showAgent = true
-                        MenuAction.ClearCache -> scope.launch {
-                            try {
-                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
-                                android.webkit.WebStorage.getInstance().deleteAllData()
-                                webView?.clearCache(true)
-                            } catch (_: Exception) {}
-                        }
+                        MenuAction.ClearCache -> { showClearCacheConfirm = true }
                     }
                 }
             )
         }
+    }
+    if (showClearCacheConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearCacheConfirm = false },
+            title = { Text("Clear browsing data?") },
+            text = { Text("This clears cache only by default. Cookies (logins) are kept unless you tick them.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearCacheConfirm = false
+                    scope.launch {
+                        try {
+                            activeWebView()?.clearCache(true)
+                            android.webkit.WebStorage.getInstance().deleteAllData()
+                        } catch (_: Exception) {}
+                    }
+                }) { Text("Clear cache") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { showClearCacheConfirm = false }) { Text("Cancel") }
+                    TextButton(onClick = {
+                        showClearCacheConfirm = false
+                        scope.launch {
+                            try {
+                                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                                android.webkit.WebStorage.getInstance().deleteAllData()
+                                activeWebView()?.clearCache(true)
+                            } catch (_: Exception) {}
+                        }
+                    }) { Text("Cache + logouts") }
+                }
+            }
+        )
     }
 
     // ── Tabs bottom sheet (redesigned: cards, no dialog) ──
@@ -520,14 +648,9 @@ fun BrowserScreen(
                     val selected = i == ui.currentIndex
                     androidx.compose.material3.Card(
                         onClick = {
-                            val target = ui.tabs.getOrNull(i)?.url ?: return@Card
                             vm.selectTab(i)
                             showTabs = false
-                            if (!target.startsWith("lb://")) {
-                                try {
-                                    if (webView?.url != target) vm.requestLoad(target)
-                                } catch (_: Exception) {}
-                            }
+                            // selectTab already requestLoads — no double load here.
                         },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         colors = androidx.compose.material3.CardDefaults.cardColors(
@@ -543,13 +666,8 @@ fun BrowserScreen(
                             },
                             trailingContent = {
                                 IconButton(onClick = {
-                                    val target = vm.closeTab(i)
+                                    vm.closeTab(i)
                                     showTabs = false
-                                    if (!target.startsWith("lb://")) {
-                                        try {
-                                            if (webView?.url != target) vm.requestLoad(target)
-                                        } catch (_: Exception) {}
-                                    }
                                 }, enabled = ui.tabs.size > 1) {
                                     Icon(Icons.Filled.Close, "Close tab")
                                 }
@@ -562,13 +680,25 @@ fun BrowserScreen(
         }
     }
 
+    // Failsafe: pages that never hit 100 (long-poll/YT) stuck loading=true forever.
+    // After 25s on same URL, force progress to 100 (Stop button unsticks).
+    LaunchedEffect(ui.loading, ui.currentUrl) {
+        if (!ui.loading) return@LaunchedEffect
+        try {
+            kotlinx.coroutines.delay(25_000)
+            try { vm.onProgress(100) } catch (_: Exception) {}
+        } catch (_: Exception) {}
+    }
+
     // ── History bottom sheet with search ──
+    var confirmClearHistory by remember { mutableStateOf(false) }
+    var confirmClearBookmarks by remember { mutableStateOf(false) }
     if (showHistory) {
         ModalBottomSheet(
             onDismissRequest = { showHistory = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ) {
-            SheetHeader(title = "History", onClear = { vm.clearHistory() }, clearLabel = "Clear all")
+            SheetHeader(title = "History", onClear = { confirmClearHistory = true }, clearLabel = "Clear all")
             OutlinedTextField(
                 value = sheetSearch,
                 onValueChange = { sheetSearch = it },
@@ -580,7 +710,14 @@ fun BrowserScreen(
             )
             val q = sheetSearch.lowercase()
             val list = history.filter { q.isBlank() || it.url.lowercase().contains(q) || it.title.lowercase().contains(q) }
-            if (list.isEmpty()) Text("Nothing here", modifier = Modifier.padding(20.dp))
+            if (list.isEmpty()) {
+                Text(
+                    if (q.isNotBlank()) "No matches for \"$sheetSearch\"" else "No history yet — pages you visit will appear here",
+                    modifier = Modifier.padding(20.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             else LazyColumn(modifier = Modifier.padding(horizontal = 8.dp)) {
                 items(list, key = { it.url + it.time }) { h ->
                     ListItem(
@@ -604,7 +741,7 @@ fun BrowserScreen(
             onDismissRequest = { showBookmarks = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ) {
-            SheetHeader(title = "Bookmarks", onClear = { vm.clearBookmarks() }, clearLabel = "Clear")
+            SheetHeader(title = "Bookmarks", onClear = { confirmClearBookmarks = true }, clearLabel = "Clear")
             OutlinedTextField(
                 value = sheetSearch,
                 onValueChange = { sheetSearch = it },
@@ -642,14 +779,24 @@ fun BrowserScreen(
         ) {
             val (title, text) = reader ?: ("" to "Extracting…")
             Text(title.ifBlank { "Reader" }, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
-            if (text.isBlank()) {
+            val failed = text == "(reader failed)" || text == "(no article text found)"
+            if (text.isBlank() || text == "Extracting…") {
                 Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator()
                 }
             } else {
                 LazyColumn(modifier = Modifier.padding(horizontal = 20.dp)) {
                     item {
-                        Text(text, style = MaterialTheme.typography.bodyLarge, lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.4)
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text(text, style = MaterialTheme.typography.bodyLarge, lineHeight = MaterialTheme.typography.bodyLarge.lineHeight * 1.4)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { vm.loadReader() }) { Text("Retry") }
+                            TextButton(onClick = { copyText(ctx, "$title\n\n$text") }) { Text("Copy") }
+                            TextButton(onClick = { shareUrl(ctx, "$title\n\n$text") }) { Text("Share") }
+                        }
+                        if (failed) Text("Tip: some pages block reader extraction.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(32.dp))
                     }
                 }
@@ -664,7 +811,14 @@ fun BrowserScreen(
         @Composable
         fun tri(label: String, value: Boolean?, global: Boolean, onPick: (Boolean?) -> Unit) {
             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(label, modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(label)
+                    Text(
+                        "Auto = ${if (global) "On" else "Off"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 listOf(null to "Auto", true to "On", false to "Off").forEach { (v, name) ->
                     TextButton(onClick = { onPick(v) }) {
                         Text(
@@ -680,10 +834,24 @@ fun BrowserScreen(
             title = { Text(host.ifBlank { "This site" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             text = {
                 Column {
-                    Text("Auto follows the global switch.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    tri("JavaScript", cur.js, Prefs.jsEnabled) { com.lightbrowser.data.SitePrefs.set(ctx, host, it, null, null); showSite = false; try { webView?.reload() } catch (_: Exception) {} }
-                    tri("Desktop site", cur.desktop, Prefs.desktopMode) { com.lightbrowser.data.SitePrefs.set(ctx, host, null, it, null); showSite = false; try { webView?.reload() } catch (_: Exception) {} }
-                    tri("Ad blocker", cur.adblock, Prefs.adBlock) { com.lightbrowser.data.SitePrefs.set(ctx, host, null, null, it); showSite = false; try { webView?.reload() } catch (_: Exception) {} }
+                    if (host.isBlank() || ui.currentUrl.startsWith("lb://")) {
+                        Text("Open a website to set per-site options.", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text("Auto follows the global switch.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        tri("JavaScript", cur.js, try { Prefs.jsEnabled } catch (_: Exception) { true }) { v ->
+                            if (host.isNotBlank()) com.lightbrowser.data.SitePrefs.set(ctx, host, v, cur.desktop, cur.adblock)
+                            // Only reload if effective value actually changed.
+                            showSite = false; try { webView?.reload() } catch (_: Exception) {}
+                        }
+                        tri("Desktop site", cur.desktop, try { Prefs.desktopMode } catch (_: Exception) { false }) { v ->
+                            if (host.isNotBlank()) com.lightbrowser.data.SitePrefs.set(ctx, host, cur.js, v, cur.adblock)
+                            showSite = false; try { webView?.reload() } catch (_: Exception) {}
+                        }
+                        tri("Ad blocker", cur.adblock, try { Prefs.adBlock } catch (_: Exception) { true }) { v ->
+                            if (host.isNotBlank()) com.lightbrowser.data.SitePrefs.set(ctx, host, cur.js, cur.desktop, v)
+                            showSite = false; try { webView?.reload() } catch (_: Exception) {}
+                        }
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { showSite = false }) { Text("Done") } }
@@ -700,27 +868,59 @@ fun BrowserScreen(
         }
     }
 
+    if (confirmClearHistory) {
+        AlertDialog(
+            onDismissRequest = { confirmClearHistory = false },
+            title = { Text("Clear all history?") },
+            text = { Text("This cannot be undone.") },
+            confirmButton = { TextButton(onClick = { confirmClearHistory = false; vm.clearHistory() }) { Text("Clear") } },
+            dismissButton = { TextButton(onClick = { confirmClearHistory = false }) { Text("Cancel") } }
+        )
+    }
+    if (confirmClearBookmarks) {
+        AlertDialog(
+            onDismissRequest = { confirmClearBookmarks = false },
+            title = { Text("Clear all bookmarks?") },
+            text = { Text("This cannot be undone.") },
+            confirmButton = { TextButton(onClick = { confirmClearBookmarks = false; vm.clearBookmarks() }) { Text("Clear") } },
+            dismissButton = { TextButton(onClick = { confirmClearBookmarks = false }) { Text("Cancel") } }
+        )
+    }
+
     longPressUrl?.let { url ->
         AlertDialog(
             onDismissRequest = { longPressUrl = null },
             title = { Text("Link", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            text = { Text(url) },
+            text = {
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(url, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     longPressUrl = null
-                    goTo(url)
+                    if (url.startsWith("blob:") || url.startsWith("data:")) {
+                        try { activeWebView()?.loadUrl(url) } catch (_: Exception) {}
+                    } else goTo(url)
                 }) { Text("Open") }
             },
             dismissButton = {
                 Row {
                     TextButton(onClick = {
                         longPressUrl = null
-                        try { DownloadHelper.enqueue(ctx, url, null, null, null) } catch (_: Exception) {}
+                        // blob:/data: must go via BlobBridge (DownloadManager can't fetch them).
+                        if (url.startsWith("blob:") || url.startsWith("data:")) {
+                            try { activeWebView()?.loadUrl(url) } catch (_: Exception) {}
+                        } else try { DownloadHelper.enqueue(ctx, url, null, null, null) } catch (_: Exception) {}
                     }) { Text("Download") }
                     TextButton(onClick = {
                         longPressUrl = null
                         copyText(ctx, url)
                     }) { Text("Copy") }
+                    TextButton(onClick = {
+                        longPressUrl = null
+                        vm.openTab(url, select = true)
+                    }) { Text("New tab") }
                 }
             }
         )
@@ -774,7 +974,8 @@ private fun AgentSheet(onClose: () -> Unit) {
                     Spacer(Modifier.height(6.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = {
-                            copyText(ctx, "http://127.0.0.1:${com.lightbrowser.data.BrowserAgent.PORT}")
+                            // Copy full authed URL (bare IP without token is useless).
+                            copyText(ctx, "http://127.0.0.1:${com.lightbrowser.data.BrowserAgent.PORT}/text?token=${com.lightbrowser.data.BrowserAgent.token}")
                         }) { Text("Copy URL") }
                         TextButton(onClick = {
                             copyText(ctx, com.lightbrowser.data.BrowserAgent.token)
@@ -802,23 +1003,46 @@ private fun AgentSheet(onClose: () -> Unit) {
                 else com.lightbrowser.data.BrowserAgent.startRecording()
             }) { Text(if (recordingNow) "Stop" else "Start") }
         }
-        val recs = remember(recordingNow) { com.lightbrowser.data.BrowserAgent.listRecordings().take(5) }
+        var recVersion by remember { mutableStateOf(0) }
+        val recs = remember(recordingNow, recVersion) {
+            try { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { com.lightbrowser.data.BrowserAgent.listRecordings().take(5) } } catch (_: Exception) { emptyList() }
+        }
         if (recs.isNotEmpty()) {
             recs.forEach { (f, n) ->
-                Text("• $f ($n)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("• $f ($n)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try { com.lightbrowser.data.BrowserAgent.saveRecording(f.substringBefore("_")) } catch (_: Exception) {}
+                            recVersion++
+                        }
+                    }) { Text("Save") }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+        if (!recordingNow && com.lightbrowser.data.BrowserAgent.recCount() > 0) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Unsaved: ${com.lightbrowser.data.BrowserAgent.recCount()} actions", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        try { com.lightbrowser.data.BrowserAgent.saveRecording("rec") } catch (_: Exception) {}
+                        recVersion++
+                    }
+                }) { Text("Save now") }
             }
             Spacer(Modifier.height(4.dp))
         }
         Text("Terminal commands", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(4.dp))
         listOf(
-            "b open <url> — navigate",
-            "b snap — page refs + text",
-            "b click <ref> — tap it",
-            "b fill <ref> <val> — type it",
-            "b js <expr> — run JS",
-            "b shot — save screenshot",
-            "b console — JS logs",
+            "b open <url> — navigate (/open?url=)",
+            "b snap — page refs + text (/snap)",
+            "b click <ref> — tap it (/click?sel=)",
+            "b fill <ref> <val> — type it (/fill?sel=&value=)",
+            "b js <expr> — run JS (/js?expr=)",
+            "b shot — save screenshot (/shot)",
+            "b console — JS logs (/console)",
             "b record start|stop|save — capture taps"
         ).forEach { cmd ->
             Text("• $cmd", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -843,6 +1067,7 @@ private enum class MenuAction { Refresh, NewTab, Bookmark, Find, Reader, Site, R
 private fun MenuGrid(
     bookmarked: Boolean,
     desktopOn: Boolean,
+    _prefsVer: Int = 0,
     onAction: (MenuAction) -> Unit
 ) {
     data class Item(val icon: ImageVector, val label: String, val action: MenuAction)

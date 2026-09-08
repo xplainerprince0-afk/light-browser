@@ -366,13 +366,20 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
                     showClearAll = false
                     scope.launch(Dispatchers.IO) {
                         var deleted = 0
+                        var failed = 0
+                        val activeNames = try { com.lightbrowser.data.DownloadHelper.active.value.map { it.name }.toSet() } catch (_: Exception) { emptySet() }
                         files.forEach {
-                            try { if (it.file.delete()) deleted++ } catch (_: Exception) {}
+                            try {
+                                // Don't delete files currently being written (partial-file race).
+                                if (it.file.name in activeNames) { failed++; return@forEach }
+                                if (it.file.delete()) deleted++ else failed++
+                            } catch (_: Exception) { failed++ }
                         }
                         withContext(Dispatchers.Main) {
-                            files = emptyList()
+                            // Refresh from disk instead of blind emptyList (was wrong on partial failure).
+                            try { files = files.filter { it.file.exists() } } catch (_: Exception) { files = emptyList() }
                             scope.launch {
-                                snackbar.showSnackbar("Deleted $deleted file(s)")
+                                snackbar.showSnackbar(if (failed == 0) "Deleted $deleted file(s)" else "Deleted $deleted, skipped $failed (active)")
                             }
                         }
                     }

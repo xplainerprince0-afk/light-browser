@@ -30,8 +30,9 @@ object AlpineEnv {
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
         return when {
             abi.contains("arm64") -> "aarch64"
+            abi.startsWith("x86_64") || abi.contains("x86_64") -> "x86_64"
+            abi.contains("x86") -> "x86"
             abi.contains("armeabi") -> "armhf"
-            abi.contains("x86_64") -> "x86_64"
             else -> "aarch64"
         }
     }
@@ -46,11 +47,40 @@ object AlpineEnv {
         dest.mkdirs()
         val tarball = File(dest, "alpine-minirootfs.tar.gz")
         return try {
+            // x86 32-bit has no official minirootfs — fail fast with clear message.
+            if (archSlug() == "x86") {
+                onProgress("x86 32-bit not supported by Alpine minirootfs (use arm64/x86_64 device)")
+                return false
+            }
             onProgress("Downloading Alpine $ALPINE_VERSION (${archSlug()})…")
             downloadFile(downloadUrl(), tarball, onProgress)
+            if (!tarball.exists() || tarball.length() < 1_000_000) {
+                onProgress("Download failed (too small / 404?). Check connection and retry.")
+                try { tarball.delete() } catch (_: Exception) {}
+                return false
+            }
             onProgress("Extracting to sandbox/alpine…")
             extractTarGz(tarball, dest)
             tarball.delete()
+            // Verify real rootfs (not a 404 HTML page): busybox must exist.
+            val bb = listOf(File(dest, "bin/busybox"), File(dest, "usr/bin/busybox")).firstOrNull { it.exists() }
+            if (bb == null) {
+                onProgress("Extract failed (not a valid rootfs) — deleted, retry download")
+                return false
+            }
+            try { bb.setExecutable(true) } catch (_: Exception) {}
+            // Recreate key symlinks the minimal tar reader skips (sh → busybox).
+            try {
+                val sh = File(dest, "bin/sh")
+                if (!sh.exists()) {
+                    try {
+                        // Try symlink first, fall back to copy.
+                        java.nio.file.Files.createSymbolicLink(sh.toPath(), java.nio.file.Paths.get("busybox"))
+                    } catch (_: Exception) {
+                        try { bb.copyTo(sh, overwrite = true); sh.setExecutable(true) } catch (_: Exception) {}
+                    }
+                }
+            } catch (_: Exception) {}
             File(dest, "etc/alpine-release").let { rel ->
                 if (!rel.exists()) {
                     rel.parentFile?.mkdirs()
@@ -72,7 +102,10 @@ object AlpineEnv {
         conn.readTimeout = 120_000
         conn.instanceFollowRedirects = true
         conn.connect()
+        val code = try { conn.responseCode } catch (_: Exception) { -1 }
+        if (code != HttpURLConnection.HTTP_OK) throw java.io.IOException("HTTP $code")
         val total = conn.contentLengthLong
+        if (total > 0 && total < 1_000_000) throw java.io.IOException("HTTP body too small ($total)")
         conn.inputStream.use { input ->
             FileOutputStream(dest).use { out ->
                 val buf = ByteArray(8192)
@@ -157,7 +190,14 @@ object AlpineEnv {
                     }
                 }
                 val pad = (512 - (size % 512)) % 512
-                if (pad > 0) gzip.skip(pad)
+                if (pad > 0) {
+                    var toSkip = pad.toLong()
+                    while (toSkip > 0) {
+                        val skipped = gzip.skip(toSkip)
+                        if (skipped <= 0) break
+                        toSkip -= skipped
+                    }
+                }
             }
         }
     }
@@ -193,7 +233,8 @@ object AlpineEnv {
     fun shellPrefix(sandbox: File): String {
         return if (isInstalled(sandbox)) {
             val a = alpineDir(sandbox).absolutePath
-            "export PATH=$a/usr/bin:$a/bin:/system/bin; "
+            // Keep sbin dirs (was dropped vs buildEnvironment) so apk/busybox resolve.
+            "export PATH=$a/usr/local/sbin:$a/usr/local/bin:$a/usr/sbin:$a/usr/bin:$a/sbin:$a/bin:/system/bin:/system/xbin; "
         } else ""
     }
 }

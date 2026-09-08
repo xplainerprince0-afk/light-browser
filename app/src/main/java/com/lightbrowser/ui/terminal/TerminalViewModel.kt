@@ -77,7 +77,16 @@ class TerminalViewModel : ViewModel() {
     var alpineInstalled = false
         private set
 
-    private fun active(): Sess = store.firstOrNull { it.id == _activeId.value } ?: store.first()
+    private fun active(): Sess {
+        if (store.isEmpty()) {
+            val sd = sandboxDir ?: try { AppCtx.ctx.let { File(it.filesDir, "sandbox").apply { mkdirs() } } } catch (_: Exception) { null }
+            val s = Sess(name = "main", dir = sd)
+            store.add(s)
+            try { _activeId.value = s.id } catch (_: Exception) {}
+            return s
+        }
+        return store.firstOrNull { it.id == _activeId.value } ?: store.first()
+    }
 
     private fun emitSessions() {
         _sessions.value = store.map { TermSessionMeta(it.id, it.name) }
@@ -386,6 +395,11 @@ class TerminalViewModel : ViewModel() {
 
     fun submit() {
         val s = try { active() } catch (_: Exception) { return }
+        // Guard: ignore Enter while a command is running (was concurrent runShell + leaked handle).
+        if (lockBefore >= 0 || running != null) {
+            print("(busy — Ctrl+C to kill)\n", TermDim)
+            return
+        }
         val full = _editor.value.text
         val lastLine = full.substringAfterLast("\n")
         val cmd = if (lastLine.startsWith(s.promptText)) lastLine.removePrefix(s.promptText) else lastLine
@@ -417,6 +431,11 @@ class TerminalViewModel : ViewModel() {
     }
 
     fun clear() {
+        // Don't wipe transcript mid-run (left lock/running dangling before).
+        if (lockBefore >= 0 || running != null) {
+            print("(busy — Ctrl+C to kill before clear)\n", TermDim)
+            return
+        }
         try {
             val s = active()
             s.segs.clear()
@@ -468,9 +487,15 @@ class TerminalViewModel : ViewModel() {
                     val t = resolve(arg) ?: sandboxDir
                     if (t == null) {
                         print("Path denied\n", TermRed); afterCommand()
-                    } else runShell("ls -la \"${t.absolutePath}\"")
+                    } else runShell("ls -la ${shQuote(t.absolutePath)}")
                 }
                 "cd" -> {
+                    if (arg.isBlank()) {
+                        // Bare cd → sandbox home (was: stay, confusing).
+                        try { sandboxDir?.let { active().dir = it } } catch (_: Exception) {}
+                        afterCommand()
+                        return
+                    }
                     val t = resolve(arg)
                     if (t != null && t.exists() && t.isDirectory) {
                         try { active().dir = t } catch (_: Exception) {}
@@ -484,24 +509,27 @@ class TerminalViewModel : ViewModel() {
                 "cat" -> {
                     if (arg.isBlank()) {
                         print("Usage: cat <file>\n", TermRed); afterCommand()
-                    } else resolve(arg)?.let { runShell("cat \"${it.absolutePath}\"") }
+                    } else resolve(arg)?.let { runShell("cat ${shQuote(it.absolutePath)}") }
                         ?: run { print("Access denied\n", TermRed); afterCommand() }
                 }
                 "mkdir" -> {
+                    if (arg.isBlank()) { print("Usage: mkdir <dir>\n", TermRed); afterCommand(); return }
                     resolve(arg)?.let {
                         print((if (it.mkdirs()) "Created ${it.name}" else "Failed") + "\n", TermDim)
                     } ?: print("Access denied\n", TermRed)
                     afterCommand()
                 }
                 "rm" -> {
-                    resolve(arg)?.let {
-                        val ok = if (it.isDirectory) it.deleteRecursively() else it.delete()
-                        print((if (ok) "Deleted" else "Failed") + "\n", TermDim)
-                    } ?: print("Access denied\n", TermRed)
+                    if (arg.isBlank()) { print("Usage: rm <file> (use rm -r for dirs)\n", TermRed); afterCommand(); return }
+                    val st = resolve(arg)
+                    if (st == null) { print("Access denied\n", TermRed); afterCommand(); return }
+                    if (st.isDirectory && !arg.contains("-r")) { print("rm: is a directory (use explicit path)\n", TermRed); afterCommand(); return }
+                    val ok = if (st.isDirectory) st.deleteRecursively() else st.delete()
+                    print((if (ok) "Deleted" else "Failed") + "\n", TermDim)
                     afterCommand()
                 }
                 "mv", "cp" -> {
-                    val a = arg.split(" ")
+                    val a = splitArgs(arg)
                     if (a.size < 2) {
                         print("Usage: $cmd <src> <dst>\n", TermRed)
                     } else {
@@ -509,11 +537,11 @@ class TerminalViewModel : ViewModel() {
                         val dst = resolve(a[1])
                         if (src != null && dst != null) {
                             try {
-                                if (cmd == "cp") {
-                                    if (src.isDirectory) src.copyRecursively(dst, overwrite = true)
-                                    else src.copyTo(dst, overwrite = true)
+                                val ok = if (cmd == "cp") {
+                                    if (src.isDirectory) { src.copyRecursively(dst, overwrite = false); true }
+                                    else { src.copyTo(dst, overwrite = false); true }
                                 } else src.renameTo(dst)
-                                print("OK\n", TermGreen)
+                                print(if (ok) "OK\n" else "Failed (exists?)\n", if (ok) TermGreen else TermRed)
                             } catch (e: Exception) { print((e.message ?: "error") + "\n", TermRed) }
                         } else print("Access denied\n", TermRed)
                     }
@@ -568,19 +596,49 @@ class TerminalViewModel : ViewModel() {
 
     private fun installAlpine() {
         val sd = sandboxDir ?: return
+        if (_status.value == "installing") { print("Already installing…\n", TermDim); lockBefore = -1; return }
         print("Installing Alpine Linux…\n", TermWhite)
         _status.value = "installing"
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = AlpineEnv.install(sd) { msg ->
-                viewModelScope.launch(Dispatchers.Main) { print("$msg\n", TermDim) }
+            val ok = try {
+                AlpineEnv.install(sd) { msg ->
+                    viewModelScope.launch(Dispatchers.Main) { print("$msg\n", TermDim) }
+                }
+            } catch (e: Exception) {
+                viewModelScope.launch(Dispatchers.Main) { print("Install failed: ${e.message}\n", TermRed) }
+                false
             }
             withContext(Dispatchers.Main) {
                 alpineInstalled = ok
                 if (ok) print("✓ Alpine ready\n", TermGreen)
+                else print("Install failed — retry install-alpine\n", TermRed)
                 afterCommand()
                 _status.value = "idle"
             }
         }
+    }
+
+    /** Single-quote shell escaping (filenames with " $ ` are crafted via import/zip). */
+    private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /** Split respecting single/double quotes (cp/mv with spaces). */
+    private fun splitArgs(raw: String): List<String> {
+        val out = mutableListOf<String>()
+        val cur = StringBuilder()
+        var q: Char? = null
+        var i = 0
+        while (i < raw.length) {
+            val c = raw[i]
+            if (q != null) {
+                if (c == q) q = null else cur.append(c)
+            } else if (c == '\'' || c == '"') q = c
+            else if (c.isWhitespace()) {
+                if (cur.isNotEmpty()) { out.add(cur.toString()); cur.clear() }
+            } else cur.append(c)
+            i++
+        }
+        if (cur.isNotEmpty()) out.add(cur.toString())
+        return out
     }
 
     private fun runShell(cmd: String) {
@@ -594,40 +652,58 @@ class TerminalViewModel : ViewModel() {
                 val env = AlpineEnv.buildEnvironment(sd, cwd)
                 process = Runtime.getRuntime().exec(arrayOf("sh", "-c", fullCmd), env, cwd)
                 running = process
-                val out = BufferedReader(InputStreamReader(process.inputStream))
-                val err = BufferedReader(InputStreamReader(process.errorStream))
-                val output = StringBuilder()
-                var line: String?
+                // Drain stdout+stderr CONCURRENTLY (serial drain deadlocks when stderr fills).
+                val outBuf = StringBuilder()
+                val tOut = Thread {
+                    try {
+                        val r = BufferedReader(InputStreamReader(process.inputStream))
+                        var l: String?
+                        val start = System.currentTimeMillis()
+                        while (r.readLine().also { l = it } != null) {
+                            synchronized(outBuf) {
+                                outBuf.appendLine(l)
+                                if (outBuf.length > 8000) { outBuf.append("\n…truncated"); break }
+                            }
+                            if (System.currentTimeMillis() - start > 15_000) break
+                        }
+                    } catch (_: Exception) {}
+                }.also { it.isDaemon = true; it.start() }
+                val tErr = Thread {
+                    try {
+                        val r = BufferedReader(InputStreamReader(process.errorStream))
+                        var l: String?
+                        while (r.readLine().also { l = it } != null) {
+                            synchronized(outBuf) {
+                                if (outBuf.length < 8000) outBuf.appendLine(l)
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }.also { it.isDaemon = true; it.start() }
                 val start = System.currentTimeMillis()
-                while (out.readLine().also { line = it } != null) {
-                    output.appendLine(line)
-                    if (output.length > 8000) {
-                        output.append("\n…truncated")
-                        break
-                    }
-                    if (System.currentTimeMillis() - start > 15_000) {
-                        output.append("\n…timed out (15s)")
-                        break
-                    }
-                }
-                while (err.readLine().also { line = it } != null && output.length < 8000) {
-                    output.appendLine(line)
+                var timedOut = false
+                while (tOut.isAlive || tErr.isAlive) {
+                    if (System.currentTimeMillis() - start > 15_000) { timedOut = true; break }
+                    try { Thread.sleep(50) } catch (_: Exception) { break }
+                    // If killed externally, stop waiting (killRunning destroys process).
+                    if (running == null) break
                 }
                 try {
-                    if (!process.waitFor(5, TimeUnit.SECONDS)) {
+                    if (timedOut || !process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
                         try { process.destroyForcibly() } catch (_: Exception) {}
-                        output.appendLine("…killed after 20s")
+                        synchronized(outBuf) { outBuf.appendLine(if (timedOut) "…timed out (15s)" else "…killed after 20s") }
                     }
                 } catch (_: Exception) {
                     try { process.destroy() } catch (_: Exception) {}
                 }
-                var result = output.toString().trimEnd()
+                try { tOut.join(1000); tErr.join(1000) } catch (_: Exception) {}
+                var result: String
+                synchronized(outBuf) { result = outBuf.toString().trimEnd() }
                 if (result.length > 4000) result = result.take(4000) + "\n…truncated"
                 val finalResult = result
                 withContext(Dispatchers.Main) {
                     if (finalResult.isNotEmpty()) print("$finalResult\n", TermWhite)
-                    afterCommand()
-                    _status.value = "idle"
+                    // If killed while waiting, killRunning already printed prompt — don't double.
+                    if (running != null) { afterCommand(); _status.value = "idle" }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

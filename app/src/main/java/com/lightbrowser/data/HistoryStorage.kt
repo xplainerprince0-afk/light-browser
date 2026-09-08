@@ -17,15 +17,24 @@ object HistoryStorage {
         val s = prefs(ctx).getString(KEY, null) ?: return mutableListOf()
         return try {
             val arr = JSONArray(s)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                HistoryEntry(o.getString("url"), o.optString("title", o.getString("url")), o.optLong("time"))
-            }.toMutableList()
+            val out = mutableListOf<HistoryEntry>()
+            for (i in 0 until arr.length()) {
+                try {
+                    val o = arr.getJSONObject(i)
+                    val url = o.optString("url", "")
+                    if (url.isBlank()) continue
+                    out.add(HistoryEntry(url, o.optString("title", url), o.optLong("time", System.currentTimeMillis())))
+                } catch (_: Exception) { }
+            }
+            out
         } catch (_: Exception) { mutableListOf() }
     }
 
     fun add(ctx: Context, url: String, title: String) {
-        if (url.isBlank() || url.startsWith("about:") || url.startsWith("chrome:")) return
+        if (url.isBlank() || url.startsWith("about:") || url.startsWith("chrome:") ||
+            url.startsWith("lb://") || url.startsWith("data:") || url.startsWith("blob:") ||
+            url.startsWith("javascript:")
+        ) return
         val list = all(ctx)
         // remove duplicate url
         list.removeAll { it.url == url }
@@ -58,10 +67,16 @@ object BookmarkStorage {
         val s = prefs(ctx).getString(KEY, null) ?: return mutableListOf()
         return try {
             val arr = JSONArray(s)
-            (0 until arr.length()).map { i ->
-                val o = arr.getJSONObject(i)
-                Bookmark(o.getString("url"), o.optString("title", o.getString("url")), o.optLong("time"))
-            }.toMutableList()
+            val out = mutableListOf<Bookmark>()
+            for (i in 0 until arr.length()) {
+                try {
+                    val o = arr.getJSONObject(i)
+                    val url = o.optString("url", "")
+                    if (url.isBlank()) continue
+                    out.add(Bookmark(url, o.optString("title", url), o.optLong("time", System.currentTimeMillis())))
+                } catch (_: Exception) { }
+            }
+            out
         } catch (_: Exception) { mutableListOf() }
     }
 

@@ -128,13 +128,16 @@ class MainActivity : ComponentActivity() {
                     android.widget.Toast.makeText(this@MainActivity, "Press back again to exit", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (_: Exception) {}
                 try {
-                    android.os.Handler(mainLooper).postDelayed({ backArmed = false }, 2000)
+                    backHandler?.let { backMainHandler.removeCallbacks(it) }
+                    val r = Runnable { backArmed = false }
+                    backHandler = r
+                    backMainHandler.postDelayed(r, 2000)
                 } catch (_: Exception) {}
             }
         })
 
         setContent {
-            var themeMode by remember {
+            var themeMode by androidx.compose.runtime.saveable.rememberSaveable {
                 mutableStateOf(try { Prefs.themeMode } catch (_: Exception) { "system" })
             }
             val dark = when (themeMode) {
@@ -143,36 +146,52 @@ class MainActivity : ComponentActivity() {
                 else -> androidx.compose.foundation.isSystemInDarkTheme()
             }
             val black = try { Prefs.trueBlack } catch (_: Exception) { false }
-            val uiScale = try { Prefs.uiFontScale } catch (_: Exception) { 1f }
+            val uiScale = try { Prefs.uiFontScale.coerceIn(0.7f, 1.6f) } catch (_: Exception) { 1f }
             val keyboardOpen by keyboardOpenFlow.collectAsState()
+            // Persist theme changes (was memory-only → rotation flicker).
             LightBrowserTheme(darkTheme = dark, blackTheme = black && dark) {
+                val baseDensity = androidx.compose.ui.platform.LocalDensity.current
+                // Scale font only (was density*scale → double-scaled dp layouts at large uiScale).
+                val scaled = remember(baseDensity, uiScale) {
+                    androidx.compose.ui.unit.Density(baseDensity.density, baseDensity.fontScale * uiScale)
+                }
                 androidx.compose.runtime.CompositionLocalProvider(
-                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
-                        androidx.compose.ui.platform.LocalDensity.current.density * uiScale,
-                        androidx.compose.ui.platform.LocalDensity.current.fontScale * uiScale
-                    )
+                    androidx.compose.ui.platform.LocalDensity provides scaled
                 ) {
                     AppShell(
                         startUrl = startUrl,
                         keyboardOpen = keyboardOpen,
-                        onThemeChange = { themeMode = it }
+                        onThemeChange = {
+                            themeMode = it
+                            try { Prefs.themeMode = it } catch (_: Exception) {}
+                        }
                     )
                 }
             }
         }
     }
 
+    private var backHandler: Runnable? = null
+    private val backMainHandler = android.os.Handler(mainLooper)
+
     override fun onDestroy() {
         try {
             layoutListener?.let { window.decorView.viewTreeObserver.removeOnGlobalLayoutListener(it) }
         } catch (_: Exception) {}
         layoutListener = null
+        try { backHandler?.let { backMainHandler.removeCallbacks(it) } } catch (_: Exception) {}
         super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Forward warm deep-links to current browser (was dropped).
+        try {
+            val url = intent.data?.toString()?.takeIf { it.startsWith("http") } ?: return
+            // Can't touch viewModel here; store for AppShell via intent extra.
+            intent.putExtra("lb_forward_url", url)
+        } catch (_: Exception) {}
     }
 
     // ── Double-back to exit: 1st back hides the keyboard (or arms), 2nd exits ──
@@ -195,8 +214,13 @@ private fun AppShell(
     keyboardOpen: Boolean,
     onThemeChange: (String) -> Unit
 ) {
-    var tab by remember { mutableStateOf(Tab.Browser) }
-    var showAbout by remember { mutableStateOf(false) }
+    var tab by androidx.compose.runtime.saveable.rememberSaveable(
+        stateSaver = androidx.compose.runtime.saveable.Saver(
+            save = { it.name },
+            restore = { try { Tab.valueOf(it) } catch (_: Exception) { Tab.Browser } }
+        )
+    ) { mutableStateOf(Tab.Browser) }
+    var showAbout by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     // Activity-scoped shared VMs: MiniPlayer and screens observe the same state.
@@ -338,14 +362,23 @@ private fun AppShell(
     }
 }
 
-/** Parks hidden tabs far offscreen: still composed (state kept), never touched. */
+/** Parks hidden tabs far offscreen: still composed (state kept), never touched.
+ *  Also blocks pointer input + hides from accessibility when hidden (was still
+ *  focusable/clickable, WebView kept rendering offscreen). */
 private fun Modifier.offscreen(hidden: Boolean): Modifier =
     this.then(
-        layout { measurable, constraints ->
-            val placeable = measurable.measure(constraints)
-            layout(placeable.width, placeable.height) {
-                if (hidden) placeable.placeRelative(-100_000, -100_000)
-                else placeable.placeRelative(0, 0)
-            }
-        }
+        if (hidden) Modifier
+            .then(
+                layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    layout(placeable.width, placeable.height) {
+                        placeable.placeRelative(-100_000, -100_000)
+                    }
+                }
+            )
+        else Modifier
+    ).then(
+        if (hidden) Modifier
+            .then(androidx.compose.ui.semantics.clearAndSetSemantics { })
+        else Modifier
     )

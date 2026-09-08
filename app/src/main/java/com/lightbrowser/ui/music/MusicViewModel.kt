@@ -70,11 +70,15 @@ class MusicViewModel : ViewModel() {
                     try {
                         controller = future.get()
                         attach(controller!!)
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        _player.update { it.copy(error = "Player unavailable: ${e.message}") }
+                    }
                 },
                 MoreExecutors.directExecutor()
             )
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            _player.update { it.copy(error = "Player unavailable") }
+        }
     }
 
     private fun attach(c: MediaController) {
@@ -85,18 +89,39 @@ class MusicViewModel : ViewModel() {
                 1 -> Player.REPEAT_MODE_ALL
                 else -> Player.REPEAT_MODE_OFF
             }
-            c.setPlaybackSpeed(Prefs.playerSpeed)
+            c.setPlaybackSpeed(Prefs.playerSpeed.coerceIn(0.25f, 3f))
         } catch (_: Exception) {}
         c.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                _player.update { it.copy(isPlaying = isPlaying) }
-                if (isPlaying) startPolling() else stopPolling()
+                _player.update { it.copy(isPlaying = isPlaying, error = null) }
+                if (isPlaying) startPolling() else { stopPolling(); saveResumePoint() }
             }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                _player.update { it.copy(chapterIndex = c.currentMediaItemIndex) }
+                _player.update { it.copy(chapterIndex = c.currentMediaItemIndex, positionMs = 0) }
             }
             override fun onPlaybackStateChanged(state: Int) {
-                _player.update { it.copy(ready = state == Player.STATE_READY) }
+                _player.update {
+                    it.copy(
+                        ready = state == Player.STATE_READY,
+                        error = if (state == Player.STATE_IDLE && it.chapterIndex >= 0) it.error else it.error
+                    )
+                }
+                // Post-prepare duration was 0 (polling only while playing) — poll once when ready.
+                if (state == Player.STATE_READY) {
+                    viewModelScope.launch {
+                        try {
+                            _player.update {
+                                it.copy(
+                                    positionMs = c.currentPosition.coerceAtLeast(0),
+                                    durationMs = c.duration.coerceAtLeast(0).takeIf { d -> d != androidx.media3.common.C.TIME_UNSET } ?: 0L
+                                )
+                            }
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                _player.update { it.copy(error = error.message ?: "Playback error (${error.errorCode})", isPlaying = false) }
             }
         })
         _player.update {
@@ -249,6 +274,7 @@ class MusicViewModel : ViewModel() {
     fun next() {
         try {
             val c = controller ?: return
+            // Respect shuffle order (was seekToDefaultPosition(0) ignoring shuffle).
             if (c.hasNextMediaItem()) c.seekToNextMediaItem() else c.seekToDefaultPosition(0)
         } catch (_: Exception) {}
     }
@@ -299,9 +325,10 @@ class MusicViewModel : ViewModel() {
     fun cycleSpeed() {
         val c = controller ?: return
         try {
-            val speeds = listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+            // Include 0.5 to match Settings slider range (was diverged).
+            val speeds = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
             val cur = _player.value.speed
-            val next = speeds.firstOrNull { it > cur + 0.01f } ?: 0.75f
+            val next = speeds.firstOrNull { it > cur + 0.01f } ?: 0.5f
             c.setPlaybackSpeed(next)
             Prefs.playerSpeed = next
             _player.update { it.copy(speed = next) }
@@ -371,13 +398,21 @@ class MusicViewModel : ViewModel() {
                 if (ci >= 0 && controller != null) {
                     selectNovel(ni)
                     val pos = Prefs.lastPosition
-                    // Queue needs a moment: seek after prepare via delayed post.
+                    // Atomic: set items + seek + prepare together, wait for READY (was fixed delays).
                     viewModelScope.launch {
-                        kotlinx.coroutines.delay(1200)
                         try {
+                            selectNovel(ni)
                             playChapter(ci)
-                            kotlinx.coroutines.delay(800)
-                            if (pos > 10_000) seekTo(pos)
+                            if (pos > 10_000) {
+                                var tries = 0
+                                while (tries++ < 20) {
+                                    kotlinx.coroutines.delay(250)
+                                    try {
+                                        val c = controller ?: break
+                                        if (c.playbackState == Player.STATE_READY) { c.seekTo(pos); break }
+                                    } catch (_: Exception) { break }
+                                }
+                            }
                         } catch (_: Exception) {}
                     }
                     return true

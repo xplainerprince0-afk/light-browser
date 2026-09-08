@@ -78,6 +78,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -93,6 +94,10 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.io.File
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 
 /**
  * LiteFM-style browser: app bar with expanding search, breadcrumb chips,
@@ -131,13 +136,15 @@ fun FilesScreen(
         val f = exportTarget.value
         if (uri != null && f != null) {
             scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                var ok = false
                 try {
                     f.inputStream().use { input ->
-                        ctx.contentResolver.openOutputStream(uri)?.use { out -> input.copyTo(out) }
+                        val out = ctx.contentResolver.openOutputStream(uri)
+                        if (out != null) { out.use { o -> input.copyTo(o) }; ok = true }
                     }
-                    snacks.showSnackbar("Exported ${f.name}")
-                } catch (_: Exception) {
-                    snacks.showSnackbar("Export failed")
+                } catch (_: Exception) { ok = false }
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    try { snacks.showSnackbar(if (ok) "Exported ${f.name}" else "Export failed") } catch (_: Exception) {}
                 }
             }
         }
@@ -151,8 +158,16 @@ fun FilesScreen(
     fun openFile(f: File) {
         try {
             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
-            val mime = android.webkit.MimeTypeMap.getSingleton()
-                .getMimeTypeFromExtension(f.extension) ?: "*/*"
+            val ext = f.extension.lowercase()
+            val mime = when (ext) {
+                "apk" -> "application/vnd.android.package-archive"
+                "mp3" -> "audio/mpeg"
+                "m4a" -> "audio/mp4"
+                "ogg", "opus" -> "audio/ogg"
+                "flac" -> "audio/flac"
+                "wav" -> "audio/wav"
+                else -> android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+            }
             ctx.startActivity(
                 Intent.createChooser(
                     Intent(Intent.ACTION_VIEW).apply {
@@ -188,6 +203,8 @@ fun FilesScreen(
         } catch (_: Exception) {}
     }
 
+    // Cached formatter (was allocated per row per recomposition).
+    val dateFmt = remember { java.text.SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.getDefault()) }
     fun selectedFiles() = ui.files.filter { it.absolutePath in ui.selected }
     val folderName = ui.currentPath.substringAfterLast("/").ifBlank { "Sandbox" }
 
@@ -239,7 +256,7 @@ fun FilesScreen(
                                 listOf("Name", "Size", "Date", "Type").forEachIndexed { i, label ->
                                     DropdownMenuItem(
                                         text = { Text((if (ui.sortMode == i) "✓ " else "") + label) },
-                                        onClick = { vm.setSort(i) }
+                                        onClick = { overflow = false; vm.setSort(i) }
                                     )
                                 }
                                 DropdownMenuItem(
@@ -298,10 +315,9 @@ fun FilesScreen(
             }
         },
         floatingActionButton = {
-            if (ui.selected.isEmpty() && ui.clip.isEmpty()) {
-                FloatingActionButton(onClick = { showCreate = true }) {
-                    Icon(Icons.Filled.Add, "Create")
-                }
+            // Always allow create; paste lives in banner. Hiding FAB trapped users with non-empty clip.
+            FloatingActionButton(onClick = { showCreate = true }) {
+                Icon(Icons.Filled.Add, "Create")
             }
         }
     ) { padding ->
@@ -358,7 +374,7 @@ fun FilesScreen(
                         Text("Sandbox ${FilesViewModel.formatSize(ui.usedBytes)}", style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.height(6.dp))
                         LinearProgressIndicator(
-                            progress = { (ui.usedBytes / (200f * 1024 * 1024)).coerceIn(0f, 1f) },
+                            progress = { (ui.usedBytes / (1f * 1024 * 1024 * 1024)).coerceIn(0f, 1f) },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
@@ -379,8 +395,14 @@ fun FilesScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
                         Icon(Icons.Filled.Folder, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(12.dp))
-                        Text("Empty folder", style = MaterialTheme.typography.titleMedium)
-                        Text("Import files or tap + to create", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            if (ui.query.isNotBlank()) "No matches for \"${ui.query}\"" else if (ui.currentPath.isBlank()) "Loading…" else "Empty folder",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Text(
+                            if (ui.query.isNotBlank()) "Try a different search" else "Import files or tap + to create",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             } else if (ui.grid) {
@@ -432,8 +454,8 @@ fun FilesScreen(
                             headlineContent = { Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             supportingContent = {
                                 Text(
-                                    (if (f.isDirectory) "${f.listFiles()?.size ?: 0} items" else FilesViewModel.formatSize(f.length())) +
-                                        "  •  " + java.text.SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(f.lastModified())),
+                                    (if (f.isDirectory) "Folder" else FilesViewModel.formatSize(f.length())) +
+                                        "  •  " + try { dateFmt.format(java.util.Date(f.lastModified())) } catch (_: Exception) { "" },
                                     maxLines = 1, overflow = TextOverflow.Ellipsis
                                 )
                             },
@@ -518,7 +540,7 @@ fun FilesScreen(
                     exportTarget.value = f
                     exportLauncher.launch(f.name)
                 }
-                SheetRow(Icons.Filled.DriveFileRenameOutline, "Rename") { renameFor = f }
+                SheetRow(Icons.Filled.DriveFileRenameOutline, "Rename") { renameFor = f; menuFor = null }
                 SheetRow(Icons.Filled.Description, "Properties") { propsFor = f; menuFor = null }
                 SheetRow(Icons.Filled.Delete, "Delete") {
                     menuFor = null
@@ -531,57 +553,62 @@ fun FilesScreen(
     }
 
     if (showCreate) {
-        ModalBottomSheet(
-            onDismissRequest = { showCreate = false },
-            sheetState = rememberModalBottomSheetState()
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text("Create new", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(vertical = 8.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !createIsFile, onClick = { createIsFile = false }, label = { Text("Folder") })
-                    FilterChip(selected = createIsFile, onClick = { createIsFile = true }, label = { Text("File") })
-                }
-                text = ""
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    placeholder = { Text(if (createIsFile) "file.txt" else "Folder name") },
-                    singleLine = true
-                )
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { showCreate = false }) { Text("Cancel") }
-                    TextButton(onClick = {
-                        showCreate = false
-                        if (text.isBlank()) return@TextButton
-                        if (createIsFile) vm.createFile(text.trim()) { ok ->
-                            scope.launch { snacks.showSnackbar(if (ok) "Created" else "Failed") }
-                        } else vm.createFolder(text.trim()) { ok ->
-                            scope.launch { snacks.showSnackbar(if (ok) "Created" else "Failed") }
-                        }
-                    }) { Text("Create") }
+        // Key on open so text resets once per open — not on every recomposition (was wiping input).
+        key(showCreate) {
+            var createText by remember { mutableStateOf("") }
+            ModalBottomSheet(
+                onDismissRequest = { showCreate = false },
+                sheetState = rememberModalBottomSheetState()
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    Text("Create new", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(vertical = 8.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !createIsFile, onClick = { createIsFile = false }, label = { Text("Folder") })
+                        FilterChip(selected = createIsFile, onClick = { createIsFile = true }, label = { Text("File") })
+                    }
+                    OutlinedTextField(
+                        value = createText,
+                        onValueChange = { createText = it },
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        placeholder = { Text(if (createIsFile) "file.txt" else "Folder name") },
+                        singleLine = true
+                    )
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showCreate = false }) { Text("Cancel") }
+                        TextButton(onClick = {
+                            showCreate = false
+                            if (createText.isBlank()) return@TextButton
+                            if (createIsFile) vm.createFile(createText.trim()) { ok ->
+                                scope.launch { snacks.showSnackbar(if (ok) "Created" else "Invalid name or failed") }
+                            } else vm.createFolder(createText.trim()) { ok ->
+                                scope.launch { snacks.showSnackbar(if (ok) "Created" else "Invalid name or failed") }
+                            }
+                        }) { Text("Create") }
+                    }
                 }
             }
         }
     }
 
     renameFor?.let { f ->
-        text = f.name
-        AlertDialog(
-            onDismissRequest = { renameFor = null },
-            title = { Text("Rename") },
-            text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true) },
-            confirmButton = {
-                TextButton(onClick = {
-                    renameFor = null
-                    menuFor = null
-                    if (text.isNotBlank() && text != f.name) vm.rename(f, text.trim()) { ok ->
-                        scope.launch { snacks.showSnackbar(if (ok) "Renamed" else "Failed") }
-                    }
-                }) { Text("OK") }
-            },
-            dismissButton = { TextButton(onClick = { renameFor = null }) { Text("Cancel") } }
-        )
+        key(f.absolutePath) {
+            var renameText by remember { mutableStateOf(f.name) }
+            AlertDialog(
+                onDismissRequest = { renameFor = null },
+                title = { Text("Rename") },
+                text = { OutlinedTextField(value = renameText, onValueChange = { renameText = it }, singleLine = true) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        renameFor = null
+                        menuFor = null
+                        if (renameText.isNotBlank() && renameText != f.name) vm.rename(f, renameText.trim()) { ok ->
+                            scope.launch { snacks.showSnackbar(if (ok) "Renamed" else "Invalid name or failed") }
+                        }
+                    }) { Text("OK") }
+                },
+                dismissButton = { TextButton(onClick = { renameFor = null }) { Text("Cancel") } }
+            )
+        }
     }
 
     propsFor?.let { f ->
@@ -600,17 +627,24 @@ fun FilesScreen(
             title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             text = {
                 if (text == null) Text("Can't preview (binary or too large).")
-                else LazyColumn(modifier = Modifier.height(400.dp)) {
-                    item {
-                        Text(
-                            text,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                else androidx.compose.foundation.text.selection.SelectionContainer {
+                    LazyColumn(modifier = Modifier.height(400.dp)) {
+                        item {
+                            Text(
+                                text,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { previewFor = null }) { Text("Close") } }
+            confirmButton = {
+                Row {
+                    TextButton(onClick = { try { copyText(ctx, text ?: "") } catch (_: Exception) {} }) { Text("Copy") }
+                    TextButton(onClick = { previewFor = null }) { Text("Close") }
+                }
+            }
         )
     }
 }
@@ -646,4 +680,11 @@ private fun fileIcon(f: File): ImageVector {
         in setOf("apk") -> Icons.Filled.Description
         else -> Icons.Filled.Description
     }
+}
+
+private fun copyText(ctx: Context, text: String) {
+    try {
+        (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+            .setPrimaryClip(ClipData.newPlainText("text", text))
+    } catch (_: Exception) {}
 }

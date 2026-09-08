@@ -18,15 +18,15 @@ object Adblock {
         "optimizely.com", "newrelic.com", "nr-data.net", "beacon.gutefrage.net",
         "adskeeper.com", "mgid.com", "revcontent.com", "adnxs.com",
         "ads-twitter.com", "static.ads-twitter.com", "ads.linkedin.com",
-        "ads.pinterest.com", "tiktok-ads", "snap.licdn.com", "bat.bing.com",
+        "ads.pinterest.com", "ads.tiktok.com", "snap.licdn.com", "bat.bing.com",
         "clarity.ms", "c.bing.com", "ads.samsungads.com", "samsungads.com",
-        "UnityAds".lowercase(), "applovin.com", "ironsrc.com", "mopub.com",
+        "unityads.unity3d.com", "applovin.com", "ironsrc.com", "mopub.com",
         "inmobi.com", "smrtb.com", "bidswitch.net", "springserve.com",
         "sharethrough.com", "triplelift.com", "openx.net", "mathtag.com",
         "demdex.net", "everesttech.net", "agkn.com", "addthis.com",
         "chartbeat.com", "crazyegg.com", "inspectlet.com", "mouseflow.com",
         "luckyorange.com", "clicktale.net", "contentsquare.net", "quantummetric.com",
-        "usertesting.com", "survicate.com", " Mouseflow".trim().lowercase(),
+        "usertesting.com", "survicate.com",
         "popads.net", "popcash.net", "adcash.com", "exoclick.com",
         "trafficjunky.net", "juicyads.com", "adsterra.com", "propellerads.com",
         "hilltopads.net", "admaven.com", "clickadu.com", "zeropark.com",
@@ -35,17 +35,26 @@ object Adblock {
         "tpc.googlesyndication.com", "googleads.g.doubleclick.net",
         "fundingchoicesmessages.google.com", "consent.google.com",
         "imasdk.googleapis.com", "jsecoin.com", "coinimp.com", "coinhive.com",
-        "2mdn.net", "ajax.cloudflare.com/cdn-cgi", "static.cloudflareinsights.com"
+        "2mdn.net", "static.cloudflareinsights.com"
+    )
+    private val PATH_RULES = listOf(
+        "cdn-cgi/", "/ads/", "/adserver", "/pagead/", "doubleclick", "googlesyndication"
     )
 
     fun isAd(host: String): Boolean {
         if (host.isBlank()) return false
-        val h = host.lowercase()
-        return HOSTS.any { rule ->
-            when {
-                "/" in rule -> h.contains(rule)
-                else -> h == rule || h.endsWith(".$rule")
-            }
-        }
+        val h = host.lowercase().trim()
+        return HOSTS.any { rule -> h == rule || h.endsWith(".$rule") }
+    }
+
+    /** Full-URL check: host rules + path rules (fixes dead ajax.cloudflare.com/cdn-cgi case). */
+    fun isAdUrl(url: String): Boolean {
+        return try {
+            val u = android.net.Uri.parse(url)
+            val h = (u.host ?: "").lowercase()
+            if (isAd(h)) return true
+            val path = ((u.path ?: "") + "?" + (u.query ?: "")).lowercase()
+            PATH_RULES.any { path.contains(it) }
+        } catch (_: Exception) { false }
     }
 }

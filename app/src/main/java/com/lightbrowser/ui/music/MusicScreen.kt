@@ -170,13 +170,15 @@ fun MusicScreen(
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(novels, key = { it.name + it.chapters.size }) { novel ->
+                        items(novels, key = { it.name + "@" + it.chapters.firstOrNull()?.uri.toString() }) { novel ->
                             NovelCard(
                                 novel = novel,
                                 playing = novels.indexOf(novel) == pl.novelIndex,
                                 onClick = {
                                     val idx = novels.indexOf(novel)
                                     vm.selectNovel(idx)
+                                    // Autoplay first chapter (was paused at -1, dead play).
+                                    try { vm.playChapter(0) } catch (_: Exception) {}
                                     showHero = true
                                 }
                             )
@@ -195,12 +197,21 @@ fun MusicScreen(
                     onChapters = { showChapters = true },
                     onSleep = { showSleep = true }
                 )
+            } else {
+                // Stale novelIndex after rescan (was blank screen) — fall back to library.
+                Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Library changed — pick again", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { showHero = false }) { Text("Back to library") }
+                    }
+                }
             }
         }
     }
 
     if (showPickFolder) {
-        val dirs = remember { vm.sandboxDirs() }
+        val dirs = remember { try { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { vm.sandboxDirs() } } catch (_: Exception) { emptyList() } }
         AlertDialog(
             onDismissRequest = { showPickFolder = false },
             title = { Text("Library folder (Sandbox)") },
