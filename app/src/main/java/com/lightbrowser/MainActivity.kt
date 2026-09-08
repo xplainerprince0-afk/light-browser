@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        backMainHandler = android.os.Handler(mainLooper)
         enableEdgeToEdge()
         // Insurance: keyboard must NEVER resize the window (that shoves the bottom
         // nav above the keys). In bookmark-manager terms: the nav bar stays docked.
@@ -129,10 +130,10 @@ class MainActivity : ComponentActivity() {
                     android.widget.Toast.makeText(this@MainActivity, "Press back again to exit", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (_: Exception) {}
                 try {
-                    backHandler?.let { backMainHandler.removeCallbacks(it) }
+                    backHandler?.let { backMainHandler?.removeCallbacks(it) }
                     val r = Runnable { backArmed = false }
                     backHandler = r
-                    backMainHandler.postDelayed(r, 2000)
+                    backMainHandler?.postDelayed(r, 2000)
                 } catch (_: Exception) {}
             }
         })
@@ -173,14 +174,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private var backHandler: Runnable? = null
-    private val backMainHandler = android.os.Handler(mainLooper)
+    // Initialized in onCreate — field initializers run before attach, when
+    // getMainLooper() still throws NPE (that was the install-launch crash).
+    private var backMainHandler: android.os.Handler? = null
 
     override fun onDestroy() {
         try {
             layoutListener?.let { window.decorView.viewTreeObserver.removeOnGlobalLayoutListener(it) }
         } catch (_: Exception) {}
         layoutListener = null
-        try { backHandler?.let { backMainHandler.removeCallbacks(it) } } catch (_: Exception) {}
+        try { backHandler?.let { backMainHandler?.removeCallbacks(it) } } catch (_: Exception) {}
         super.onDestroy()
     }
 
