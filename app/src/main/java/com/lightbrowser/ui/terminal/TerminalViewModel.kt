@@ -188,7 +188,7 @@ class TerminalViewModel : ViewModel() {
                     sess.editor = TextFieldValue(AnnotatedString(""))
                     _editor.value = sess.editor
                 } catch (_: Exception) {}
-                s = s.replace(Regex("\u001B\\[(2J|3J|H|2[H])")).replace("\u001Bc", "")
+                s = s.replace(Regex("\u001B\\[(2J|3J|H|2[H])"), "").replace("\u001Bc", "")
             }
             // Drop OSC sequences + other CSI/charset escapes (keep SGR `m` for below).
             s = s.replace(Regex("\u001B\\][^\u0007]*\u0007"), "")
