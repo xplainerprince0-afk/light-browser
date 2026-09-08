@@ -74,6 +74,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -211,7 +212,13 @@ fun MusicScreen(
     }
 
     if (showPickFolder) {
-        val dirs = remember { try { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { vm.sandboxDirs() } } catch (_: Exception) { emptyList() } }
+        // Loaded async — was runBlocking on Main during composition (startup ANR risk).
+        var dirs by remember { mutableStateOf<List<java.io.File>>(emptyList()) }
+        LaunchedEffect(showPickFolder) {
+            try {
+                dirs = withContext(kotlinx.coroutines.Dispatchers.IO) { vm.sandboxDirs() }
+            } catch (_: Exception) { dirs = emptyList() }
+        }
         AlertDialog(
             onDismissRequest = { showPickFolder = false },
             title = { Text("Library folder (Sandbox)") },

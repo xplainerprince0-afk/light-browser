@@ -215,12 +215,10 @@ private fun AppShell(
     keyboardOpen: Boolean,
     onThemeChange: (String) -> Unit
 ) {
-    var tab by androidx.compose.runtime.saveable.rememberSaveable(
-        stateSaver = androidx.compose.runtime.saveable.Saver(
-            save = { it.name },
-            restore = { try { Tab.valueOf(it) } catch (_: Exception) { Tab.Browser } }
-        )
-    ) { mutableStateOf(Tab.Browser) }
+    // Plain remember (rotation resets to Browser — same as last working build).
+    // rememberSaveable with a custom Saver over the private Tab enum is an
+    // R8/startup risk; theme (String) stays saveable, it is natively supported.
+    var tab by remember { mutableStateOf(Tab.Browser) }
     var showAbout by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()

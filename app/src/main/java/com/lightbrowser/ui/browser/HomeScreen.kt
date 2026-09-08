@@ -127,9 +127,10 @@ fun HomeScreen(
             Spacer(Modifier.height(8.dp))
             LazyVerticalGrid(
                 columns = GridCells.Fixed(4),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp, max = 260.dp),
+                modifier = Modifier.fillMaxWidth().height(190.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                userScrollEnabled = false
             ) {
                 items(SHORTCUTS) { s ->
                     Column(

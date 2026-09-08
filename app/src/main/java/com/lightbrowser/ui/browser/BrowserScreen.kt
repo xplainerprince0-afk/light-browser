@@ -97,6 +97,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lightbrowser.data.DownloadHelper
 import com.lightbrowser.data.Prefs
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -390,8 +391,22 @@ fun BrowserScreen(
             ui.tabs.forEach { tab ->
                 val isCurrent = tab.id == currentTabId
                 key(tab.id) {
+                    // WebView creation can throw (missing/updating system WebView).
+                    // Never let one bad tab kill app startup — show a fallback view.
+                    var webViewFailed by remember { mutableStateOf<String?>(null) }
+                    if (webViewFailed != null) {
+                        Box(modifier = if (isCurrent) Modifier.fillMaxSize() else Modifier.size(1.dp), contentAlignment = Alignment.Center) {
+                            if (isCurrent) Text(
+                                "WebView unavailable (${webViewFailed}). Update System WebView / Chrome.",
+                                modifier = Modifier.padding(24.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    } else {
                     AndroidView(
                         factory = { c ->
+                            try {
                             WebView(c).also { wv ->
                                 setupLightWebView(
                                     wv,
@@ -442,10 +457,16 @@ fun BrowserScreen(
                                 if (!tab.url.startsWith("lb://")) {
                                     try { wv.loadUrl(tab.url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
                                 }
+                                wv
+                            }
+                            } catch (e: Exception) {
+                                webViewFailed = e.message ?: "init failed"
+                                android.widget.TextView(c).apply { text = "WebView unavailable" }
                             }
                         },
                         modifier = if (isCurrent) Modifier.fillMaxSize() else Modifier.size(1.dp),
-                        update = { wv ->
+                        update = { v ->
+                            val wv = v as? WebView ?: return@AndroidView
                             try { webViews[tab.id] = wv } catch (_: Exception) {}
                             if (isCurrent) {
                                 currentWebView = wv
@@ -468,8 +489,8 @@ fun BrowserScreen(
                             }
                         }
                     )
+                    } // end else (WebView available)
                 }
-            }
             // Keep currentWebView ref in sync when switching tabs.
             LaunchedEffect(currentTabId) {
                 try {
@@ -1004,8 +1025,12 @@ private fun AgentSheet(onClose: () -> Unit) {
             }) { Text(if (recordingNow) "Stop" else "Start") }
         }
         var recVersion by remember { mutableStateOf(0) }
-        val recs = remember(recordingNow, recVersion) {
-            try { kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { com.lightbrowser.data.BrowserAgent.listRecordings().take(5) } } catch (_: Exception) { emptyList() }
+        var recs by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+        // Loaded async — was runBlocking on Main during composition (startup ANR risk).
+        LaunchedEffect(recordingNow, recVersion, showAgent) {
+            try {
+                recs = withContext(kotlinx.coroutines.Dispatchers.IO) { com.lightbrowser.data.BrowserAgent.listRecordings().take(5) }
+            } catch (_: Exception) { recs = emptyList() }
         }
         if (recs.isNotEmpty()) {
             recs.forEach { (f, n) ->
