@@ -94,6 +94,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun BrowserScreen(
     modifier: Modifier = Modifier,
+    active: Boolean = true,
     vm: BrowserViewModel = viewModel(),
     onOpenScripts: () -> Unit,
     onOpenDownloads: () -> Unit,
@@ -127,12 +128,19 @@ fun BrowserScreen(
         } catch (_: Exception) {}
     }
 
-    BackHandler(enabled = ui.searchExpanded) {
+    BackHandler(enabled = active && ui.searchExpanded) {
         vm.setSearch(false)
         focusManager.clearFocus()
     }
-    BackHandler(enabled = !ui.searchExpanded && webView?.canGoBack() == true) {
+    BackHandler(enabled = active && !ui.searchExpanded && webView?.canGoBack() == true) {
         try { webView?.goBack() } catch (_: Exception) {}
+    }
+
+    // Parked offscreen but alive: pause timers when hidden, resume on return.
+    LaunchedEffect(active) {
+        try {
+            if (active) webView?.onResume() else webView?.onPause()
+        } catch (_: Exception) {}
     }
 
     DisposableEffect(Unit) {

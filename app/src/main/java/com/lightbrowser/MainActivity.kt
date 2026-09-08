@@ -228,21 +228,24 @@ private fun AppShell(
                         }
                     }
                     Column(modifier = Modifier.weight(1f).fillMaxSize()) {
+                        // ALL tabs stay composed (WebView keeps its page, lists keep
+                        // scroll, terminal keeps colors). Inactive ones are parked
+                        // offscreen: no destroy, no reload, no state reset, no touch.
                         Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                            when (tab) {
-                                Tab.Browser -> BrowserScreen(
-                                    onOpenScripts = { tab = Tab.Scripts },
-                                    onOpenDownloads = { tab = Tab.Downloads },
-                                    onOpenSettings = { tab = Tab.Settings },
-                                    vm = browserVm
-                                )
-                                Tab.Files -> FilesScreen()
-                                Tab.Music -> MusicScreen(vm = musicVm)
-                                Tab.Terminal -> TerminalScreen()
-                                Tab.Scripts -> ScriptsScreen()
-                                Tab.Downloads -> DownloadsScreen()
-                                Tab.Settings -> SettingsScreen(onThemeChange = onThemeChange)
-                            }
+                            BrowserScreen(
+                                modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Browser),
+                                active = tab == Tab.Browser,
+                                onOpenScripts = { tab = Tab.Scripts },
+                                onOpenDownloads = { tab = Tab.Downloads },
+                                onOpenSettings = { tab = Tab.Settings },
+                                vm = browserVm
+                            )
+                            FilesScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Files))
+                            MusicScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Music), vm = musicVm)
+                            TerminalScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Terminal))
+                            ScriptsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Scripts))
+                            DownloadsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Downloads))
+                            SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
                         }
                         // Bottom zone is IME-immune AND hidden while typing: the tab bar
                         // can never float above the keyboard on any device — when keys
@@ -287,3 +290,15 @@ private fun AppShell(
         )
     }
 }
+
+/** Parks hidden tabs far offscreen: still composed (state kept), never touched. */
+private fun Modifier.offscreen(hidden: Boolean): Modifier =
+    this.then(
+        androidx.compose.ui.layout.layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, placeable.height) {
+                if (hidden) placeable.placeRelative(-100_000, -100_000)
+                else placeable.placeRelative(0, 0)
+            }
+        }
+    )

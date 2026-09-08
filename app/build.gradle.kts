@@ -13,7 +13,7 @@ android {
         applicationId = "com.lightbrowser"
         minSdk = 23
         targetSdk = 37
-        versionCode = 18
+        versionCode = 19
         versionName = "3.1"
         vectorDrawables { useSupportLibrary = true }
     }
