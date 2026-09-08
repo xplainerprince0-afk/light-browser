@@ -119,6 +119,9 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                 val msg = it.message() ?: ""
                 if (src.contains("challenges.cloudflare.com") || src.contains("turnstile")) return@let
                 if (msg.contains("font-size:0;color:transparent") || msg == "NaN") return@let
+                try {
+                    BrowserAgent.logConsole("[${it.messageLevel()}] $msg @ $src:${it.lineNumber()}")
+                } catch (_: Exception) {}
             }
             return super.onConsoleMessage(cm)
         }

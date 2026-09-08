@@ -69,6 +69,8 @@ class TerminalViewModel : ViewModel() {
     private var sessionCounter = 0
 
     private var running: Process? = null
+    /** Offset before which the transcript is frozen while a command runs (-1 idle). */
+    private var lockBefore: Int = -1
 
     var sandboxDir: File? = null
         private set
@@ -209,22 +211,42 @@ class TerminalViewModel : ViewModel() {
         try {
             val s = active()
             val old = s.editor
+            val p = s.promptText
+            // Command zone = everything from the trailing prompt onward (idle only).
+            val lastNl = old.text.lastIndexOf('\n')
+            val oldLast = if (lastNl == -1) old.text else old.text.substring(lastNl + 1)
+            val idlePrompt = p.isNotEmpty() && oldLast.startsWith(p)
+            val promptStart = if (idlePrompt) lastNl + 1 + p.length else old.text.length
+
             if (v.text == old.text) {
-                // Caret-only move: always allowed, even inside the prompt zone.
-                s.editor = v
-                if (s.id == _activeId.value) _editor.value = v
+                // Caret-only move: collapsed caret may not park inside locked output;
+                // ranged selections stay free so long-press copy keeps working.
+                val sel = v.selection
+                val fixed = if (sel.collapsed && sel.start < promptStart) {
+                    v.copy(selection = TextRange(promptStart))
+                } else v
+                s.editor = fixed
+                if (s.id == _activeId.value) _editor.value = fixed
                 return
             }
-            val p = s.promptText
-            // ── Prompt armor: the trailing "$ " prompt is immutable. If the edit
-            // broke it (backspace into it, select-all+type, paste over it), block
-            // the edit and park the caret at the end of the prompt instead.
-            if (p.isNotEmpty()) {
-                val oldLast = old.text.substringAfterLast("\n")
-                val newLast = v.text.substringAfterLast("\n")
-                if (oldLast.startsWith(p) && !newLast.startsWith(p)) {
-                    val promptEnd = old.text.length - (oldLast.length - p.length)
-                    val fixed = old.copy(selection = TextRange(promptEnd.coerceIn(0, old.text.length)))
+            // While a command runs, the whole transcript is frozen (our shell has
+            // no stdin anyway) — caret may roam, text may not change.
+            if (lockBefore >= 0) {
+                val fixed = old.copy(selection = v.selection)
+                s.editor = fixed
+                if (s.id == _activeId.value) _editor.value = fixed
+                return
+            }
+            // Idle text edit: find where it starts; a change starting inside the
+            // locked zone (output or the "$" itself) is blocked. Appends and
+            // edits after the prompt always start at/after promptStart.
+            if (idlePrompt) {
+                var common = 0
+                val n = minOf(old.text.length, v.text.length)
+                while (common < n && old.text[common] == v.text[common]) common++
+                if (common < promptStart) {
+                    // Touched locked zone: restore text, park caret at prompt end.
+                    val fixed = old.copy(selection = TextRange(promptStart))
                     s.editor = fixed
                     if (s.id == _activeId.value) _editor.value = fixed
                     return
@@ -378,6 +400,8 @@ class TerminalViewModel : ViewModel() {
         if (s.history.isEmpty() || s.history.last() != trimmed) s.history.add(trimmed)
         s.histIndex = s.history.size
         print("\n", TermWhite)
+        // Freeze the transcript (prompt + command line included) until done.
+        lockBefore = _editor.value.text.length
         execCmd(trimmed)
     }
 
@@ -388,6 +412,7 @@ class TerminalViewModel : ViewModel() {
             printPrompt()
         } catch (_: Exception) {}
         running = null
+        lockBefore = -1
         _status.value = "idle"
     }
 
@@ -408,6 +433,7 @@ class TerminalViewModel : ViewModel() {
     private fun afterCommand() {
         refreshPrompt()
         printPrompt()
+        lockBefore = -1
     }
 
     private fun execCmd(raw: String) {
@@ -618,6 +644,8 @@ class TerminalViewModel : ViewModel() {
 
     // ── `b` browser-agent commands ──
     private fun agentCmd(line: String) {
+        // Agent ops stream output without freezing typing.
+        lockBefore = -1
         viewModelScope.launch(Dispatchers.IO) {
             fun out(t: String, c: Color = TermWhite) {
                 viewModelScope.launch(Dispatchers.Main) { print(t, c) }
@@ -633,8 +661,8 @@ class TerminalViewModel : ViewModel() {
                     "", "help" -> out(
                         "b open <url> | back | fwd | reload | url | title\n" +
                             "b js <expr> | text [max] | dom [css] | snap\n" +
-                            "b click <ref|css> | fill <ref|css> <val> | scroll [px]\n" +
-                            "b serve — server URL + token\n", TermDim
+                            "b click <ref|css> | fill <ref|css> <val> [--submit]\n" +
+                            "b scroll [px] | shot | console [n] | serve\n", TermDim
                     )
                     "open" -> {
                         val url = parts.getOrNull(1) ?: ""
@@ -691,13 +719,22 @@ class TerminalViewModel : ViewModel() {
                         }
                     }
                     "fill" -> {
-                        val rest = line.removePrefix("fill").trim()
+                        var rest = line.removePrefix("fill").trim()
+                        var submit = false
+                        if (rest.endsWith("--submit")) {
+                            submit = true
+                            rest = rest.removeSuffix("--submit").trim()
+                        }
                         val sp = rest.indexOf(' ')
-                        if (sp < 0) out("Usage: b fill <ref|css> <value>\n", TermRed)
+                        if (sp < 0) out("Usage: b fill <ref|css> <value> [--submit]\n", TermRed)
                         else {
                             val sel = rest.substring(0, sp).replace("\\", "\\\\").replace("'", "\\'")
                             val v = rest.substring(sp + 1).replace("\\", "\\\\").replace("'", "\\'")
-                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.fill('$sel','$v');}catch(e){return 'ERR '+e;}})()")
+                            var r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.fill('$sel','$v');}catch(e){return 'ERR '+e;}})()")
+                            if (r.contains("OK") && submit) {
+                                val r2 = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$sel');var f=e?(e.form||e.closest('form')):null;if(!f)return 'ERR no-form';f.submit();return 'OK submitted';}catch(e){return 'ERR '+e;}})()")
+                                r = "$r / $r2"
+                            }
                             out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
                         }
                     }
@@ -710,6 +747,22 @@ class TerminalViewModel : ViewModel() {
                         if (com.lightbrowser.data.BrowserAgent.serverRunning.value) {
                             out("Agent server: ${com.lightbrowser.data.BrowserAgent.serverLabel.value}\nFrom Termux: curl 'http://127.0.0.1:8089/text?token=…'\n", TermGreen)
                         } else out("Server is OFF — enable it in Browser ⋮ → Agent bridge.\n", TermDim)
+                    }
+                    "console" -> {
+                        val n = parts.getOrNull(1)?.toIntOrNull() ?: 30
+                        val lines = com.lightbrowser.data.BrowserAgent.consoleTail(n)
+                        if (lines.isEmpty()) out("(console empty — JS logs appear here)\n", TermDim)
+                        else {
+                            out("--- CONSOLE (last ${lines.size}) ---\n", TermDim)
+                            lines.forEach { out(it.take(500) + "\n", TermWhite) }
+                            out("--- END CONSOLE ---\n", TermDim)
+                        }
+                    }
+                    "shot" -> {
+                        out("Capturing…\n", TermDim)
+                        val path = com.lightbrowser.data.BrowserAgent.captureShot()
+                        if (path != null) out("Saved $path\nOpen it in Files → Sandbox → shots.\n", TermGreen)
+                        else out("Shot failed (open the Browser tab first).\n", TermRed)
                     }
                     else -> out("Unknown b command. Try: b help\n", TermRed)
                 }

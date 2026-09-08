@@ -49,6 +49,50 @@ object BrowserAgent {
     private val pool = Executors.newCachedThreadPool()
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // ── Console ring buffer (last 200) ──
+    private val consoleBuf = ArrayDeque<String>()
+    @Synchronized
+    fun logConsole(s: String) {
+        consoleBuf.addLast(s)
+        while (consoleBuf.size > 200) consoleBuf.removeFirst()
+    }
+    @Synchronized
+    fun consoleTail(n: Int): List<String> = consoleBuf.takeLast(n.coerceIn(1, 200)).toList()
+    @Synchronized
+    fun clearConsole() { consoleBuf.clear() }
+
+    /** Viewport screenshot → sandbox/shots file. Returns path or null. */
+    fun captureShot(): String? {
+        val f = CompletableFuture<String?>()
+        mainHandler.post {
+            try {
+                val wv = webViewProvider?.invoke()
+                if (wv == null || wv.width <= 0 || wv.height <= 0) {
+                    f.complete(null)
+                    return@post
+                }
+                val scale = (1280f / wv.width).coerceAtMost(1f)
+                val bw = (wv.width * scale).toInt().coerceAtLeast(1)
+                val bh = (wv.height * scale).toInt().coerceAtLeast(1)
+                val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
+                val c = android.graphics.Canvas(bmp)
+                c.scale(scale, scale)
+                wv.draw(c)
+                val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
+                val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
+                java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+                try { bmp.recycle() } catch (_: Exception) {}
+                f.complete(out.absolutePath)
+            } catch (e: Exception) {
+                Log.w(TAG, "shot", e)
+                try { f.complete(null) } catch (_: Exception) {}
+            }
+        }
+        return try {
+            f.get(15, TimeUnit.SECONDS)
+        } catch (_: Exception) { null }
+    }
+
     // ── WebView ops (always on Main) ──
 
     fun navigate(url: String) {
@@ -349,8 +393,7 @@ object BrowserAgent {
                     JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
                 }
             }
-            "/fill" -> {
-                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+            "/fill" -> {                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
                 val value = q["value"] ?: ""
                 awaitMain {
                     val f = CompletableFuture<String>()
@@ -370,7 +413,39 @@ object BrowserAgent {
                     JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
                 }
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /text /snap /js /click /fill /back /reload"}"""
+            "/console" -> {
+                val n = q["n"]?.toIntOrNull() ?: 30
+                val arr = org.json.JSONArray()
+                consoleTail(n).forEach { arr.put(it) }
+                JSONObject().put("ok", true).put("lines", arr).toString()
+            }
+            "/shot" -> awaitMain {
+                val f = CompletableFuture<String?>()
+                try {
+                    val wv = webViewProvider?.invoke()
+                    if (wv == null || wv.width <= 0 || wv.height <= 0) f.complete(null)
+                    else {
+                        val scale = (1280f / wv.width).coerceAtMost(1f)
+                        val bmp = android.graphics.Bitmap.createBitmap(
+                            (wv.width * scale).toInt().coerceAtLeast(1),
+                            (wv.height * scale).toInt().coerceAtLeast(1),
+                            android.graphics.Bitmap.Config.ARGB_8888
+                        )
+                        val c = android.graphics.Canvas(bmp)
+                        c.scale(scale, scale)
+                        wv.draw(c)
+                        val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
+                        val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
+                        java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+                        try { bmp.recycle() } catch (_: Exception) {}
+                        f.complete(out.absolutePath)
+                    }
+                } catch (e: Exception) { f.complete(null) }
+                val path = try { f.get(15, TimeUnit.SECONDS) } catch (_: Exception) { null }
+                if (path != null) JSONObject().put("ok", true).put("path", path).toString()
+                else """{"ok":false,"err":"shot failed"}"""
+            }
+            else -> """{"ok":false,"err":"unknown path. try /status /open /text /snap /js /click /fill /back /reload /console /shot"}"""
         }
     }
 }

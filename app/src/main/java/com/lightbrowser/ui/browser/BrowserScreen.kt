@@ -628,7 +628,9 @@ private fun AgentSheet(onClose: () -> Unit) {
             "b snap — page refs + text",
             "b click <ref> — tap it",
             "b fill <ref> <val> — type it",
-            "b js <expr> — run JS"
+            "b js <expr> — run JS",
+            "b shot — save screenshot",
+            "b console — JS logs"
         ).forEach { cmd ->
             Text("• $cmd", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
