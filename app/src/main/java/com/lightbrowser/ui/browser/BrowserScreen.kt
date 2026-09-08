@@ -460,7 +460,8 @@ fun BrowserScreen(
         }
     }
 
-    // ── Overflow menu sheet ──    if (showMenu) {
+    // ── Overflow menu sheet ──
+    if (showMenu) {
         ModalBottomSheet(
             onDismissRequest = { showMenu = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
