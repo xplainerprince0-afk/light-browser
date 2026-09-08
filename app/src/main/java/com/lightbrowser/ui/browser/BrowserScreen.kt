@@ -490,7 +490,8 @@ fun BrowserScreen(
                         }
                     )
                     } // end else (WebView available)
-                }
+                } // end key(tab.id)
+            } // end forEach tab
             // Keep currentWebView ref in sync when switching tabs.
             LaunchedEffect(currentTabId) {
                 try {
