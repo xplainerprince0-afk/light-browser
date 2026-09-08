@@ -662,7 +662,8 @@ class TerminalViewModel : ViewModel() {
                         "b open <url> | back | fwd | reload | url | title\n" +
                             "b js <expr> | text [max] | dom [css] | snap\n" +
                             "b click <ref|css> | fill <ref|css> <val> [--submit]\n" +
-                            "b scroll [px] | shot | console [n] | serve\n", TermDim
+                            "b scroll [px] | shot | console [n] | cookies | save <name>\n" +
+                            "b serve — server URL + token\n", TermDim
                     )
                     "open" -> {
                         val url = parts.getOrNull(1) ?: ""
@@ -763,6 +764,48 @@ class TerminalViewModel : ViewModel() {
                         val path = com.lightbrowser.data.BrowserAgent.captureShot()
                         if (path != null) out("Saved $path\nOpen it in Files → Sandbox → shots.\n", TermGreen)
                         else out("Shot failed (open the Browser tab first).\n", TermRed)
+                    }
+                    "cookies" -> {
+                        try {
+                            val url = com.lightbrowser.data.BrowserAgent.currentUrl() ?: ""
+                            val ck = try {
+                                android.webkit.CookieManager.getInstance().getCookie(url)
+                            } catch (_: Exception) { null }
+                            if (ck.isNullOrBlank()) out("No cookies for ${url.ifBlank { "(no page)" }}\n", TermDim)
+                            else wrapped(url, ck)
+                        } catch (e: Exception) { out("cookies error: ${e.message}\n", TermRed) }
+                    }
+                    "save" -> {
+                        val name = parts.getOrNull(1) ?: ""
+                        if (name.isBlank()) out("Usage: b save <name.html|txt>\n", TermRed)
+                        else {
+                            val asHtml = name.lowercase().endsWith(".html")
+                            val expr = if (asHtml) {
+                                "(function(){try{return document.documentElement.outerHTML.slice(0,400000);}catch(e){return 'ERR '+e;}})()"
+                            } else {
+                                "(function(){try{return document.body?document.body.innerText.slice(0,200000):'ERR no-body';}catch(e){return 'ERR '+e;}})()"
+                            }
+                            var r = com.lightbrowser.data.BrowserAgent.eval(expr, maxChars = 420_000)
+                            // Unwrap the JSON-string encoding evaluateJavascript adds.
+                            try {
+                                var s = r.trim()
+                                if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                                    s = s.substring(1, s.length - 1).replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+                                }
+                                r = s
+                            } catch (_: Exception) {}
+                            if (r.startsWith("ERR")) out("$r\n", TermRed)
+                            else {
+                                try {
+                                    val app = AppCtx.ctx
+                                    val dir = java.io.File(app.filesDir, "sandbox/Downloads").apply { mkdirs() }
+                                    val safe = name.replace("/", "_").take(80).ifBlank { "page.txt" }
+                                    val out2 = java.io.File(dir, safe)
+                                    out2.writeText(r, Charsets.UTF_8)
+                                    out("Saved ${out2.name} (${r.length / 1024} KB) to sandbox/Downloads\n", TermGreen)
+                                } catch (e: Exception) { out("save failed: ${e.message}\n", TermRed) }
+                            }
+                        }
                     }
                     else -> out("Unknown b command. Try: b help\n", TermRed)
                 }

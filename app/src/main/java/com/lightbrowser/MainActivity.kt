@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
             androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         } catch (_: Exception) {}
         try { AppCtx.init(this) } catch (_: Exception) {}
+        try { com.lightbrowser.ui.settings.applyLang(this, try { Prefs.appLang } catch (_: Exception) { "system" }) } catch (_: Exception) {}
         val startUrl = intent?.data?.toString()?.takeIf { it.startsWith("http") }
 
         val decor = window.decorView
@@ -141,13 +142,22 @@ class MainActivity : ComponentActivity() {
                 "light" -> false
                 else -> androidx.compose.foundation.isSystemInDarkTheme()
             }
+            val black = try { Prefs.trueBlack } catch (_: Exception) { false }
+            val uiScale = try { Prefs.uiFontScale } catch (_: Exception) { 1f }
             val keyboardOpen by keyboardOpenFlow.collectAsState()
-            LightBrowserTheme(darkTheme = dark) {
-                AppShell(
-                    startUrl = startUrl,
-                    keyboardOpen = keyboardOpen,
-                    onThemeChange = { themeMode = it }
-                )
+            LightBrowserTheme(darkTheme = dark, blackTheme = black && dark) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+                        androidx.compose.ui.platform.LocalDensity.current.density * uiScale,
+                        androidx.compose.ui.platform.LocalDensity.current.fontScale * uiScale
+                    )
+                ) {
+                    AppShell(
+                        startUrl = startUrl,
+                        keyboardOpen = keyboardOpen,
+                        onThemeChange = { themeMode = it }
+                    )
+                }
             }
         }
     }

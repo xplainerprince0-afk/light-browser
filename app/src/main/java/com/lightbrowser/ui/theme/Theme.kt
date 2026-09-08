@@ -12,14 +12,16 @@ import androidx.compose.ui.platform.LocalContext
 @Composable
 fun LightBrowserTheme(
     darkTheme: Boolean = androidx.compose.foundation.isSystemInDarkTheme(),
+    blackTheme: Boolean = false,
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        dynamicColor && !blackTheme && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val ctx = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
         }
+        darkTheme && blackTheme -> BlackScheme
         darkTheme -> DarkScheme
         else -> LightScheme
     }

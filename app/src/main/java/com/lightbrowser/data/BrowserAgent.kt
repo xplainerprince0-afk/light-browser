@@ -419,6 +419,20 @@ object BrowserAgent {
                 consoleTail(n).forEach { arr.put(it) }
                 JSONObject().put("ok", true).put("lines", arr).toString()
             }
+            "/cookies" -> awaitMain {
+                val f = CompletableFuture<String?>()
+                mainHandler.post {
+                    try {
+                        val wv = webViewProvider?.invoke()
+                        val url = wv?.url ?: ""
+                        f.complete(
+                            try { android.webkit.CookieManager.getInstance().getCookie(url) } catch (_: Exception) { null }
+                        )
+                    } catch (_: Exception) { f.complete(null) }
+                }
+                val ck = try { f.get(5, TimeUnit.SECONDS) } catch (_: Exception) { null }
+                JSONObject().put("ok", true).put("cookies", ck ?: JSONObject.NULL).toString()
+            }
             "/shot" -> awaitMain {
                 val f = CompletableFuture<String?>()
                 try {

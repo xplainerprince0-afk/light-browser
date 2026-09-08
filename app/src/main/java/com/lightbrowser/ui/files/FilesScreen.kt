@@ -113,6 +113,7 @@ fun FilesScreen(
     var showCreate by remember { mutableStateOf(false) }
     var renameFor by remember { mutableStateOf<File?>(null) }
     var propsFor by remember { mutableStateOf<File?>(null) }
+    var previewFor by remember { mutableStateOf<Pair<String, String?>?>(null) }
     var overflow by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
@@ -489,6 +490,18 @@ fun FilesScreen(
                     }
                 )
                 SheetRow(Icons.Filled.FileOpen, "Open") { menuFor = null; openFile(f) }
+                if (!f.isDirectory && f.extension.lowercase() in setOf("txt", "md", "log", "json", "xml", "csv", "kt", "java", "py", "js", "ts", "html", "css", "sh", "prop", "ini")) {
+                    SheetRow(Icons.Filled.Description, "Preview text") {
+                        menuFor = null
+                        vm.readTextPreview(f) { previewFor = f.name to it }
+                    }
+                }
+                if (!f.isDirectory && f.extension.lowercase() == "zip") {
+                    SheetRow(Icons.Filled.Download, "Extract here") {
+                        menuFor = null
+                        vm.extractZip(f) { msg -> scope.launch { snacks.showSnackbar(msg) } }
+                    }
+                }
                 SheetRow(Icons.Filled.ContentCopy, "Copy") {
                     menuFor = null
                     vm.copyToClip(listOf(f.absolutePath))
@@ -577,6 +590,27 @@ fun FilesScreen(
             title = { Text("Properties") },
             text = { Text(vm.details(f)) },
             confirmButton = { TextButton(onClick = { propsFor = null }) { Text("OK") } }
+        )
+    }
+
+    // ── Text preview dialog ──
+    previewFor?.let { (name, text) ->
+        AlertDialog(
+            onDismissRequest = { previewFor = null },
+            title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            text = {
+                if (text == null) Text("Can't preview (binary or too large).")
+                else LazyColumn(modifier = Modifier.height(400.dp)) {
+                    item {
+                        Text(
+                            text,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { previewFor = null }) { Text("Close") } }
         )
     }
 }

@@ -43,9 +43,23 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberCoroutineScope
+import com.lightbrowser.data.Backup
 import com.lightbrowser.data.BookmarkStorage
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.Prefs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private val LangModes = listOf(
+    "system" to "System",
+    "en" to "English",
+    "hi" to "हिन्दी",
+    "es" to "Español"
+)
 
 private val SearchEngines = listOf(
     "google" to "Google",
@@ -62,6 +76,15 @@ private val ThemeModes = listOf(
     "light" to "Light"
 )
 
+fun applyLang(ctx: android.content.Context, key: String) {
+    try {
+        val tags = if (key == "system" || key.isBlank()) "" else key
+        androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(
+            androidx.core.os.LocaleListCompat.forLanguageTags(tags)
+        )
+    } catch (_: Exception) {}
+}
+
 @Composable
 fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Unit = {}) {
     val ctx = LocalContext.current
@@ -75,8 +98,37 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
     var cache by remember { mutableStateOf(safeGet { Prefs.cacheEnabled } ?: true) }
     var engine by remember { mutableStateOf(safeGet { Prefs.searchEngine } ?: "google") }
     var themeMode by remember { mutableStateOf(safeGet { Prefs.themeMode } ?: "system") }
+    var trueBlack by remember { mutableStateOf(safeGet { Prefs.trueBlack } ?: false) }
+    var uiScale by remember { mutableFloatStateOf(safeGet { Prefs.uiFontScale } ?: 1f) }
+    var lang by remember { mutableStateOf(safeGet { Prefs.appLang } ?: "system") }
     var termScale by remember { mutableFloatStateOf(safeGet { Prefs.terminalFontScale } ?: 1f) }
     var playerSpeed by remember { mutableFloatStateOf(safeGet { Prefs.playerSpeed } ?: 1f) }
+    val backupScope = rememberCoroutineScope()
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) backupScope.launch(Dispatchers.IO) {
+            try {
+                val json = Backup.export(ctx).toString()
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray()) }
+                withContext(Dispatchers.Main) { Toast.makeText(ctx, "Backup saved", Toast.LENGTH_SHORT).show() }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(ctx, "Export failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) backupScope.launch(Dispatchers.IO) {
+            try {
+                val text = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
+                val n = Backup.import(ctx, org.json.JSONObject(text))
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "Restored $n stores — restart app", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(ctx, "Import failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -167,6 +219,34 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                         )
                     }
                 }
+                SwitchRow(label = "True black (AMOLED)", checked = trueBlack, onChange = {
+                    trueBlack = it
+                    safeSet { Prefs.trueBlack = it }
+                    onThemeChange(themeMode)
+                })
+                Text("Interface size: ${"%.2f".format(uiScale)}×", style = MaterialTheme.typography.labelLarge)
+                Slider(
+                    value = uiScale,
+                    onValueChange = { uiScale = it },
+                    onValueChangeFinished = { safeSet { Prefs.uiFontScale = uiScale } },
+                    valueRange = 0.85f..1.3f
+                )
+                Text("Language", style = MaterialTheme.typography.labelLarge)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    LangModes.forEachIndexed { index, (key, label) ->
+                        SegmentedButton(
+                            selected = lang == key,
+                            onClick = {
+                                lang = key
+                                safeSet { Prefs.appLang = key }
+                                applyLang(ctx, key)
+                                Toast.makeText(ctx, "Language applied", Toast.LENGTH_SHORT).show()
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index = index, count = LangModes.size),
+                            label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
+                }
             }
         }
 
@@ -244,6 +324,14 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Clear bookmarks") }
+                FilledTonalButton(
+                    onClick = { exportLauncher.launch("lightbrowser-backup.json") },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Export backup (JSON)") }
+                FilledTonalButton(
+                    onClick = { importLauncher.launch(arrayOf("application/json")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Import backup") }
             }
         }
 
@@ -262,7 +350,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                 Button(
                     onClick = {
                         safeSet {
-                            Prefs.homePage = "https://www.google.com"
+                            Prefs.homePage = "lb://home"
                             Prefs.jsEnabled = true
                             Prefs.desktopMode = false
                             Prefs.adBlock = false
@@ -270,12 +358,15 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                             Prefs.cacheEnabled = true
                             Prefs.searchEngine = "google"
                             Prefs.themeMode = "system"
+                            Prefs.trueBlack = false
+                            Prefs.uiFontScale = 1f
+                            Prefs.appLang = "system"
                             Prefs.terminalFontScale = 1f
                             Prefs.playerShuffle = false
                             Prefs.playerRepeat = 0
                             Prefs.playerSpeed = 1f
                         }
-                        home = "https://www.google.com"
+                        home = "lb://home"
                         js = true
                         desktop = false
                         adblock = false
@@ -283,6 +374,10 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                         cache = true
                         engine = "google"
                         themeMode = "system"
+                        trueBlack = false
+                        uiScale = 1f
+                        lang = "system"
+                        applyLang(ctx, "system")
                         termScale = 1f
                         playerSpeed = 1f
                         onThemeChange("system")

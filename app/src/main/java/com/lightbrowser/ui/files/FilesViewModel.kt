@@ -239,6 +239,62 @@ class FilesViewModel : ViewModel() {
         }
     }
 
+    fun readTextPreview(file: File, done: (String?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = try {
+                if (file.length() > 300_000) return@launch withContext(Dispatchers.Main) { done(null) }
+                val bytes = file.readBytes()
+                // Refuse binary
+                if (bytes.take(4096).any { it == 0.toByte() }) {
+                    withContext(Dispatchers.Main) { done(null) }
+                    return@launch
+                }
+                String(bytes, Charsets.UTF_8).take(100_000)
+            } catch (_: Exception) { null }
+            withContext(Dispatchers.Main) { done(text) }
+        }
+    }
+
+    fun extractZip(file: File, done: (String) -> Unit) {
+        val dest = try { File(file.parentFile, file.nameWithoutExtension) } catch (_: Exception) { return }
+        _ui.update { it.copy(busy = "Extracting…") }
+        viewModelScope.launch(Dispatchers.IO) {
+            var count = 0
+            try {
+                dest.mkdirs()
+                java.util.zip.ZipFile(file).use { zip ->
+                    val entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        val e = entries.nextElement()
+                        // Zip-slip guard
+                        val out = File(dest, e.name)
+                        if (!out.canonicalFile.absolutePath.startsWith(dest.canonicalFile.absolutePath + File.separator) &&
+                            out.canonicalFile.absolutePath != dest.canonicalFile.absolutePath
+                        ) continue
+                        if (e.isDirectory) out.mkdirs()
+                        else {
+                            out.parentFile?.mkdirs()
+                            zip.getInputStream(e).use { input ->
+                                java.io.FileOutputStream(out).use { output -> input.copyTo(output) }
+                            }
+                            count++
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    _ui.update { it.copy(busy = null) }
+                    refresh()
+                    done("Extracted $count file(s) to ${dest.name}")
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _ui.update { it.copy(busy = null) }
+                    done("Extract failed: ${e.message}")
+                }
+            }
+        }
+    }
+
     fun rename(file: File, newName: String, done: (Boolean) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             val ok = try { file.renameTo(File(file.parentFile, newName)) } catch (_: Exception) { false }
