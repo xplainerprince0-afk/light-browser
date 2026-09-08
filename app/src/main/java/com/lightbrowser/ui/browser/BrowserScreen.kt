@@ -389,7 +389,7 @@ fun BrowserScreen(
                     }
                     }
                 },
-                modifier = Modifier.fillMaxSize().weight(1f),
+                modifier = Modifier.fillMaxSize(),
                 update = { wv ->
                     if (webView == null) webView = wv
                     // Global switches apply only when this host has no per-site override
@@ -620,6 +620,7 @@ fun BrowserScreen(
     if (showSite) {
         val host = com.lightbrowser.data.SitePrefs.hostOf(ui.currentUrl)
         val cur = com.lightbrowser.data.SitePrefs.get(ctx, host)
+        @Composable
         fun tri(label: String, value: Boolean?, global: Boolean, onPick: (Boolean?) -> Unit) {
             Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(label, modifier = Modifier.weight(1f))

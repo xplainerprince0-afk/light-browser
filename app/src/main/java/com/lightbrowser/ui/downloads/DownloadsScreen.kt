@@ -34,6 +34,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -74,6 +75,7 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    val activeDls by com.lightbrowser.data.DownloadHelper.active.collectAsState()
 
     var files by remember { mutableStateOf<List<DownloadItem>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -203,6 +205,47 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+
+            // ── Live downloads with progress + cancel ──
+            activeDls.forEach { dl ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                dl.name,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { com.lightbrowser.data.DownloadHelper.cancel(dl.id) }) {
+                                Text("Cancel")
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        if (dl.progress != null) {
+                            LinearProgressIndicator(
+                                progress = { dl.progress.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "${(dl.progress * 100).toInt()}% · ${dl.received / 1024} KB" +
+                                    (if (dl.total > 0) " of ${dl.total / 1024} KB" else ""),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Spacer(Modifier.height(4.dp))
+                            Text("${dl.received / 1024} KB…", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
             }
 

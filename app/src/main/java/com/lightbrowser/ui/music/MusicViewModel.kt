@@ -55,6 +55,7 @@ class MusicViewModel : ViewModel() {
     private var controller: MediaController? = null
     private var pollJob: Job? = null
     private var sleepJob: Job? = null
+    private var resumeTried = false
 
     val ctx get() = AppCtx.ctx
 
@@ -115,6 +116,7 @@ class MusicViewModel : ViewModel() {
     private fun startPolling() {
         if (pollJob?.isActive == true) return
         pollJob = viewModelScope.launch {
+            var ticks = 0
             while (isActive) {
                 val c = controller
                 if (c == null) break
@@ -126,6 +128,11 @@ class MusicViewModel : ViewModel() {
                             chapterIndex = c.currentMediaItemIndex,
                             isPlaying = c.isPlaying
                         )
+                    }
+                    // Resume point + listen stats, saved every ~5s while playing.
+                    if (c.isPlaying && ++ticks % 10 == 0) {
+                        saveResumePoint()
+                        bumpListenStats(5)
                     }
                 } catch (_: Exception) {}
                 delay(500)
@@ -159,6 +166,10 @@ class MusicViewModel : ViewModel() {
                 withContext(Dispatchers.Main) {
                     _novels.value = list
                     _scanning.value = false
+                    if (!resumeTried) {
+                        resumeTried = true
+                        tryRestoreResume()
+                    }
                 }
             } catch (_: Exception) {
                 withContext(Dispatchers.Main) { _scanning.value = false }
@@ -176,6 +187,10 @@ class MusicViewModel : ViewModel() {
                 withContext(Dispatchers.Main) {
                     _novels.value = list
                     _scanning.value = false
+                    if (!resumeTried) {
+                        resumeTried = true
+                        tryRestoreResume()
+                    }
                 }
             } catch (_: Exception) {
                 withContext(Dispatchers.Main) { _scanning.value = false }
@@ -312,6 +327,65 @@ class MusicViewModel : ViewModel() {
     }
 
     fun currentNovel(): Novel? = _novels.value.getOrNull(_player.value.novelIndex)
+
+    private fun saveResumePoint() {
+        try {
+            val n = currentNovel() ?: return
+            val ch = n.chapters.getOrNull(_player.value.chapterIndex) ?: return
+            val pos = _player.value.positionMs
+            if (pos < 10_000) return // too early to be a meaningful resume point
+            Prefs.lastNovel = n.name
+            Prefs.lastChapterUri = ch.uri.toString()
+            Prefs.lastPosition = pos
+        } catch (_: Exception) {}
+    }
+
+    private fun bumpListenStats(seconds: Long) {
+        try {
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+            if (Prefs.listenDate != today) {
+                Prefs.listenDate = today
+                Prefs.listenSeconds = 0
+            }
+            Prefs.listenSeconds = Prefs.listenSeconds + seconds
+        } catch (_: Exception) {}
+    }
+
+    fun todayListened(): String {
+        return try {
+            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+            if (Prefs.listenDate != today) return ""
+            val s = Prefs.listenSeconds
+            if (s < 60) return ""
+            "Listened ${s / 60}m today"
+        } catch (_: Exception) { "" }
+    }
+
+    /** After a scan, jump back to the saved novel/chapter/position when files match. */
+    fun tryRestoreResume(): Boolean {
+        return try {
+            val uri = Prefs.lastChapterUri
+            if (uri.isBlank()) return false
+            _novels.value.forEachIndexed { ni, novel ->
+                val ci = novel.chapters.indexOfFirst { it.uri.toString() == uri }
+                if (ci >= 0 && controller != null) {
+                    selectNovel(ni)
+                    val pos = Prefs.lastPosition
+                    // Queue needs a moment: seek after prepare via delayed post.
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(1200)
+                        try {
+                            playChapter(ci)
+                            kotlinx.coroutines.delay(800)
+                            if (pos > 10_000) seekTo(pos)
+                        } catch (_: Exception) {}
+                    }
+                    return true
+                }
+            }
+            false
+        } catch (_: Exception) { false }
+    }
 
     fun chapterTitle(): String {
         val n = currentNovel() ?: return "Select a novel"

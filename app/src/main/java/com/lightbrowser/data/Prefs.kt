@@ -61,6 +61,41 @@ object Prefs {
         get() = p(AppCtx.ctx).getFloat("pl_speed", 1f)
         set(v) { p(AppCtx.ctx).edit().putFloat("pl_speed", v).apply() }
 
+    /** Resume point: novel name + chapter uri + position ms */
+    var lastNovel: String
+        get() = p(AppCtx.ctx).getString("pl_last_novel", "") ?: ""
+        set(v) { p(AppCtx.ctx).edit().putString("pl_last_novel", v).apply() }
+
+    var lastChapterUri: String
+        get() = p(AppCtx.ctx).getString("pl_last_uri", "") ?: ""
+        set(v) { p(AppCtx.ctx).edit().putString("pl_last_uri", v).apply() }
+
+    var lastPosition: Long
+        get() = p(AppCtx.ctx).getLong("pl_last_pos", 0L)
+        set(v) { p(AppCtx.ctx).edit().putLong("pl_last_pos", v).apply() }
+
+    /** Seconds listened today (player stats) */
+    var listenDate: String
+        get() = p(AppCtx.ctx).getString("pl_listen_date", "") ?: ""
+        set(v) { p(AppCtx.ctx).edit().putString("pl_listen_date", v).apply() }
+
+    var listenSeconds: Long
+        get() = p(AppCtx.ctx).getLong("pl_listen_sec", 0L)
+        set(v) { p(AppCtx.ctx).edit().putLong("pl_listen_sec", v).apply() }
+
+    /** Appearance extras */
+    var trueBlack: Boolean
+        get() = p(AppCtx.ctx).getBoolean("ui_black", false)
+        set(v) { p(AppCtx.ctx).edit().putBoolean("ui_black", v).apply() }
+
+    var uiFontScale: Float
+        get() = p(AppCtx.ctx).getFloat("ui_font", 1f)
+        set(v) { p(AppCtx.ctx).edit().putFloat("ui_font", v).apply() }
+
+    var appLang: String
+        get() = p(AppCtx.ctx).getString("ui_lang", "system") ?: "system"
+        set(v) { p(AppCtx.ctx).edit().putString("ui_lang", v).apply() }
+
     /** Build search URL for the given query using the configured search engine */
     fun buildSearchUrl(query: String): String {
         val encoded = android.net.Uri.encode(query)

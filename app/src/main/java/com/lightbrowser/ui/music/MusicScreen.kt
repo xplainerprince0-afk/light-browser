@@ -137,7 +137,13 @@ fun MusicScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Audiobooks", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Audiobooks", style = MaterialTheme.typography.headlineSmall)
+                        val listened = remember(novels) { vm.todayListened() }
+                        if (listened.isNotEmpty()) {
+                            Text(listened, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                     AssistChip(onClick = { showPickFolder = true }, label = { Text("Library") }, leadingIcon = { Icon(Icons.Filled.FolderOpen, null) })
                     Spacer(Modifier.width(8.dp))
                     AssistChip(onClick = { treePicker.launch(null) }, label = { Text("Browse") }, leadingIcon = { Icon(Icons.Filled.Add, null) })
