@@ -188,17 +188,6 @@ fun BrowserScreen(
         try { webView?.loadUrl(url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
     }
 
-    /** After a tab switch/close, load the tab's URL only if we're not on it. */
-    fun loadTabIfNeeded() {
-        try {
-            val target = ui.tabs.getOrNull(ui.currentIndex)?.url ?: return
-            if (target.startsWith("lb://")) return
-            if (webView?.url != target) vm.requestLoad(target)
-        } catch (_: Exception) {}
-    }
-
-    // ── Search overlay (WebView stays alive underneath) ──
-
     // FIXED search: pill or editor lives at the top of a plain Column, the WebView
     // below is ALWAYS composed (never destroyed). No imePadding anywhere here —
     // the keyboard overlays the bottom instead of pushing content up.
@@ -323,11 +312,10 @@ fun BrowserScreen(
                     }
                 }
             }
-        } // end pill branch — WebView below is shared
+        }
 
-        // WebView + overlays: shared by BOTH modes, NEVER removed from composition.
-        // Searching shrinks the page area instead of destroying it; suggestions
-        // float on top only while typing.
+        // WebView shared by BOTH modes — NEVER removed from composition.
+        // Searching shrinks the page; suggestions float on top only while typing.
         Box(modifier = Modifier.fillMaxSize().weight(1f)) {
                 AndroidView(
                 factory = { c ->
@@ -456,7 +444,6 @@ fun BrowserScreen(
                         }
                     }
                 }
-            }
         }
     }
 
