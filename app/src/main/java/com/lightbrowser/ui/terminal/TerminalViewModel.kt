@@ -538,7 +538,7 @@ class TerminalViewModel : ViewModel() {
                         val c = ins[0]
                         val code = when {
                             c.lowercaseChar() in 'a'..'z' -> c.lowercaseChar() - 'a' + 1
-                            c == "/" -> 0x1F
+                            c == '/' -> 0x1F
                             else -> -1
                         }
                         if (code >= 0) {
