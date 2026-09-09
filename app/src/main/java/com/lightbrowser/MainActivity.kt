@@ -299,9 +299,8 @@ private fun AppShell(
         // safeDrawing INCLUDES the IME — exclude it so the keyboard overlays
         // the pinned bottom zone instead of pushing it up (adjustNothing).
         Scaffold(contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime)) { inner ->
-            // Publish the real outer bottom pad: TerminalScreen.keyboardHug()
-            // needs it (keys end at screenBottom − ime, layout sits at
-            // screenBottom − outerPad). No nav assumptions.
+            // Publish the real outer bottom pad for `kbd-diag` (terminal
+            // root-lift math needs no nav assumptions).
             val outerDensity = LocalDensity.current
             SideEffect {
                 try {

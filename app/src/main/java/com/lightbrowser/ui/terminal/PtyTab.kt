@@ -336,9 +336,11 @@ fun PtyTab(
                 }
             }
         }
-        // Keys hug the keyboard (ime minus nav — see keyboardHug) and scroll
-        // sideways for the full set.
-        Column(modifier = Modifier.fillMaxWidth().keyboardHug()) {
+        // Keys ride the content bottom (root lifts to the keyboard top —
+        // zero own padding here, hug() would double-lift the gap back) and
+        // scroll sideways for the full set.
+        androidx.compose.material3.HorizontalDivider(color = Color(0xFF222222))
+        Column(modifier = Modifier.fillMaxWidth()) {
             TermKeyRow(
                 keys = listOf(
                     "ESC" to { sendChar("\u001B") },

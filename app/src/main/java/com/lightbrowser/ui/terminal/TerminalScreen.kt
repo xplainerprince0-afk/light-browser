@@ -340,10 +340,15 @@ fun TerminalScreen(
         snackbarHost = { SnackbarHost(snacks) },
         containerColor = TermBlack
     ) { _ ->
-        // Shrink the content to the keyboard top and CONSUME ime here:
-        // nested readers (keys) then see ime=0 and add no double padding.
-        // No arithmetic, no nav assumptions — hug by construction.
-        val imePadBottom = with(density) { WindowInsets.ime.getBottom(density).toDp() }
+        // ONE lift, exact: content rises by the keyboard MINUS the system nav
+        // inset the outer Scaffold already reserves below us (that inset is
+        // dead space once the keyboard covers it — it was the visible "gap
+        // between keys and keyboard"). Keys add zero of their own (hug() here
+        // double-lifted). No arithmetic beyond this, no nav assumptions.
+        val imePadBottom = with(density) {
+            (WindowInsets.ime.getBottom(density) - WindowInsets.navigationBars.getBottom(density))
+                .coerceAtLeast(0).toDp()
+        }
         Box(modifier = Modifier.fillMaxSize().background(TermBlack)) {
         Column(
             modifier = Modifier.fillMaxSize()
@@ -399,9 +404,10 @@ fun TerminalScreen(
                 })
             )
 
-            // ── Keys hug the keyboard (ime minus nav — see keyboardHug) and ──
-            // scroll sideways for the full set ──
-            Column(modifier = Modifier.fillMaxWidth().keyboardHug()) {
+            // ── Keys ride the content bottom with zero own padding (the ──
+            // root lifted exactly to the keyboard top) and scroll sideways ──
+            androidx.compose.material3.HorizontalDivider(color = Color(0xFF222222))
+            Column(modifier = Modifier.fillMaxWidth()) {
                 TermKeyRow(
                     keys = listOf(
                         "ESC" to { vm.insertText("\u001B") },
