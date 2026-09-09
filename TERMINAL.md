@@ -195,8 +195,8 @@ Practical rules:
 | Output cut with `…truncated` | 8KB capture / 4KB echo cap — redirect to file instead |
 | `(busy — Ctrl+C to kill)` | A process is still running; Enter is ignored until it ends or you kill it |
 | No stdin / interactive prompts hang | EXEC closes stdin by design — pass flags/args instead (`--yes`, `< file`), or use PTY mode |
-| Prompt hidden / keys misplaced | Content shrinks to the keyboard top (IME consumed at the terminal root — hug by construction, both modes). Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
-| Bottom tabs vanish while typing | Intended: the bar hides when the keyboard is up (space for the terminal) and returns when it closes. Swipe tab-switch was rejected: horizontal swipes fight WebView scrolling |
+| Prompt hidden / keys misplaced | Content lifts once at the root by keyboard−nav-inset; keys add zero own padding (double-lift = the old gap). Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
+| Bottom tabs vanish while typing | Replaced by a slim swipe strip (drag L/R, tap dots) — hidden while typing, returns after. No tall bar anymore |
 | `b …` says open the Browser tab first | Tab state lives in the Browser tab — visit it once so `TabBus` wires up |
 | `Server is OFF` | `b serve on` or 🤖 → Start server; copy URL+token from the panel |
 | TUI garbage in EXEC | Expected — full-screen TUIs need PTY mode, not EXEC |
