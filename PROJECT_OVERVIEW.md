@@ -12,7 +12,9 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Terminal: Agent bridge panel (server start/stop, recorder, tappable `b` cmds, alias how-to), `b serve on|off`, bottom tabs pinned below keyboard (IME excluded from outer insets)
 - [x] Terminal: downloadable toolbox (`toolbox`, `toolbox-install essentials|agent|all`, remove/update via apk; repos+DNS auto-seed; zero APK cost)
 - [x] Terminal: true PTY foundation (vendored Termux terminal-emulator+view Apache-2.0, libtermux.so via NDK 29 in CI, builds green)
-- [ ] Terminal: PTY UI wiring (TerminalSession→TerminalView, opencode TUI launch)
+- [x] Terminal: PTY tab (TerminalSession→TerminalView, shell or opencode TUI, restart on exit, keys hug keyboard)
+- [x] Terminal: keys above keyboard w/ scoped imePadding, follow-scroll waits a frame so $ stays visible
+- [x] Terminal: opencode exec self-heal (`opencode-fix`), jail hardened (separator-anchored, no sandbox-root delete)
 - [x] Player: ExoPlayer + MediaSession background playback (music attrs, local wakelock, tap-to-open), novels/chapters, shuffle/repeat/speed (0.5..2)/sleep timer, queue, mini-player, error surface, atomic resume
 - [x] Scripts manager (name validation), Downloads (skip active, refresh on partial), Settings (homepage normalize+autosave, theme persist, speed clamp)
 - [x] Shell: singleTask deep-links, adjustPan keyboard, rememberSaveable tabs/theme, status-bar contrast, offscreen a11y/pointer block, allowBackup=false
