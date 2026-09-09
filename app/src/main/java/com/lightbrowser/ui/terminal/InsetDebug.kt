@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -19,7 +20,9 @@ import androidx.compose.ui.platform.LocalDensity
 object InsetDebug {
     @Volatile var imeBottomPx: Int = -1
     @Volatile var navBottomPx: Int = -1
-    @Volatile var imeVisible: Boolean = false
+
+    /** Keyboard-visible flag as State (drives MainActivity tab hiding). */
+    var imeVisible by mutableStateOf(false)
 
     /** Outer content bottom pad (MainActivity Scaffold), px. State: recomposes readers. */
     var outerPadPx by mutableIntStateOf(0)

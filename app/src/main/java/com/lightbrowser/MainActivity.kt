@@ -334,15 +334,17 @@ private fun AppShell(
                             DownloadsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Downloads))
                             SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
                         }
-                        // Bottom zone is pinned: never hides, never animates, never rides
-                        // the keyboard. The keyboard overlays it (adjustNothing +
-                        // IME excluded above); terminal keys stay glued below the
-                        // input with no imePadding of their own.
+                        // Bottom zone is pinned behind the keyboard (adjustNothing +
+                        // IME excluded above). The bar hides while typing to free
+                        // screen space (no animation — instant, no lag); swipe
+                        // tab-switching is out: it would fight WebView scrolling.
+                        // (Terminal keeps its own keys above the keyboard.)
+                        val kbOpen = com.lightbrowser.ui.terminal.InsetDebug.imeVisible
                         Column {
                             if (tab != Tab.Music) {
                                 MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
                             }
-                            if (!wide) {
+                            if (!wide && !kbOpen) {
                                 NavigationBar(windowInsets = WindowInsets.navigationBars) {
                                     Tab.entries.filter { it.inBar }.forEach { t ->
                                         NavigationBarItem(

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -103,6 +105,7 @@ fun TerminalScreen(
     var sticky by remember { mutableStateOf<String?>(null) }
     var follow by remember { mutableStateOf(true) }
     var ptyMode by remember { mutableStateOf(false) }
+    var ptyForceShell by remember { mutableStateOf(false) }
     var showAgent by remember { mutableStateOf(false) }
     val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     var renameId by remember { mutableStateOf<String?>(null) }
@@ -149,10 +152,16 @@ fun TerminalScreen(
     fun pasteFromClipboard() {
         try {
             clipboard.getText()?.text?.let { t ->
-                if (t.isEmpty()) return
-                if (ptyMode) { try { ptyCtl.pasteText?.invoke(t) } catch (_: Exception) {} }
-                else vm.insertText(t)
-            }
+                if (t.isEmpty()) {
+                    scope.launch { snacks.showSnackbar("Clipboard empty") }
+                    return
+                }
+                if (ptyMode) {
+                    try { ptyCtl.pasteText?.invoke(t) } catch (_: Exception) {}
+                    try { ptyCtl.showKeyboard?.invoke() } catch (_: Exception) {}
+                } else vm.insertText(t)
+                scope.launch { snacks.showSnackbar("Pasted ${t.length} chars") }
+            } ?: scope.launch { snacks.showSnackbar("Clipboard empty") }
         } catch (_: Exception) {}
     }
 
@@ -179,7 +188,10 @@ fun TerminalScreen(
         gesturesEnabled = false,
         modifier = modifier.fillMaxSize(),
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = Color(0xFF111111)) {
+            ModalDrawerSheet(
+                drawerContainerColor = Color(0xFF111111),
+                modifier = Modifier.width(280.dp)
+            ) {
                 Text(
                     "Terminal",
                     color = TermWhite,
@@ -201,6 +213,15 @@ fun TerminalScreen(
                     modifier = Modifier.padding(horizontal = 12.dp)
                 )
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                if (ptyMode) {
+                    NavigationDrawerItem(
+                        label = { Text(if (ptyForceShell) "PTY runs: shell" else "PTY runs: opencode", fontSize = 13.sp) },
+                        selected = false,
+                        onClick = { ptyForceShell = !ptyForceShell; closeDrawer() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                }
                 Text(
                     "Sessions",
                     color = Color(0xFF888888),
@@ -319,13 +340,21 @@ fun TerminalScreen(
         snackbarHost = { SnackbarHost(snacks) },
         containerColor = TermBlack
     ) { _ ->
-        // No top bar: content fills everything; drawer opens via the
-        // left-corner strip (long-press) below.
+        // Shrink the content to the keyboard top and CONSUME ime here:
+        // nested readers (keys) then see ime=0 and add no double padding.
+        // No arithmetic, no nav assumptions — hug by construction.
+        val imePadBottom = with(density) { WindowInsets.ime.getBottom(density).toDp() }
         Box(modifier = Modifier.fillMaxSize().background(TermBlack)) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+                .consumeWindowInsets(WindowInsets.ime)
+                .padding(bottom = imePadBottom)
+        ) {
             if (ptyMode) {
                 PtyTab(
                     ctl = ptyCtl,
+                    forceShell = ptyForceShell,
+                    onShellFallback = { ptyForceShell = true },
                     onExitToExec = { ptyMode = false },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
@@ -405,13 +434,10 @@ fun TerminalScreen(
                 )
             }
             } // inner Column
-            // Tiny overlay status (non-interactive — touches pass through).
-            Text(
-                "● EXEC · ${sessions.firstOrNull { it.id == activeId }?.name ?: ""}",
-                color = TermWhite.copy(alpha = 0.4f),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 8.dp)
+            // Tiny dot for EXEC (non-interactive — touches pass through).
+            Box(
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp)
+                    .size(10.dp).background(Color(0xFFFFB74D), CircleShape)
             )
             } // exec Box
             } // else: exec mode

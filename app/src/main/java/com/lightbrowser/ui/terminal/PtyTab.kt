@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,7 +34,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.lightbrowser.data.AlpineEnv
 import com.termux.terminal.TerminalSession
@@ -59,6 +60,8 @@ class PtyControl {
 @Composable
 fun PtyTab(
     ctl: PtyControl,
+    forceShell: Boolean,
+    onShellFallback: () -> Unit,
     onExitToExec: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -75,7 +78,7 @@ fun PtyTab(
     // Single target, no toggle button: opencode when present, else shell.
     // (Don't gate on canExecute(): SELinux can report +x yet refuse direct
     // execve — we launch via the system linker, see OpencodeManager.)
-    val opencodeOk = ocBin.exists() && ocBin.length() > 1_000_000
+    val opencodeOk = !forceShell && ocBin.exists() && ocBin.length() > 1_000_000
     val sysLinker = remember {
         listOf("/system/bin/linker64", "/system/bin/linker").firstOrNull { File(it).exists() }
     }
@@ -149,8 +152,15 @@ fun PtyTab(
     val viewClient = remember {
         object : TerminalViewClient {
             override fun onScale(scale: Float): Float = scale
-            override fun onSingleTapUp(e: MotionEvent) {}
-            override fun shouldBackButtonBeMappedToEscape(): Boolean = true
+            override fun onSingleTapUp(e: MotionEvent) {
+                // Tap terminal → keyboard (Termux behavior). Back button hides
+                // it again (not mapped to ESC — that trapped the keyboard).
+                try {
+                    termView?.requestFocus()
+                    try { termView?.let { imm.showSoftInput(it, 0) } } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
+            override fun shouldBackButtonBeMappedToEscape(): Boolean = false
             override fun shouldEnforceCharBasedInput(): Boolean = true
             override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
             override fun isTerminalViewSelected(): Boolean = true
@@ -295,15 +305,12 @@ fun PtyTab(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-            // Tiny overlay status (non-interactive — touches pass through).
-            Text(
-                if (opencodeOk) "● PTY · opencode" else "● PTY · shell",
-                color = Color(0xFF4CAF50).copy(alpha = 0.75f),
-                fontSize = 10.sp,
-                modifier = Modifier.align(Alignment.TopStart)
-                    .padding(4.dp)
-                    .background(Color(0x99000000))
-                    .padding(horizontal = 6.dp, vertical = 1.dp)
+            // Tiny green dot (non-interactive — touches pass through).
+            Box(
+                modifier = Modifier.align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(10.dp)
+                    .background(Color(0xFF4CAF50), CircleShape)
             )
             if (exited != null) {
                 Column(
@@ -318,9 +325,13 @@ fun PtyTab(
                     Row(modifier = Modifier.padding(top = 12.dp)) {
                         Button(onClick = { gen++ }) { Text("Restart") }
                         OutlinedButton(
+                            onClick = onShellFallback,
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) { Text("Shell") }
+                        OutlinedButton(
                             onClick = onExitToExec,
                             modifier = Modifier.padding(start = 8.dp)
-                        ) { Text("Exec mode") }
+                        ) { Text("Exec") }
                     }
                 }
             }
