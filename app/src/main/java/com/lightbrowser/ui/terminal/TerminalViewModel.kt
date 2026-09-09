@@ -1215,13 +1215,14 @@ class TerminalViewModel : ViewModel() {
                 val parts = cmd.split(" ", limit = 3)
                 when (parts.getOrNull(0) ?: "") {
                     "", "help" -> out(
-                        "b open <url> | back | forward | reload | stop | url | title | home\n" +
-                            "b tabs | new <url> | close [n] — tab control\n" +
+                            "b open <url> | back | forward | reload | stop | url | title | home\n" +
+                            "b tabs | tab <n> | new <url> | close [n] — tab control\n" +
                             "b js <expr> | text [max] | dom [css] | snap\n" +
-                            "b click <ref|css> | fill <ref|css> <val> [--submit]\n" +
+                            "b click <ref|css> | fill <ref|css> <val> [--submit] | submit <form|css>\n" +
                             "b pos <ref|css> → coords | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]\n" +
                             "b find <text> | next | prev | b scroll-to <x> <y> | b scroll [px]\n" +
-                            "b shot | console [n] | cookies | save <name>\n" +
+                            "b shot | console [n] | cookies [get [url] | set \"k=v\" [url] | clear]\n" +
+                            "b history [n] | downloads | save <name>\n" +
                             "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
                             "b record start|stop|save <n>|list | serve\n", TermDim
                     )
@@ -1262,6 +1263,14 @@ class TerminalViewModel : ViewModel() {
                         } else {
                             com.lightbrowser.ui.browser.TabBus.closeTabAt?.invoke(-1)
                             out("Closed current tab\n", TermGreen)
+                        }
+                    }
+                    "tab" -> {
+                        val n = parts.getOrNull(1)?.toIntOrNull()
+                        if (n == null) out("Usage: b tab <n>  (see b tabs)\n", TermRed)
+                        else {
+                            try { com.lightbrowser.ui.browser.TabBus.selectTab?.invoke(n) } catch (_: Exception) {}
+                            out("Switched to tab $n\n", TermGreen)
                         }
                     }
                     "home" -> {
@@ -1488,14 +1497,67 @@ class TerminalViewModel : ViewModel() {
                         else out("Shot failed (open the Browser tab first).\n", TermRed)
                     }
                     "cookies" -> {
+                        val sub = (parts.getOrNull(1) ?: "get").lowercase()
+                        val rest = (parts.getOrNull(2) ?: "").trim().removeSurrounding("\"")
                         try {
-                            val url = com.lightbrowser.data.BrowserAgent.currentUrl() ?: ""
-                            val ck = try {
-                                android.webkit.CookieManager.getInstance().getCookie(url)
-                            } catch (_: Exception) { null }
-                            if (ck.isNullOrBlank()) out("No cookies for ${url.ifBlank { "(no page)" }}\n", TermDim)
-                            else wrapped(url, ck)
+                            val cm = android.webkit.CookieManager.getInstance()
+                            when (sub) {
+                                "get" -> {
+                                    val url = rest.ifBlank { com.lightbrowser.data.BrowserAgent.currentUrl() ?: "" }
+                                    val ck = try { cm.getCookie(url) } catch (_: Exception) { null }
+                                    if (ck.isNullOrBlank()) out("No cookies for ${url.ifBlank { "(no page)" }}\n", TermDim)
+                                    else wrapped(url, ck)
+                                }
+                                "set" -> {
+                                    // b cookies set "name=value" [url]
+                                    val sp2 = rest.indexOf(' ')
+                                    val kv = if (sp2 < 0) rest else rest.substring(0, sp2)
+                                    val url = (if (sp2 < 0) "" else rest.substring(sp2 + 1))
+                                        .ifBlank { com.lightbrowser.data.BrowserAgent.currentUrl() ?: "" }
+                                    if (kv.isBlank() || !kv.contains("=")) out("Usage: b cookies set \"name=value\" [url]\n", TermRed)
+                                    else {
+                                        try {
+                                            cm.setCookie(url, kv)
+                                            try { cm.flush() } catch (_: Exception) {}
+                                            out("Cookie set for $url\n", TermGreen)
+                                        } catch (e: Exception) { out("set failed: ${e.message}\n", TermRed) }
+                                    }
+                                }
+                                "clear" -> {
+                                    try { cm.removeAllCookies(null) } catch (_: Exception) {}
+                                    try { cm.flush() } catch (_: Exception) {}
+                                    out("Cookies cleared\n", TermGreen)
+                                }
+                                else -> out("Usage: b cookies [get [url] | set \"k=v\" [url] | clear]\n", TermRed)
+                            }
                         } catch (e: Exception) { out("cookies error: ${e.message}\n", TermRed) }
+                    }
+                    "history" -> {
+                        val n = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(1, 100) ?: 15
+                        try {
+                            val list = com.lightbrowser.data.HistoryStorage.all(AppCtx.ctx).takeLast(n).reversed()
+                            if (list.isEmpty()) out("(history empty)\n", TermDim)
+                            else list.forEach { h ->
+                                out("${h.title.ifBlank { h.url }.take(60)} — ${h.url.take(80)}\n", TermWhite)
+                            }
+                        } catch (e: Exception) { out("history error: ${e.message}\n", TermRed) }
+                    }
+                    "downloads" -> {
+                        try {
+                            val dir = java.io.File(AppCtx.ctx.filesDir, "sandbox/Downloads")
+                            val files = dir.listFiles()?.sortedByDescending { it.lastModified() }?.take(30)
+                            if (files.isNullOrEmpty()) out("(no downloads — sandbox/Downloads)\n", TermDim)
+                            else files.forEach { f -> out("• ${f.name} (${f.length() / 1024} KB)\n", TermWhite) }
+                        } catch (e: Exception) { out("downloads error: ${e.message}\n", TermRed) }
+                    }
+                    "submit" -> {
+                        val sel = parts.getOrNull(1) ?: ""
+                        if (sel.isBlank()) out("Usage: b submit <form|css>\n", TermRed)
+                        else {
+                            val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
+                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$esc');var f=e?(e.form||e.closest('form')||(e.tagName==='FORM'?e:null)):null;if(!f)return 'ERR no-form';f.submit();return 'OK submitted';}catch(e){return 'ERR '+e;}})()")
+                            out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                        }
                     }
                     "save" -> {
                         val name = parts.getOrNull(1) ?: ""
@@ -1561,10 +1623,10 @@ class TerminalViewModel : ViewModel() {
 
 /** Built-in `b` command heads — aliases may not shadow these. */
 private val BuiltinB = setOf(
-    "help", "open", "new", "tabs", "close", "home", "back", "fwd", "forward",
+    "help", "open", "new", "tabs", "tab", "close", "home", "back", "fwd", "forward",
     "reload", "stop", "url", "title", "js", "text", "dom", "snap", "click",
-    "fill", "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
-    "prev", "shot", "console", "cookies", "save", "serve", "record",
+    "fill", "submit", "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
+    "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
     "alias", "unalias"
 )
 

@@ -727,11 +727,31 @@ object BrowserAgent {
                 JSONObject().put("ok", true).put("lines", arr).toString()
             }
             "/cookies" -> awaitMain {
-                // Already on Main — read CookieManager directly, no inner post+get.
-                val wv = webViewProvider?.invoke()
-                val url = wv?.url ?: ""
-                val ck = try { android.webkit.CookieManager.getInstance().getCookie(url) } catch (_: Exception) { null }
-                JSONObject().put("ok", true).put("cookies", ck ?: JSONObject.NULL).toString()
+                // Already on Main — CookieManager calls are Main-safe.
+                val op = q["op"] ?: "get"
+                val cm = try { android.webkit.CookieManager.getInstance() } catch (_: Exception) { null }
+                if (cm == null) return@awaitMain """{"ok":false,"err":"no CookieManager"}"""
+                when (op) {
+                    "set" -> {
+                        val v = q["value"] ?: return@awaitMain """{"ok":false,"err":"missing value"}"""
+                        val url = (q["url"] ?: "").ifBlank { webViewProvider?.invoke()?.url ?: "" }
+                        try {
+                            cm.setCookie(url, v)
+                            try { cm.flush() } catch (_: Exception) {}
+                            """{"ok":true}"""
+                        } catch (e: Exception) { """{"ok":false,"err":"${e.message}"}""" }
+                    }
+                    "clear" -> {
+                        try { cm.removeAllCookies(null) } catch (_: Exception) {}
+                        try { cm.flush() } catch (_: Exception) {}
+                        """{"ok":true}"""
+                    }
+                    else -> {
+                        val url = (q["url"] ?: "").ifBlank { webViewProvider?.invoke()?.url ?: "" }
+                        val ck = try { cm.getCookie(url) } catch (_: Exception) { null }
+                        JSONObject().put("ok", true).put("cookies", ck ?: JSONObject.NULL).toString()
+                    }
+                }
             }
             "/shot" -> awaitMain {
                 // Already on Main — capture directly.
@@ -764,13 +784,51 @@ object BrowserAgent {
                 }
                 """{"ok":true}"""
             }
+            "/switch" -> {
+                val i = q["i"]?.toIntOrNull() ?: return """{"ok":false,"err":"missing i"}"""
+                mainHandler.post {
+                    try { com.lightbrowser.ui.browser.TabBus.selectTab?.invoke(i) } catch (_: Exception) {}
+                }
+                """{"ok":true}"""
+            }
+            "/submit" -> {
+                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+                val e1 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val raw = evalBlocking("(function(){try{var e=document.querySelector('$e1');var f=e?(e.form||e.closest('form')||(e.tagName==='FORM'?e:null)):null;if(!f)return 'ERR no-form';f.submit();return 'OK submitted';}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
+            }
+            "/history" -> {
+                val n = q["n"]?.toIntOrNull()?.coerceIn(1, 100) ?: 20
+                try {
+                    val ctx = webViewProvider?.invoke()?.context
+                    val arr = org.json.JSONArray()
+                    if (ctx != null) {
+                        com.lightbrowser.data.HistoryStorage.all(ctx).takeLast(n).reversed().forEach { h ->
+                            arr.put(JSONObject().put("url", h.url).put("title", h.title).put("time", h.time))
+                        }
+                    }
+                    JSONObject().put("ok", true).put("history", arr).toString()
+                } catch (e: Exception) { """{"ok":false,"err":"${e.message}"}""" }
+            }
+            "/downloads" -> {
+                try {
+                    val ctx = webViewProvider?.invoke()?.context
+                        ?: return """{"ok":false,"err":"no webview"}"""
+                    val dir = java.io.File(ctx.filesDir, "sandbox/Downloads")
+                    val arr = org.json.JSONArray()
+                    dir.listFiles()?.sortedByDescending { it.lastModified() }?.take(30)?.forEach { f ->
+                        arr.put(JSONObject().put("name", f.name).put("size", f.length()).put("mtime", f.lastModified()))
+                    }
+                    JSONObject().put("ok", true).put("files", arr).toString()
+                } catch (e: Exception) { """{"ok":false,"err":"${e.message}"}""" }
+            }
             "/home" -> {
                 mainHandler.post {
                     try { com.lightbrowser.ui.browser.TabBus.openHome?.invoke() } catch (_: Exception) {}
                 }
                 """{"ok":true}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /close /home /text /snap /js /click /fill /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /text /snap /js /click /fill /submit /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot /history /downloads"}"""
         }
     }
 }
