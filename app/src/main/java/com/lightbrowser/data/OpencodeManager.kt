@@ -107,8 +107,56 @@ object OpencodeManager {
         return if (link != null) "${link.absolutePath} $q" else q
     }
 
-    /** PT_INTERP of an ELF (e.g. /lib/ld-linux-… = glibc build needing proot). */
-    fun elfInterp(bin: File): String? {
+    /**
+     * ELF truncation check: the section-header table (what the linker
+     * validates — "invalid e_shstrndx" comes from here) must fit inside
+     * the file, and shstrndx must point at a real section. Catches the
+     * silent-partial-download installs our tar reader waves through.
+     * Stripped/sectionless files (shoff==0) can't be verified → true.
+     */
+    fun elfSane(bin: File): Boolean {
+        return try {
+            val len = bin.length()
+            if (len < 64) return false
+            val raf = java.io.RandomAccessFile(bin, "r")
+            try {
+                val magic = ByteArray(4); raf.readFully(magic)
+                if (!(magic[0] == 0x7F.toByte() && magic[1] == 'E'.code.toByte() &&
+                        magic[2] == 'L'.code.toByte() && magic[3] == 'F'.code.toByte())
+                ) return false
+                val is64 = raf.readByte() == 2.toByte()
+                val le = raf.readByte() == 1.toByte()
+                fun u16(off: Long): Int {
+                    raf.seek(off)
+                    val b = ByteArray(2); raf.readFully(b)
+                    return if (le) (b[0].toInt() and 0xFF) or ((b[1].toInt() and 0xFF) shl 8)
+                    else ((b[0].toInt() and 0xFF) shl 8) or (b[1].toInt() and 0xFF)
+                }
+                fun u64(off: Long, size: Int): Long {
+                    raf.seek(off)
+                    val b = ByteArray(size); raf.readFully(b)
+                    var v = 0L
+                    for (i in 0 until size) {
+                        val by = b[if (le) i else size - 1 - i].toLong() and 0xFF
+                        v = v or (by shl (8 * i))
+                    }
+                    return v
+                }
+                val shoff = if (is64) u64(0x20, 8) else u64(0x1C, 4)
+                if (shoff == 0L) return true // stripped: nothing to verify
+                val shentsize = u16(if (is64) 0x3A else 0x2E).toLong()
+                val shnum = u16(if (is64) 0x3C else 0x30).toLong()
+                val shstrndx = u16(if (is64) 0x3E else 0x32).toLong()
+                if (shnum == 0L) return true // sectionless (packed): linker decides
+                if (shentsize <= 0) return false
+                if (shoff + shnum * shentsize > len) return false // truncated table
+                if (shstrndx != 0xFFFFL && shstrndx >= shnum) return false // bad strtab
+                true
+            } finally { try { raf.close() } catch (_: Exception) {} }
+        } catch (_: Exception) { false }
+    }
+
+    /** PT_INTERP of an ELF (e.g. /lib/ld-linux-… = glibc build needing proot). */    fun elfInterp(bin: File): String? {
         return try {
             val raf = java.io.RandomAccessFile(bin, "r")
             try {
@@ -169,6 +217,7 @@ object OpencodeManager {
         if (!f.exists()) return "binary missing — run `opencode-install`."
         val sb = StringBuilder()
         sb.append("size=${f.length() / 1024}KB r=${f.canRead()} w=${f.canWrite()} x=${f.canExecute()}\n")
+        sb.append("elf=${if (elfSane(f)) "OK" else "CORRUPT (truncated?) — reinstall"}\n")
         val interp = elfInterp(f)
         sb.append("interp=${interp ?: "?"}\n")
         if (interp != null && interp.contains("ld-linux")) {
@@ -192,6 +241,7 @@ object OpencodeManager {
         val app = ctx.applicationContext
         val f = binFile(app)
         if (!f.exists() || f.length() < 1_000_000) return "binary missing — run `opencode-install`."
+        if (!elfSane(f)) return "binary corrupt (truncated download?) — run `opencode-install`."
         if (!archOk()) return "opencode-termux ships aarch64 only — this device is not supported."
         val out = StringBuilder()
         out.append(if (ensureExecutable(f)) "binary: OK (${f.length() / 1024}KB, x-bit set)\n"
@@ -289,7 +339,16 @@ object OpencodeManager {
                 onProgress("Download failed — retry opencode-install.")
                 return false
             }
-            if (!pkg.exists() || pkg.length() < 10_000_000) {
+            // Truncated downloads used to pass silently (clean early-EOF +
+            // tar reader breaks cleanly) and install a corrupt ELF that only
+            // dies at runtime ("invalid e_shstrndx"). Verify exact size.
+            val got = try { pkg.length() } catch (_: Exception) { 0L }
+            if (rel.size > 0 && got != rel.size) {
+                onProgress("Download cut short (got ${got / 1_048_576} of ${rel.size / 1_048_576}MB) — retry opencode-install.")
+                try { pkg.delete() } catch (_: Exception) {}
+                return false
+            }
+            if (!pkg.exists() || got < 10_000_000) {
                 onProgress("Download too small — retry opencode-install.")
                 try { pkg.delete() } catch (_: Exception) {}
                 return false
@@ -311,6 +370,12 @@ object OpencodeManager {
                 cand.copyTo(dest, overwrite = true)
             } catch (e: Exception) {
                 onProgress("Install failed: ${e.message}")
+                return false
+            }
+            if (!elfSane(dest)) {
+                onProgress("Binary failed integrity check (truncated?) — deleted, retry opencode-install.")
+                try { dest.delete() } catch (_: Exception) {}
+                try { tmp.deleteRecursively() } catch (_: Exception) {}
                 return false
             }
             // Sidecar libs: the package ships usr/lib/opencode/*.so

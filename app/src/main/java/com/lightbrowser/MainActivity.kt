@@ -173,6 +173,14 @@ class MainActivity : ComponentActivity() {
             val keyboardOpen by keyboardOpenFlow.collectAsState()
             // Persist theme changes (was memory-only → rotation flicker).
             LightBrowserTheme(darkTheme = dark, blackTheme = black && dark) {
+                // Unconsumed IME height, read above ALL consumers (Scaffold +
+                // drawer consume on the way down — keys-level reads can see a
+                // short/zero value while this level stays live). Single source
+                // for the terminal toolbar lift (see InsetDebug).
+                val imeTopPx = WindowInsets.ime.getBottom(LocalDensity.current)
+                SideEffect {
+                    try { com.lightbrowser.ui.terminal.InsetDebug.composeImePx.intValue = imeTopPx } catch (_: Exception) {}
+                }
                 val baseDensity = androidx.compose.ui.platform.LocalDensity.current
                 // Scale font only (was density*scale → double-scaled dp layouts at large uiScale).
                 val scaled = remember(baseDensity, uiScale) {

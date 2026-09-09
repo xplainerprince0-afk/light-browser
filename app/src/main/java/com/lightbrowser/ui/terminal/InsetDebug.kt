@@ -39,6 +39,15 @@ object InsetDebug {
     var sysNavPx = mutableIntStateOf(0)
 
     /**
+     * Compose IME height read at the setContent ROOT (above Scaffold/drawer
+     * consumption). The keys-level read can see a consumed (short/zero)
+     * value — inner Scaffold + drawer consume on the way down — while this
+     * level provably sees the live value (imeVisible, read one level down,
+     * is what hides the bottom UI). Published by MainActivity.
+     */
+    var composeImePx = mutableIntStateOf(0)
+
+    /**
      * Drawer open requests (edge-strip long-press lives in MainActivity and
      * can't reach TerminalScreen's drawer directly). TerminalScreen observes
      * and opens; only incremented while the Terminal tab is frontmost.
@@ -47,19 +56,22 @@ object InsetDebug {
 }
 
 /**
- * Keyboard lift for terminal keys. Signal: max(decor-listener height,
- * live Compose IME at the keys level) — covers a dead listener and an
- * inset that omits the suggestion strip. Minus outerPadPx (the EXACT px
- * MainActivity's Scaffold reserves below the content: nav inset + MiniPlayer
- * + nothing else now that bottom bars are gone). keysBottom =
- * screenH − outerPad − (kb − outerPad) = screenH − kb: exact under every
- * inset convention. Zero when closed.
+ * Keyboard lift for terminal keys (single source — no per-mode math).
+ * Signal: max(decor-listener height, hoisted root IME, live keys-level IME)
+ * so one dead/lying source can't bury the toolbar. Minus outerPadPx (the
+ * EXACT px MainActivity's Scaffold reserves below the content): keysBottom =
+ * screenH − outerPad − (kb − outerPad) = screenH − kb under every inset
+ * convention. Zero when closed.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun Modifier.keyboardLift(): Modifier {
     val density = LocalDensity.current
-    val kb = maxOf(InsetDebug.kbHeightPx.intValue, WindowInsets.ime.getBottom(density))
+    val kb = maxOf(
+        InsetDebug.kbHeightPx.intValue,
+        InsetDebug.composeImePx.intValue,
+        WindowInsets.ime.getBottom(density)
+    )
     val outer = InsetDebug.outerPadPx
     val pad = (kb - outer).coerceAtLeast(0)
     return this.padding(bottom = with(density) { pad.toDp() })
