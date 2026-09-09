@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -45,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -107,10 +109,13 @@ fun TerminalScreen(
     LaunchedEffect(editor.text) {
         if (!follow) return@LaunchedEffect
         try {
-            bringer.bringIntoView()
+            // New text hasn't laid out yet on this frame — maxValue is stale
+            // and the scroll lands short (prompt stays hidden). Wait one frame.
+            withFrameNanos {}
+            scroll.scrollTo(scroll.maxValue)
         } catch (_: Exception) {}
         try {
-            scroll.scrollTo(scroll.maxValue)
+            bringer.bringIntoView()
         } catch (_: Exception) {}
     }
 
@@ -252,9 +257,9 @@ fun TerminalScreen(
                 })
             )
 
-            // ── Keys stay glued under the input; the keyboard overlays ──
-            // this whole zone (no imePadding — that made keys ride up) ──
-            Column(modifier = Modifier.fillMaxWidth()) {
+            // ── Keys hug the keyboard (scoped imePadding: lifts ONLY this ──
+            // terminal zone — the bottom nav stays pinned behind the keyboard) ──
+            Column(modifier = Modifier.fillMaxWidth().imePadding()) {
                 TermKeyRow(
                     keys = listOf(
                         "ESC" to { vm.insertText("\u001B") },
