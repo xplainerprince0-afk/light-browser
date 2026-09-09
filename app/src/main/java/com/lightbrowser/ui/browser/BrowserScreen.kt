@@ -153,6 +153,13 @@ fun BrowserScreen(
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
+
+    // ── 3-dot menu helpers (used by the toolbar-anchored dropdown above) ──
+    var showClearCacheConfirm by remember { mutableStateOf(false) }
+    fun dismissMenuAnd(action: () -> Unit) {
+        showMenu = false
+        try { action() } catch (_: Exception) {}
+    }
     var showTabs by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
@@ -743,13 +750,6 @@ fun BrowserScreen(
         }
     }
 
-    // ── 3-dot menu, Chrome-style right-anchored dropdown ──
-    // Top icon action row + scrolling rows (Chrome parity first, our tools after).
-    var showClearCacheConfirm by remember { mutableStateOf(false) }
-    fun dismissMenuAnd(action: () -> Unit) {
-        showMenu = false
-        try { action() } catch (_: Exception) {}
-    }
     if (showClearCacheConfirm) {
         AlertDialog(
             onDismissRequest = { showClearCacheConfirm = false },
