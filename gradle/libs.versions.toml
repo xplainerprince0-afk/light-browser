@@ -38,7 +38,9 @@ media3-session = { group = "androidx.media3", name = "media3-session", version.r
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-android-library = { id = "com.android.library", version.ref = "agp" }
+# Versionless: AGP is already on the classpath via android-application above
+# (requesting a version in library modules fails resolution). Same AGP 9.3.2.
+android-library = { id = "com.android.library" }
 # No org.jetbrains.kotlin.android entry: AGP 9 forbids it (built-in Kotlin).
 # Only the Compose compiler plugin (version tracks Kotlin via version.ref).
 compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
