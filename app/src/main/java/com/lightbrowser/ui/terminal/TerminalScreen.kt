@@ -37,8 +37,6 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -53,6 +51,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -60,6 +59,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -100,15 +102,15 @@ fun TerminalScreen(
     val focus = remember { FocusRequester() }
     val bringer = remember { BringIntoViewRequester() }
 
-    var sticky by remember { mutableStateOf<String?>(null) }
-    var follow by remember { mutableStateOf(true) }
-    var ptyMode by remember { mutableStateOf(false) }
-    var ptyForceShell by remember { mutableStateOf(false) }
+    var sticky by rememberSaveable { mutableStateOf<String?>(null) }
+    var follow by rememberSaveable { mutableStateOf(true) }
+    var ptyMode by rememberSaveable { mutableStateOf(false) }
+    var ptyForceShell by rememberSaveable { mutableStateOf(false) }
     var showAgent by remember { mutableStateOf(false) }
     val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     var renameId by remember { mutableStateOf<String?>(null) }
     var renameText by remember { mutableStateOf("") }
-    var fontScale by remember { mutableStateOf(try { Prefs.terminalFontScale } catch (_: Exception) { 1f }) }
+    var fontScale by rememberSaveable { mutableStateOf(try { Prefs.terminalFontScale } catch (_: Exception) { 1f }) }
     val scroll = rememberScrollState()
 
     // Live inset readings for `kbd-diag` (diagnose keys-vs-keyboard spacing).
@@ -204,6 +206,8 @@ fun TerminalScreen(
                 drawerContainerColor = Color(0xFF111111),
                 modifier = Modifier.width(280.dp)
             ) {
+                // Scrollable: sessions (up to 8) + actions overflow on small phones.
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     "Terminal",
                     color = TermWhite,
@@ -247,8 +251,11 @@ fun TerminalScreen(
                         onClick = { try { vm.switchSession(s.id) } catch (_: Exception) {}; closeDrawer() },
                         badge = {
                             if (sessions.size > 1) {
-                                IconButton(onClick = { vm.closeSession(s.id) }, modifier = Modifier.size(22.dp)) {
-                                    Icon(Icons.Filled.Close, "Close", tint = Color(0xFF888888), modifier = Modifier.size(13.dp))
+                                IconButton(
+                                    onClick = { vm.closeSession(s.id) },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(Icons.Filled.Close, "Close session ${s.name}", tint = Color(0xFF888888), modifier = Modifier.size(18.dp))
                                 }
                             }
                         },
@@ -344,6 +351,7 @@ fun TerminalScreen(
                         modifier = Modifier.padding(horizontal = 12.dp)
                     )
                 }
+                }
             }
         }
     ) {
@@ -351,20 +359,22 @@ fun TerminalScreen(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snacks) },
         containerColor = TermBlack
-    ) { _ ->
+    ) { innerPad ->
         // Measured lift lives on the keys themselves (keyboardLift()):
         // visible-frame height covers suggestion strips that IME insets
-        // omit. Nothing to pad here — just consume so nested
-        // windowInsetsPadding readers don't double-apply.
-        Box(modifier = Modifier.fillMaxSize().background(TermBlack)) {
+        // omit. Consume navigationBars only — consuming IME here would zero
+        // the live keys-level IME read and bury Row 2 (see InsetDebug).
+        // Scaffold pad applied so content never hides under system bars.
+        Box(modifier = Modifier.fillMaxSize().background(TermBlack).padding(innerPad)) {
         Column(
             modifier = Modifier.fillMaxSize()
-                .consumeWindowInsets(WindowInsets.ime)
+                .consumeWindowInsets(WindowInsets.navigationBars)
         ) {
             if (ptyMode) {
                 PtyTab(
                     ctl = ptyCtl,
                     forceShell = ptyForceShell,
+                    fontScale = fontScale,
                     onShellFallback = { ptyForceShell = true },
                     onExitToExec = { ptyMode = false },
                     modifier = Modifier.weight(1f).fillMaxWidth()
@@ -395,16 +405,22 @@ fun TerminalScreen(
                     val mod = sticky
                     if (mod != null) {
                         // CTRL+Enter while busy = interrupt (the ^C everyone reaches for).
-                        // Otherwise convert the lone char (prompt-aware) then submit.
                         if (mod == "CTRL" && status != "idle") {
                             try { vm.interrupt() } catch (_: Exception) {}
-                        } else if (mod == "CTRL") {
-                            try { vm.consumeCtrlChar() } catch (_: Exception) {}
+                            sticky = null
+                            return@KeyboardActions
+                        }
+                        // Idle CTRL/ALT+Enter: convert/insert only, don't submit
+                        // (was: converted the char AND submitted it as a command).
+                        var consumed = false
+                        if (mod == "CTRL") {
+                            consumed = try { vm.consumeCtrlChar() } catch (_: Exception) { false }
                         } else if (mod == "ALT") {
                             try { vm.insertText("\u001B") } catch (_: Exception) {}
+                            consumed = true
                         }
                         sticky = null
-                        if (mod == "CTRL" && status != "idle") return@KeyboardActions
+                        if (consumed) return@KeyboardActions
                     }
                     vm.submit()
                 })
@@ -417,28 +433,31 @@ fun TerminalScreen(
             Column(modifier = Modifier.fillMaxWidth().keyboardLift()) {
                 TermKeyRow(
                     keys = listOf(
-                        "ESC" to { vm.insertText("\u001B") },
-                        "TAB" to { vm.insertText("\t") },
+                        // Char keys route through sticky (CTRL+letter → control
+                        // byte, ALT+x → ESC x). Nav keys clear a stale sticky
+                        // and act plain — never leave CTRL armed (was: stuck).
+                        "ESC" to { if (vm.applyStickyKey(sticky, "")) sticky = null },
+                        "TAB" to { if (vm.applyStickyKey(sticky, "\t")) sticky = null },
                         "/" to { if (vm.applyStickyKey(sticky, "/")) sticky = null },
                         "-" to { if (vm.applyStickyKey(sticky, "-")) sticky = null },
-                        "HOME" to { vm.moveLineHome() },
-                        "↑" to { vm.historyUp() },
-                        "END" to { vm.moveLineEnd() },
-                        "PGUP" to { vm.moveCursorTo(0) },
-                        "PGDN" to { vm.moveCursorTo(999999) },
+                        "HOME" to { if (sticky == "ALT") { vm.insertText("[H"); sticky = null } else { sticky = null; vm.moveLineHome() } },
+                        "↑" to { sticky = null; vm.historyUp() },
+                        "END" to { if (sticky == "ALT") { vm.insertText("[F"); sticky = null } else { sticky = null; vm.moveLineEnd() } },
+                        "PGUP" to { sticky = null; vm.moveCursorTo(0) },
+                        "PGDN" to { sticky = null; vm.moveCursorTo(999999) },
                         "|" to { if (vm.applyStickyKey(sticky, "|")) sticky = null }
                     ),
-                    sticky = null
+                    sticky = sticky
                 )
                 TermKeyRow(
                     keys = listOf(
                         "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL" },
                         "ALT" to { sticky = if (sticky == "ALT") null else "ALT" },
-                        "^C" to { try { vm.interrupt() } catch (_: Exception) {} },
-                        "^D" to { try { vm.sendEof() } catch (_: Exception) {} },
-                        "←" to { vm.moveCursor(-1) },
-                        "↓" to { vm.historyDown() },
-                        "→" to { vm.moveCursor(1) },
+                        "^C" to { sticky = null; try { vm.interrupt() } catch (_: Exception) {} },
+                        "^D" to { sticky = null; try { vm.sendEof() } catch (_: Exception) {} },
+                        "←" to { sticky = null; vm.moveCursor(-1) },
+                        "↓" to { sticky = null; vm.historyDown() },
+                        "→" to { sticky = null; vm.moveCursor(1) },
                         "~" to { if (vm.applyStickyKey(sticky, "~")) sticky = null },
                         ":" to { if (vm.applyStickyKey(sticky, ":")) sticky = null },
                         ";" to { if (vm.applyStickyKey(sticky, ";")) sticky = null }
@@ -506,7 +525,12 @@ internal fun TermKeyRow(
                 modifier = Modifier
                     .width(64.dp)
                     .background(if (armed) TermWhite else Color.Transparent)
-                    .clickable(onClick = onTap)
+                    .clickable(
+                        onClickLabel = if (armed) "$label armed, tap to disarm" else "Send $label key",
+                        role = androidx.compose.ui.semantics.Role.Button,
+                        onClick = onTap
+                    )
+                    .semanticsForKey(label, armed)
                     .padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -520,3 +544,17 @@ internal fun TermKeyRow(
         }
     }
 }
+
+internal fun Modifier.semanticsForKey(label: String, armed: Boolean): Modifier =
+    this.then(
+        if (label == "CTRL" || label == "ALT") {
+            Modifier.semantics(mergeDescendants = true) {
+                this.contentDescription = if (armed) "$label sticky on" else "$label sticky off"
+                this.selected = armed
+            }
+        } else {
+            Modifier.semantics(mergeDescendants = true) {
+                this.contentDescription = "$label key"
+            }
+        }
+    )

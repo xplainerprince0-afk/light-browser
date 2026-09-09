@@ -129,7 +129,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                     TextButton(onClick = {
                         scope.launch(Dispatchers.IO) {
                             try { BrowserAgent.saveRecording(f.substringBefore("_")) } catch (_: Exception) {}
-                            recVersion++
+                            withContext(Dispatchers.Main) { recVersion++ }
                         }
                     }) { Text("Save") }
                 }
@@ -142,7 +142,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                 TextButton(onClick = {
                     scope.launch(Dispatchers.IO) {
                         try { BrowserAgent.saveRecording("rec") } catch (_: Exception) {}
-                        recVersion++
+                        withContext(Dispatchers.Main) { recVersion++ }
                     }
                 }) { Text("Save now") }
             }

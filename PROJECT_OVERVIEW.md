@@ -16,6 +16,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Terminal: PTY tab (TerminalSession→TerminalView, shell or opencode TUI, restart on exit, keys hug keyboard, density-correct font)
 - [x] Terminal: opencode via system linker (SELinux W^X workaround) + `opencode-diag` ELF check
 - [x] Terminal: keys above keyboard w/ scoped imePadding, follow-scroll waits a frame so $ stays visible
+- [x] Terminal: toolbar fix pass — IME no longer consumed above keys (Row 2 unburied), edge strips exclude bottom 110dp (key-scroll no longer tab-switches), unified sticky (no stuck CTRL, ALT-seqs, CTRL/ALT+Enter no double-submit), saveable ptyMode/follow/sticky/fontScale, scrollable drawer + 48dp close targets, PTY font follows drawer + env refreshes per session + keys disabled after exit
 - [x] Terminal: opencode exec self-heal (`opencode-fix`), jail hardened (separator-anchored, no sandbox-root delete)
 - [x] Player: ExoPlayer + MediaSession background playback (music attrs, local wakelock, tap-to-open), novels/chapters, shuffle/repeat/speed (0.5..2)/sleep timer, queue, mini-player, error surface, atomic resume
 - [x] Scripts manager (name validation), Downloads (skip active, refresh on partial), Settings (homepage normalize+autosave, theme persist, speed clamp)

@@ -363,6 +363,10 @@ private fun AppShell(
                             // so WebView keeps everything except edge-origin
                             // horizontal drags. Long-press on the LEFT edge
                             // opens the terminal drawer (Terminal tab only).
+                            // Bottom 110dp excluded: the terminal key rows live
+                            // there — sideways scrolling the toolbar must not
+                            // switch tabs (was: edge drag won the gesture race
+                            // and buried PGUP/PGDN/| offscreen).
                             EdgeTabStrip(
                                 current = tab,
                                 onSelect = { tab = it },
@@ -370,8 +374,9 @@ private fun AppShell(
                                     { com.lightbrowser.ui.terminal.InsetDebug.drawerAsk++ }
                                 } else null,
                                 modifier = Modifier.align(Alignment.CenterStart)
+                                    .padding(bottom = 110.dp)
                             )
-                            EdgeTabStrip(current = tab, onSelect = { tab = it }, modifier = Modifier.align(Alignment.CenterEnd))
+                            EdgeTabStrip(current = tab, onSelect = { tab = it }, modifier = Modifier.align(Alignment.CenterEnd).padding(bottom = 110.dp))
                         }
                         // Bottom zone: MiniPlayer only. No tab bar of any kind —
                         // tabs switch via the left/right edge-swipe strips

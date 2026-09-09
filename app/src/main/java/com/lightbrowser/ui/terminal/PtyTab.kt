@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,11 +64,12 @@ fun PtyTab(
     forceShell: Boolean,
     onShellFallback: () -> Unit,
     onExitToExec: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    fontScale: Float = 1f
 ) {
     val ctx = LocalContext.current
     val app = remember(ctx) { ctx.applicationContext }
-    var sticky by remember { mutableStateOf<String?>(null) }
+    var sticky by rememberSaveable { mutableStateOf<String?>(null) }
     var exited by remember { mutableStateOf<Int?>(null) }
     var gen by remember { mutableIntStateOf(0) }
     var session by remember { mutableStateOf<TerminalSession?>(null) }
@@ -92,8 +94,9 @@ fun PtyTab(
         opencodeOk -> arrayOf(ocBin.absolutePath)
         else -> arrayOf("sh")
     }
-    val env = remember(sd) {
+    val env = remember(sd, gen) {
         // Saved `export`s apply to new PTY sessions too (plus ~/.profile via $ENV).
+        // Keyed on gen so a restart picks up the latest exports.
         val saved = try { com.lightbrowser.data.TermEnv.all() } catch (_: Exception) { emptyMap() }
         val base = AlpineEnv.buildEnvironment(sd, sd).toMutableList()
         saved["PATH"]?.let { p ->
@@ -107,10 +110,11 @@ fun PtyTab(
     }
     // setTextSize() takes RAW PX (its "dp" javadoc lies) — Termux multiplies by
     // density. 13px raw ≈ 4dp: the tiny-text + broken-TUI-grid bug.
-    val fontPx = remember(ctx) {
+    // Follows the drawer Text bigger/smaller (fontScale, same as EXEC).
+    val fontPx = remember(ctx, fontScale) {
         try {
             TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, 13f, ctx.resources.displayMetrics
+                TypedValue.COMPLEX_UNIT_DIP, (13f * fontScale.coerceIn(0.7f, 1.8f)), ctx.resources.displayMetrics
             ).toInt().coerceAtLeast(13)
         } catch (_: Exception) { 39 }
     }
@@ -242,12 +246,13 @@ fun PtyTab(
         }
     }
 
-    /** Escape-sequence key with sticky: ALT prefixes ESC, CTRL passes through. */
+    /** Escape-sequence key with sticky: ALT prefixes ESC, CTRL passes through.
+     *  Always refocuses (was: arrows left focus on the Compose button). */
     fun sendSeq(seq: String) {
-        if (sticky == "ALT") writeText("\u001B$seq") else writeText(seq)
+        if (sticky == "ALT") writeText("$seq") else writeText(seq)
     }
 
-    DisposableEffect(shellPath, gen) {
+    DisposableEffect(shellPath, env, gen) {
         exited = null
         val s = try {
             TerminalSession(shellPath, sd.absolutePath, shellArgs, env, 2000, sessionClient)
@@ -297,6 +302,7 @@ fun PtyTab(
                 },
                 update = { v ->
                     v.setTerminalViewClient(viewClient)
+                    try { v.setTextSize(fontPx) } catch (_: Exception) {}
                     // Idempotent (no-op when the same session is attached);
                     // updateSize() inside initializes the emulator once the
                     // view has a non-zero size. No focus here — keyboard opens
@@ -338,35 +344,36 @@ fun PtyTab(
         }
         // Keys ride the measured keyboard top (keyboardLift(): visible-frame
         // height, suggestion strip included) and scroll sideways.
+        // Disabled after exit — writes to a dead session go nowhere.
         androidx.compose.material3.HorizontalDivider(color = Color(0xFF222222))
         Column(modifier = Modifier.fillMaxWidth().keyboardLift()) {
             TermKeyRow(
                 keys = listOf(
-                    "ESC" to { sendChar("\u001B") },
-                    "TAB" to { sendChar("\t") },
-                    "/" to { sendChar("/") },
-                    "-" to { sendChar("-") },
-                    "HOME" to { sendSeq("\u001B[H") },
-                    "↑" to { sendSeq("\u001B[A") },
-                    "END" to { sendSeq("\u001B[F") },
-                    "PGUP" to { sendSeq("\u001B[5~") },
-                    "PGDN" to { sendSeq("\u001B[6~") },
-                    "|" to { sendChar("|") }
+                    "ESC" to { if (exited == null) sendChar("") },
+                    "TAB" to { if (exited == null) sendChar("\t") },
+                    "/" to { if (exited == null) sendChar("/") },
+                    "-" to { if (exited == null) sendChar("-") },
+                    "HOME" to { if (exited == null) sendSeq("[H") },
+                    "↑" to { if (exited == null) sendSeq("[A") },
+                    "END" to { if (exited == null) sendSeq("[F") },
+                    "PGUP" to { if (exited == null) sendSeq("[5~") },
+                    "PGDN" to { if (exited == null) sendSeq("[6~") },
+                    "|" to { if (exited == null) sendChar("|") }
                 ),
-                sticky = null
+                sticky = sticky
             )
             TermKeyRow(
                 keys = listOf(
-                    "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL"; refocus() },
-                    "ALT" to { sticky = if (sticky == "ALT") null else "ALT"; refocus() },
-                    "^C" to { writeBytes(byteArrayOf(0x03)) },
-                    "^D" to { writeBytes(byteArrayOf(0x04)) },
-                    "←" to { sendSeq("\u001B[D") },
-                    "↓" to { sendSeq("\u001B[B") },
-                    "→" to { sendSeq("\u001B[C") },
-                    "~" to { sendChar("~") },
-                    ":" to { sendChar(":") },
-                    ";" to { sendChar(";") }
+                    "CTRL" to { if (exited == null) { sticky = if (sticky == "CTRL") null else "CTRL"; refocus() } },
+                    "ALT" to { if (exited == null) { sticky = if (sticky == "ALT") null else "ALT"; refocus() } },
+                    "^C" to { if (exited == null) writeBytes(byteArrayOf(0x03)) },
+                    "^D" to { if (exited == null) writeBytes(byteArrayOf(0x04)) },
+                    "←" to { if (exited == null) sendSeq("[D") },
+                    "↓" to { if (exited == null) sendSeq("[B") },
+                    "→" to { if (exited == null) sendSeq("[C") },
+                    "~" to { if (exited == null) sendChar("~") },
+                    ":" to { if (exited == null) sendChar(":") },
+                    ";" to { if (exited == null) sendChar(";") }
                 ),
                 sticky = sticky
             )

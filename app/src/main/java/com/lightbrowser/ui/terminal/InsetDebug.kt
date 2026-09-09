@@ -58,7 +58,9 @@ object InsetDebug {
 /**
  * Keyboard lift for terminal keys (single source — no per-mode math).
  * Signal: max(decor-listener height, hoisted root IME, live keys-level IME)
- * so one dead/lying source can't bury the toolbar. Minus outerPadPx (the
+ * so one dead/lying source can't bury the toolbar. The keys-level read is
+ * live only when ancestors DON'T consume IME above the keys (see
+ * TerminalScreen: consume navigationBars, never IME). Minus outerPadPx (the
  * EXACT px MainActivity's Scaffold reserves below the content): keysBottom =
  * screenH − outerPad − (kb − outerPad) = screenH − kb under every inset
  * convention. Zero when closed.
