@@ -463,7 +463,6 @@ fun BrowserScreen(
                     }
                     }
                 }
-            }
 
             AnimatedVisibility(visible = ui.loading, enter = fadeIn(), exit = fadeOut()) {
                 LinearProgressIndicator(
