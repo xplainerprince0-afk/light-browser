@@ -39,7 +39,7 @@ object BrowserAgent {
     private val _serverLabel = MutableStateFlow("")
     val serverLabel: StateFlow<String> = _serverLabel.asStateFlow()
 
-    var token: String = UUID.randomUUID().toString().take(8)
+    var token: String = UUID.randomUUID().toString().take(24)
         private set
 
     // Minimal socket HTTP server (same-device testing). We deliberately avoid
@@ -493,7 +493,7 @@ object BrowserAgent {
     @Synchronized
     fun startServer(): String {
         stopServer()
-        token = UUID.randomUUID().toString().take(8)
+        token = UUID.randomUUID().toString().take(24)
         return try {
             val ss = ServerSocket()
             ss.reuseAddress = true
@@ -515,6 +515,7 @@ object BrowserAgent {
             t.start()
             _serverRunning.value = true
             _serverLabel.value = "http://127.0.0.1:$PORT • token $token"
+            writeTokenFile()
             _serverLabel.value
         } catch (e: Exception) {
             Log.e(TAG, "startServer", e)
@@ -531,6 +532,25 @@ object BrowserAgent {
         acceptThread = null
         _serverRunning.value = false
         _serverLabel.value = ""
+        token = ""
+        clearTokenFile()
+    }
+
+    /** Token file lets shell CLIs (`b` shim, curl) auth without pasting. */
+    private fun tokenFile(): java.io.File? {
+        return try {
+            java.io.File(AppCtx.ctx.filesDir, "sandbox/.agent_token")
+        } catch (_: Exception) { null }
+    }
+
+    private fun writeTokenFile() {
+        try {
+            tokenFile()?.writeText("$PORT $token")
+        } catch (_: Exception) {}
+    }
+
+    private fun clearTokenFile() {
+        try { tokenFile()?.delete() } catch (_: Exception) {}
     }
 
     private fun handleSocket(sock: Socket) {
@@ -714,7 +734,38 @@ object BrowserAgent {
                 if (path != null) JSONObject().put("ok", true).put("path", path).toString()
                 else """{"ok":false,"err":"shot failed"}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /text /snap /js /click /fill /pos /tap /swipe /scrollto /back /forward /reload /stop /find /console /shot"}"""
+            "/tabs" -> awaitMain {
+                // Already on Main — TabBus reads ViewModel state directly.
+                val arr = org.json.JSONArray()
+                try {
+                    com.lightbrowser.ui.browser.TabBus.listTabs?.invoke()?.forEach { t ->
+                        arr.put(JSONObject().put("i", t.index).put("url", t.url)
+                            .put("title", t.title).put("current", t.current))
+                    }
+                } catch (_: Exception) {}
+                JSONObject().put("ok", true).put("tabs", arr).toString()
+            }
+            "/new" -> {
+                val url = q["url"] ?: return """{"ok":false,"err":"missing url"}"""
+                mainHandler.post {
+                    try { com.lightbrowser.ui.browser.TabBus.openInNewTab?.invoke(url) } catch (_: Exception) {}
+                }
+                """{"ok":true}"""
+            }
+            "/close" -> {
+                val i = q["i"]?.toIntOrNull() ?: -1
+                mainHandler.post {
+                    try { com.lightbrowser.ui.browser.TabBus.closeTabAt?.invoke(i) } catch (_: Exception) {}
+                }
+                """{"ok":true}"""
+            }
+            "/home" -> {
+                mainHandler.post {
+                    try { com.lightbrowser.ui.browser.TabBus.openHome?.invoke() } catch (_: Exception) {}
+                }
+                """{"ok":true}"""
+            }
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /close /home /text /snap /js /click /fill /pos /tap /swipe /scrollto /back /forward /reload /stop /find /console /cookies /shot"}"""
         }
     }
 }

@@ -2,22 +2,21 @@ package com.lightbrowser.ui.terminal
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -25,12 +24,16 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -61,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -97,7 +101,6 @@ fun TerminalScreen(
 
     var sticky by remember { mutableStateOf<String?>(null) }
     var follow by remember { mutableStateOf(true) }
-    var overflow by remember { mutableStateOf(false) }
     var ptyMode by remember { mutableStateOf(false) }
     var ptyOpencode by remember { mutableStateOf(false) }
     var showAgent by remember { mutableStateOf(false) }
@@ -139,125 +142,191 @@ fun TerminalScreen(
         } catch (_: Exception) {}
     }
 
-    Scaffold(
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val ptyCtl = remember { PtyControl() }
+    val focusManager = LocalFocusManager.current
+    fun openDrawer() { scope.launch { try { drawerState.open() } catch (_: Exception) {} } }
+    fun closeDrawer() { scope.launch { try { drawerState.close() } catch (_: Exception) {} } }
+    fun pasteFromClipboard() {
+        try {
+            clipboard.getText()?.text?.let { t ->
+                if (t.isEmpty()) return
+                if (ptyMode) { try { ptyCtl.pasteText?.invoke(t) } catch (_: Exception) {} }
+                else vm.insertText(t)
+            }
+        } catch (_: Exception) {}
+    }
+
+    // PTY owns focus (a View): release the EXEC editor so typing can't land
+    // in the hidden field (the "invisible input" bug).
+    LaunchedEffect(ptyMode) {
+        if (ptyMode) { try { focusManager.clearFocus() } catch (_: Exception) {} }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = true,
         modifier = modifier.fillMaxSize(),
+        drawerContent = {
+            ModalDrawerSheet(drawerContainerColor = Color(0xFF111111)) {
+                Text(
+                    "Terminal",
+                    color = TermWhite,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                )
+                Text(
+                    "Sessions",
+                    color = Color(0xFF888888),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                )
+                sessions.forEach { s ->
+                    NavigationDrawerItem(
+                        label = { Text(s.name, fontFamily = FontFamily.Monospace, fontSize = 13.sp) },
+                        selected = s.id == activeId,
+                        onClick = { try { vm.switchSession(s.id) } catch (_: Exception) {}; closeDrawer() },
+                        badge = {
+                            if (sessions.size > 1) {
+                                IconButton(onClick = { vm.closeSession(s.id) }, modifier = Modifier.size(22.dp)) {
+                                    Icon(Icons.Filled.Close, "Close", tint = Color(0xFF888888), modifier = Modifier.size(13.dp))
+                                }
+                            }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
+                NavigationDrawerItem(
+                    label = { Text("+ New session", fontFamily = FontFamily.Monospace, fontSize = 13.sp) },
+                    selected = false,
+                    onClick = { try { vm.newSession() } catch (_: Exception) {}; closeDrawer() },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                NavigationDrawerItem(
+                    label = { Text("Agent bridge", fontSize = 13.sp) },
+                    selected = false,
+                    badge = { if (recording) Text("●", color = Color.Red, fontSize = 12.sp) },
+                    onClick = { closeDrawer(); showAgent = true },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text(if (follow) "✓ Follow output" else "Follow output", fontSize = 13.sp) },
+                    selected = false,
+                    onClick = { follow = !follow; closeDrawer() },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Text bigger", fontSize = 13.sp) },
+                    selected = false,
+                    onClick = {
+                        fontScale = (fontScale + 0.15f).coerceAtMost(1.8f)
+                        try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
+                        closeDrawer()
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text("Text smaller", fontSize = 13.sp) },
+                    selected = false,
+                    onClick = {
+                        fontScale = (fontScale - 0.15f).coerceAtLeast(0.7f)
+                        try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
+                        closeDrawer()
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                if (!ptyMode) {
+                    NavigationDrawerItem(
+                        label = { Text("Rename session", fontSize = 13.sp) },
+                        selected = false,
+                        onClick = {
+                            renameId = activeId
+                            renameText = sessions.firstOrNull { it.id == activeId }?.name ?: ""
+                            closeDrawer()
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                } else {
+                    NavigationDrawerItem(
+                        label = { Text("⌨ Keyboard", fontSize = 13.sp) },
+                        selected = false,
+                        onClick = { try { ptyCtl.showKeyboard?.invoke() } catch (_: Exception) {}; closeDrawer() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
+                NavigationDrawerItem(
+                    label = { Text("Paste", fontSize = 13.sp) },
+                    selected = false,
+                    onClick = { pasteFromClipboard(); closeDrawer() },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                if (!ptyMode) {
+                    NavigationDrawerItem(
+                        label = { Text("Copy all output", fontSize = 13.sp) },
+                        selected = false,
+                        onClick = {
+                            clipboard.setText(AnnotatedString(vm.fullLog().take(100_000)))
+                            scope.launch { snacks.showSnackbar("Log copied") }
+                            closeDrawer()
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("Clear", fontSize = 13.sp) },
+                        selected = false,
+                        onClick = { vm.clear(); closeDrawer() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                    if (status != "idle") NavigationDrawerItem(
+                        label = { Text("Kill process", fontSize = 13.sp) },
+                        selected = false,
+                        onClick = { vm.killRunning(); closeDrawer() },
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+                }
+            }
+        }
+    ) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snacks) },
         containerColor = TermBlack
     ) { _ ->
         Column(modifier = Modifier.fillMaxSize().background(TermBlack)) {
-            // ── Slim session strip + status + overflow ──
+            // ── Slim bar: drawer + mode + context. Everything else → drawer. ──
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // Tap OR long-press the corner → drawer (Termux-style).
+                Box(
+                    modifier = Modifier
+                        .combinedClickable(onClick = { openDrawer() }, onLongClick = { openDrawer() })
+                        .padding(10.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    sessions.forEach { s ->
-                        val sel = s.id == activeId
-                        Row(
-                            modifier = Modifier
-                                .clickable { vm.switchSession(s.id) }
-                                .background(if (sel) Color(0xFF1A1A1A) else Color.Transparent)
-                                .padding(horizontal = 8.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                s.name,
-                                color = if (sel) TermWhite else Color(0xFF888888),
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp
-                            )
-                            if (sessions.size > 1) {
-                                IconButton(onClick = { vm.closeSession(s.id) }, modifier = Modifier.size(18.dp)) {
-                                    Icon(Icons.Filled.Close, "Close", tint = Color(0xFF888888), modifier = Modifier.size(12.dp))
-                                }
-                            }
-                        }
-                    }
-                    IconButton(onClick = vm::newSession, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Filled.Add, "New session", tint = TermWhite, modifier = Modifier.size(16.dp))
-                    }
+                    Icon(Icons.Filled.Menu, "Menu", tint = TermWhite, modifier = Modifier.size(18.dp))
                 }
-                Text("●", color = if (status == "idle") Color(0xFF444444) else TermGreen, fontSize = 10.sp)
-                TextButton(
-                    onClick = { ptyMode = !ptyMode },
-                    modifier = Modifier.padding(horizontal = 0.dp)
-                ) {
-                    Text(
-                        if (ptyMode) "EXEC" else "PTY",
-                        color = if (ptyMode) TermGreen else TermWhite,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp
-                    )
-                }
-                IconButton(onClick = { showAgent = true }, modifier = Modifier.size(30.dp)) {
-                    Icon(
-                        Icons.Filled.SmartToy, "Agent bridge",
-                        tint = if (recording) Color.Red else TermWhite,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-                Box {
-                    IconButton(onClick = { overflow = true }, modifier = Modifier.size(30.dp)) {
-                        Icon(Icons.Filled.MoreVert, "Options", tint = TermWhite, modifier = Modifier.size(16.dp))
+                if (ptyMode) {
+                    ModeChip("EXEC") { ptyMode = false }
+                    ModeChip(if (ptyOpencode) "Shell" else "opencode") { ptyOpencode = !ptyOpencode }
+                    Spacer(modifier = Modifier.weight(1f))
+                    TextButton(onClick = { try { ptyCtl.showKeyboard?.invoke() } catch (_: Exception) {} }) {
+                        Text("⌨", color = TermWhite, fontSize = 14.sp)
                     }
-                    DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
-                        DropdownMenuItem(
-                            text = { Text(if (follow) "✓ Follow output" else "Follow output") },
-                            onClick = { overflow = false; follow = !follow }
-                        )
-                        DropdownMenuItem(text = { Text("Text bigger") }, onClick = {
-                            overflow = false
-                            fontScale = (fontScale + 0.15f).coerceAtMost(1.8f)
-                            try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
-                        })
-                        DropdownMenuItem(text = { Text("Text smaller") }, onClick = {
-                            overflow = false
-                            fontScale = (fontScale - 0.15f).coerceAtLeast(0.7f)
-                            try { Prefs.terminalFontScale = fontScale } catch (_: Exception) {}
-                        })
-                        DropdownMenuItem(text = { Text("Rename session") }, onClick = {
-                            overflow = false
-                            renameId = activeId
-                            renameText = sessions.firstOrNull { it.id == activeId }?.name ?: ""
-                        })
-                        DropdownMenuItem(text = { Text("Paste") }, onClick = {
-                            overflow = false
-                            try {
-                                clipboard.getText()?.text?.let { t ->
-                                    if (t.isNotEmpty()) vm.insertText(t)
-                                }
-                            } catch (_: Exception) {}
-                        })
-                        DropdownMenuItem(text = { Text("Agent bridge") }, onClick = {
-                            overflow = false
-                            showAgent = true
-                        })
-                        DropdownMenuItem(
-                            text = { Text(if (ptyMode) "✓ PTY terminal" else "PTY terminal") },
-                            onClick = { overflow = false; ptyMode = !ptyMode }
-                        )
-                        DropdownMenuItem(text = { Text("Copy all output") }, onClick = {
-                            overflow = false
-                            clipboard.setText(AnnotatedString(vm.fullLog().take(100_000)))
-                            scope.launch { snacks.showSnackbar("Log copied") }
-                        })
-                        DropdownMenuItem(text = { Text("Clear") }, onClick = { overflow = false; vm.clear() })
-                        if (status != "idle") DropdownMenuItem(
-                            text = { Text("Kill process") },
-                            onClick = { overflow = false; vm.killRunning() }
-                        )
-                    }
+                } else {
+                    ModeChip("PTY") { ptyMode = true }
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text("●", color = if (status == "idle") Color(0xFF444444) else TermGreen, fontSize = 10.sp, modifier = Modifier.padding(end = 12.dp))
                 }
             }
 
             if (ptyMode) {
                 PtyTab(
                     useOpencode = ptyOpencode,
-                    onToggleTarget = { ptyOpencode = !ptyOpencode },
+                    ctl = ptyCtl,
                     onExitToExec = { ptyMode = false },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
@@ -300,18 +369,21 @@ fun TerminalScreen(
                 })
             )
 
-            // ── Keys hug the keyboard (scoped imePadding: lifts ONLY this ──
-            // terminal zone — the bottom nav stays pinned behind the keyboard) ──
-            Column(modifier = Modifier.fillMaxWidth().imePadding()) {
+            // ── Keys hug the keyboard (ime minus nav — see keyboardHug) and ──
+            // scroll sideways for the full set ──
+            Column(modifier = Modifier.fillMaxWidth().keyboardHug()) {
                 TermKeyRow(
                     keys = listOf(
                         "ESC" to { vm.insertText("\u001B") },
+                        "TAB" to { vm.insertText("\t") },
                         "/" to { if (vm.applyStickyKey(sticky, "/")) sticky = null },
                         "-" to { if (vm.applyStickyKey(sticky, "-")) sticky = null },
                         "HOME" to { vm.moveLineHome() },
                         "↑" to { vm.historyUp() },
                         "END" to { vm.moveLineEnd() },
-                        "PGUP" to { vm.moveCursorTo(0) }
+                        "PGUP" to { vm.moveCursorTo(0) },
+                        "PGDN" to { vm.moveCursorTo(999999) },
+                        "|" to { if (vm.applyStickyKey(sticky, "|")) sticky = null }
                     ),
                     sticky = null
                 )
@@ -323,13 +395,17 @@ fun TerminalScreen(
                         "^D" to { try { vm.sendEof() } catch (_: Exception) {} },
                         "←" to { vm.moveCursor(-1) },
                         "↓" to { vm.historyDown() },
-                        "→" to { vm.moveCursor(1) }
+                        "→" to { vm.moveCursor(1) },
+                        "~" to { if (vm.applyStickyKey(sticky, "~")) sticky = null },
+                        ":" to { if (vm.applyStickyKey(sticky, ":")) sticky = null },
+                        ";" to { if (vm.applyStickyKey(sticky, ";")) sticky = null }
                     ),
                     sticky = sticky
                 )
             }
             } // else: exec mode
         }
+    }
     }
 
     if (showAgent) {
@@ -363,18 +439,29 @@ fun TerminalScreen(
     }
 }
 
-/** One flat Termux key row: 7 full-width cells, sticky CTRL/ALT invert when armed. */
+/** Small mode chip for the slim bar. */
+@Composable
+private fun ModeChip(label: String, onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.padding(horizontal = 0.dp)) {
+        Text(label, color = TermWhite, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+    }
+}
+
+/** Swipeable Termux key row: fixed cells, scroll sideways for the full set. */
 @Composable
 internal fun TermKeyRow(
     keys: List<Pair<String, () -> Unit>>,
     sticky: String?
 ) {
-    Row(modifier = Modifier.fillMaxWidth().background(Color(0xFF0A0A0A))) {
+    Row(
+        modifier = Modifier.fillMaxWidth().background(Color(0xFF0A0A0A))
+            .horizontalScroll(rememberScrollState())
+    ) {
         keys.forEach { (label, onTap) ->
             val armed = (label == "CTRL" && sticky == "CTRL") || (label == "ALT" && sticky == "ALT")
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .width(64.dp)
                     .background(if (armed) TermWhite else Color.Transparent)
                     .clickable(onClick = onTap)
                     .padding(vertical = 9.dp),

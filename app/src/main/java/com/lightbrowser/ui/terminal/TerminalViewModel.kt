@@ -116,6 +116,11 @@ class TerminalViewModel : ViewModel() {
 
     // ── Sessions ──
     fun newSession() {
+        if (store.size >= 8) {
+            print("Session limit reached (8) — close one first\n", TermRed)
+            printPrompt()
+            return
+        }
         val s = Sess(name = "sh${++sessionCounter + 1}", dir = active().dir ?: sandboxDir)
         store.add(s)
         switchSession(s.id)
@@ -897,8 +902,13 @@ class TerminalViewModel : ViewModel() {
                     for (t in splitArgs(arg)) {
                         val eq = t.indexOf('=')
                         val name = if (eq > 0) t.substring(0, eq) else ""
-                        if (eq <= 0 || !TermEnv.validName(name)) { ok = false; break }
-                        TermEnv.set(name, t.substring(eq + 1))
+                        val value = if (eq > 0) t.substring(eq + 1) else ""
+                        // PATH is spliced into shell text unquoted — keep it
+                        // injection-free (other vars travel via exec env).
+                        if (eq <= 0 || !TermEnv.validName(name) ||
+                            (name == "PATH" && !value.matches(Regex("^[A-Za-z0-9_/:.,+@%=$~-]+$")))
+                        ) { ok = false; break }
+                        TermEnv.set(name, value)
                         saved.add(name)
                     }
                     if (!ok || saved.isEmpty()) {
@@ -1119,10 +1129,12 @@ class TerminalViewModel : ViewModel() {
                     try {
                         val r = BufferedReader(InputStreamReader(process.errorStream))
                         var l: String?
+                        val start = System.currentTimeMillis()
                         while (r.readLine().also { l = it } != null) {
                             synchronized(outBuf) {
                                 if (outBuf.length < 8000) outBuf.appendLine(l)
                             }
+                            if (System.currentTimeMillis() - start > wallMs) break
                         }
                     } catch (_: Exception) {}
                 }.also { it.isDaemon = true; it.start() }

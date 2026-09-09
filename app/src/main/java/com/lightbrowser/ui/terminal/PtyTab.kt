@@ -2,6 +2,8 @@ package com.lightbrowser.ui.terminal
 
 import android.util.Log
 import android.util.TypedValue
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
@@ -12,7 +14,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -20,7 +21,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,6 +43,12 @@ import java.io.File
 
 private const val PTY_TAG = "PtyTab"
 
+/** Bridge so the slim top bar (drawer/⌨) can drive the PTY view. */
+class PtyControl {
+    var showKeyboard: (() -> Unit)? = null
+    var pasteText: ((String) -> Unit)? = null
+}
+
 /**
  * True PTY terminal (Termux emulator+view, Apache-2.0): full-screen TUIs like
  * `opencode` work here — raw mode, alt-screen, resize, real signals.
@@ -51,7 +57,7 @@ private const val PTY_TAG = "PtyTab"
 @Composable
 fun PtyTab(
     useOpencode: Boolean,
-    onToggleTarget: () -> Unit,
+    ctl: PtyControl,
     onExitToExec: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -114,7 +120,11 @@ fun PtyTab(
             }
             override fun onTitleChanged(changedSession: TerminalSession) {}
             override fun onSessionFinished(finishedSession: TerminalSession) {
-                try { exited = finishedSession.exitStatus } catch (_: Exception) { exited = -1 }
+                // Snapshot writes must happen on Main (binder thread otherwise).
+                try {
+                    val code = try { finishedSession.exitStatus } catch (_: Exception) { -1 }
+                    Handler(Looper.getMainLooper()).post { exited = code }
+                } catch (_: Exception) {}
             }
             override fun onCopyTextToClipboard(session: TerminalSession, text: String) {}
             override fun onPasteTextFromClipboard(session: TerminalSession?) {}
@@ -152,7 +162,21 @@ fun PtyTab(
             override fun readFnKey(): Boolean = false
             override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean {
                 return try {
-                    if (ctrlDown && codePoint in 97..122) {
+                    // Soft keyboards arrive here with ctrlDown=false, so the
+                    // hardware-only readControlKey() never fires for them —
+                    // honor OUR sticky state explicitly (upper+lowercase).
+                    val st = sticky
+                    if (st == "CTRL" && codePoint in 65..90) {
+                        val b = byteArrayOf((codePoint - 64).toByte())
+                        session.write(b, 0, 1)
+                    } else if (st == "CTRL" && codePoint in 97..122) {
+                        val b = byteArrayOf((codePoint - 96).toByte())
+                        session.write(b, 0, 1)
+                    } else if (st == "CTRL" && codePoint == '/'.code) {
+                        session.write(byteArrayOf(0x1F), 0, 1)
+                    } else if (st == "ALT") {
+                        session.writeCodePoint(true, codePoint)
+                    } else if (ctrlDown && codePoint in 97..122) {
                         val b = byteArrayOf((codePoint - 96).toByte())
                         session.write(b, 0, 1)
                     } else {
@@ -175,11 +199,41 @@ fun PtyTab(
         }
     }
 
+    fun refocus() {
+        // Tapping any Compose button steals View focus → typed keys would go
+        // nowhere (the "invisible input" bug). Focus back WITHOUT showing the
+        // keyboard (it's already open; showing it re-triggers inset races).
+        try { termView?.requestFocus() } catch (_: Exception) {}
+    }
+
     fun writeBytes(b: ByteArray) {
         try { session?.write(b, 0, b.size) } catch (_: Exception) {}
         sticky = null
+        refocus()
     }
     fun writeText(s: String) = writeBytes(s.toByteArray(Charsets.UTF_8))
+
+    /** Char key with sticky: CTRL+letter → control byte, ALT+x → ESC x. */
+    fun sendChar(c: String) {
+        when (sticky) {
+            "CTRL" -> {
+                val ch = c.firstOrNull() ?: return writeText(c)
+                val code = when {
+                    ch.lowercaseChar() in 'a'..'z' -> ch.lowercaseChar() - 'a' + 1
+                    ch == '/' -> 0x1F
+                    else -> -1
+                }
+                if (code >= 0) writeBytes(byteArrayOf(code.toByte())) else writeText(c)
+            }
+            "ALT" -> writeText("\u001B$c")
+            else -> writeText(c)
+        }
+    }
+
+    /** Escape-sequence key with sticky: ALT prefixes ESC, CTRL passes through. */
+    fun sendSeq(seq: String) {
+        if (sticky == "ALT") writeText("\u001B$seq") else writeText(seq)
+    }
 
     DisposableEffect(shellPath, gen) {
         exited = null
@@ -196,37 +250,37 @@ fun PtyTab(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().background(Color.Black)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                if (opencodeOk) "● PTY · opencode" else "● PTY · shell",
-                color = Color(0xFF4CAF50),
-                fontSize = 12.sp,
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedButton(onClick = onToggleTarget) {
-                Text(if (useOpencode) "Shell" else "opencode", fontSize = 12.sp)
-            }
-            OutlinedButton(
-                onClick = {
-                    // Explicit keyboard toggle: focusing the View on composition
-                    // double-lifts the keys (View pan + Compose imePadding), so
-                    // the keyboard now opens ONLY on user tap / this button.
-                    try {
-                        val v = termView
-                        if (v != null) {
-                            v.requestFocus()
-                            try { imm.showSoftInput(v, 0) } catch (_: Exception) {}
-                        }
-                    } catch (_: Exception) {}
-                }
-            ) {
-                Text("⌨", fontSize = 12.sp)
-            }
+    DisposableEffect(termView) {
+        ctl.showKeyboard = {
+            try {
+                termView?.requestFocus()
+                try {
+                    termView?.let { imm.showSoftInput(it, 0) }
+                } catch (_: Exception) {}
+            } catch (_: Exception) {}
         }
+        ctl.pasteText = { t ->
+            try {
+                val b = t.toByteArray(Charsets.UTF_8)
+                session?.write(b, 0, b.size)
+            } catch (_: Exception) {}
+            refocus()
+        }
+        onDispose { ctl.showKeyboard = null; ctl.pasteText = null }
+    }
+
+    Column(modifier = modifier.fillMaxSize().background(Color.Black)) {
+        // Slim status line (toggles live in the top bar now — space matters).
+        Text(
+            when {
+                useOpencode && opencodeOk -> "● PTY · opencode"
+                useOpencode -> "● PTY · shell (opencode missing — opencode-install)"
+                else -> "● PTY · shell"
+            },
+            color = Color(0xFF4CAF50),
+            fontSize = 11.sp,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 1.dp)
+        )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AndroidView(
                 factory = { c ->
@@ -269,31 +323,36 @@ fun PtyTab(
                 }
             }
         }
-        // Keys hug the keyboard, same as exec mode.
-        Column(modifier = Modifier.fillMaxWidth().imePadding()) {
+        // Keys hug the keyboard (ime minus nav — see keyboardHug) and scroll
+        // sideways for the full set.
+        Column(modifier = Modifier.fillMaxWidth().keyboardHug()) {
             TermKeyRow(
                 keys = listOf(
-                    "ESC" to { writeText("\u001B") },
-                    "/" to {
-                        if (sticky == "CTRL") writeBytes(byteArrayOf(0x1F)) else writeText("/")
-                    },
-                    "-" to { writeText("-") },
-                    "HOME" to { writeText("\u001B[H") },
-                    "↑" to { writeText("\u001B[A") },
-                    "END" to { writeText("\u001B[F") },
-                    "PGUP" to { writeText("\u001B[5~") }
+                    "ESC" to { sendChar("\u001B") },
+                    "TAB" to { sendChar("\t") },
+                    "/" to { sendChar("/") },
+                    "-" to { sendChar("-") },
+                    "HOME" to { sendSeq("\u001B[H") },
+                    "↑" to { sendSeq("\u001B[A") },
+                    "END" to { sendSeq("\u001B[F") },
+                    "PGUP" to { sendSeq("\u001B[5~") },
+                    "PGDN" to { sendSeq("\u001B[6~") },
+                    "|" to { sendChar("|") }
                 ),
                 sticky = null
             )
             TermKeyRow(
                 keys = listOf(
-                    "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL" },
-                    "ALT" to { sticky = if (sticky == "ALT") null else "ALT" },
+                    "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL"; refocus() },
+                    "ALT" to { sticky = if (sticky == "ALT") null else "ALT"; refocus() },
                     "^C" to { writeBytes(byteArrayOf(0x03)) },
                     "^D" to { writeBytes(byteArrayOf(0x04)) },
-                    "←" to { writeText("\u001B[D") },
-                    "↓" to { writeText("\u001B[B") },
-                    "→" to { writeText("\u001B[C") }
+                    "←" to { sendSeq("\u001B[D") },
+                    "↓" to { sendSeq("\u001B[B") },
+                    "→" to { sendSeq("\u001B[C") },
+                    "~" to { sendChar("~") },
+                    ":" to { sendChar(":") },
+                    ";" to { sendChar(";") }
                 ),
                 sticky = sticky
             )
