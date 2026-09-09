@@ -704,6 +704,13 @@ class TerminalViewModel : ViewModel() {
                     val st = resolve(target)
                     if (st == null) { print("Access denied\n", TermRed); afterCommand(); return }
                     if (st.isDirectory && !recursive) { print("rm: is a directory (use rm -r)\n", TermRed); afterCommand(); return }
+                    // Never wipe the sandbox root itself (rm -r . / absolute sandbox path).
+                    try {
+                        val sd = sandboxDir
+                        if (sd != null && st.canonicalFile.absolutePath == sd.canonicalFile.absolutePath) {
+                            print("Refusing to delete sandbox root\n", TermRed); afterCommand(); return
+                        }
+                    } catch (_: Exception) {}
                     val ok = if (st.isDirectory) st.deleteRecursively() else st.delete()
                     print((if (ok) "Deleted" else "Failed") + "\n", TermDim)
                     afterCommand()
@@ -1376,7 +1383,11 @@ class TerminalViewModel : ViewModel() {
 
         private fun isAllowed(path: File): Boolean {        val sd = sandboxDir ?: return false
         return try {
-            path.canonicalFile.absolutePath.startsWith(sd.canonicalFile.absolutePath)
+            // Separator-anchored: a sibling like "sandbox_evil" must not pass
+            // the prefix check (was: raw startsWith, escapable).
+            val root = sd.canonicalFile.absolutePath.trimEnd('/') + '/'
+            val p = path.canonicalFile.absolutePath
+            p == root.trimEnd('/') || p.startsWith(root)
         } catch (_: Exception) { false }
     }
 
