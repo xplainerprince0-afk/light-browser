@@ -91,6 +91,8 @@ fun TerminalScreen(
     var sticky by remember { mutableStateOf<String?>(null) }
     var follow by remember { mutableStateOf(true) }
     var overflow by remember { mutableStateOf(false) }
+    var ptyMode by remember { mutableStateOf(false) }
+    var ptyOpencode by remember { mutableStateOf(false) }
     var showAgent by remember { mutableStateOf(false) }
     val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     var renameId by remember { mutableStateOf<String?>(null) }
@@ -162,6 +164,17 @@ fun TerminalScreen(
                     }
                 }
                 Text("●", color = if (status == "idle") Color(0xFF444444) else TermGreen, fontSize = 10.sp)
+                TextButton(
+                    onClick = { ptyMode = !ptyMode },
+                    modifier = Modifier.padding(horizontal = 0.dp)
+                ) {
+                    Text(
+                        if (ptyMode) "EXEC" else "PTY",
+                        color = if (ptyMode) TermGreen else TermWhite,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    )
+                }
                 IconButton(onClick = { showAgent = true }, modifier = Modifier.size(30.dp)) {
                     Icon(
                         Icons.Filled.SmartToy, "Agent bridge",
@@ -205,6 +218,10 @@ fun TerminalScreen(
                             overflow = false
                             showAgent = true
                         })
+                        DropdownMenuItem(
+                            text = { Text(if (ptyMode) "✓ PTY terminal" else "PTY terminal") },
+                            onClick = { overflow = false; ptyMode = !ptyMode }
+                        )
                         DropdownMenuItem(text = { Text("Copy all output") }, onClick = {
                             overflow = false
                             clipboard.setText(AnnotatedString(vm.fullLog().take(100_000)))
@@ -219,6 +236,14 @@ fun TerminalScreen(
                 }
             }
 
+            if (ptyMode) {
+                PtyTab(
+                    useOpencode = ptyOpencode,
+                    onToggleTarget = { ptyOpencode = !ptyOpencode },
+                    onExitToExec = { ptyMode = false },
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                )
+            } else {
             // ── THE editor: everything is one field ──
             BasicTextField(
                 value = editor,
@@ -285,6 +310,7 @@ fun TerminalScreen(
                     sticky = sticky
                 )
             }
+            } // else: exec mode
         }
     }
 
@@ -321,7 +347,7 @@ fun TerminalScreen(
 
 /** One flat Termux key row: 7 full-width cells, sticky CTRL/ALT invert when armed. */
 @Composable
-private fun TermKeyRow(
+internal fun TermKeyRow(
     keys: List<Pair<String, () -> Unit>>,
     sticky: String?
 ) {
