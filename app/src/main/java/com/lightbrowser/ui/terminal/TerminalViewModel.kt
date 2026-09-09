@@ -98,6 +98,7 @@ class TerminalViewModel : ViewModel() {
             val app = AppCtx.ctx
             val sd = File(app.filesDir, "sandbox").apply { if (!exists()) mkdirs() }
             sandboxDir = sd
+            try { AlpineEnv.ensureRuntimeFiles(sd) } catch (_: Exception) {}
             alpineInstalled = AlpineEnv.isInstalled(sd)
             val s = Sess(name = "main", dir = sd)
             store.add(s)
@@ -845,6 +846,15 @@ class TerminalViewModel : ViewModel() {
                         val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
                         print("Cache: ${size / 1024} KB\n", TermDim)
                     } catch (e: Exception) { print((e.message ?: "") + "\n", TermRed) }
+                    afterCommand()
+                }
+                "kbd-diag" -> {
+                    print(
+                        "imeBottom=${InsetDebug.imeBottomPx}px visible=${InsetDebug.imeVisible} " +
+                            "navBottom=${InsetDebug.navBottomPx}px\n" +
+                            "(screenshot these numbers with the gap visible)\n",
+                        TermDim
+                    )
                     afterCommand()
                 }
                 "echo" -> {

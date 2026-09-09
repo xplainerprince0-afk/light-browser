@@ -19,6 +19,34 @@ object AlpineEnv {
 
     fun alpineDir(sandbox: File): File = File(sandbox, "alpine")
 
+    /** Default interactive profile: short `$` prompt (not the full path). */
+    private const val DEFAULT_PROFILE =
+        "PS1='\$ '\n" +
+            "alias ll='ls -la'\n" +
+            "alias la='ls -a'\n"
+
+    /**
+     * Runtime dirs + files every shell needs: tmp (Bun/Rust honor $TMPDIR;
+     * /data/local/tmp is EACCES for apps), lib dir for sidecar .so files,
+     * XDG homes, and ~/.profile with the short prompt (mksh sources $ENV).
+     */
+    fun ensureRuntimeFiles(sandbox: File) {
+        try {
+            sandbox.mkdirs()
+            File(sandbox, "bin").mkdirs()
+            File(sandbox, "lib").mkdirs()
+            File(sandbox, "tmp").mkdirs()
+            File(sandbox, ".cache").mkdirs()
+            File(sandbox, ".config").mkdirs()
+            File(sandbox, ".local/share").mkdirs()
+            File(sandbox, ".local/state").mkdirs()
+            val profile = File(sandbox, ".profile")
+            if (!profile.exists() || profile.length() == 0L) {
+                try { profile.writeText(DEFAULT_PROFILE) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
     fun isInstalled(sandbox: File): Boolean {
         val root = alpineDir(sandbox)
         return File(root, "etc/alpine-release").exists() ||
@@ -239,10 +267,29 @@ object AlpineEnv {
         } else {
             "${sandbox.absolutePath}/bin:/system/bin:/system/xbin:/vendor/bin"
         }
+        val sb = sandbox.absolutePath
+        val tmp = "$sb/tmp"
+        // LD_LIBRARY_PATH: sidecar .so files (e.g. libopencode-crhandler.so)
+        // live in sandbox/lib/… — Bionic honors this; DT_RUNPATH/$ORIGIN
+        // is unreliable on older APIs, so we export it explicitly.
+        val ldPath = "$sb/lib/opencode:$sb/lib:$sb/bin"
         return arrayOf(
-            "HOME=${sandbox.absolutePath}",
+            "HOME=$sb",
             "PWD=${cwd.absolutePath}",
             "PATH=$path",
+            "LD_LIBRARY_PATH=$ldPath",
+            "TMPDIR=$tmp",
+            "TEMP=$tmp",
+            "TMP=$tmp",
+            "BUN_TMPDIR=$tmp",
+            "XDG_CACHE_HOME=$sb/.cache",
+            "XDG_CONFIG_HOME=$sb/.config",
+            "XDG_DATA_HOME=$sb/.local/share",
+            "XDG_STATE_HOME=$sb/.local/state",
+            // Short `$` prompt for interactive shells (mksh sources $ENV);
+            // EXEC sh -c runs ignore both.
+            "PS1=\$ ",
+            "ENV=$sb/.profile",
             "TERM=xterm-256color",
             "HOSTNAME=alpine",
             "ALPINE_ROOT=${alpine.absolutePath}",
