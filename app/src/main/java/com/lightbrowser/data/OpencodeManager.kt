@@ -67,7 +67,100 @@ object OpencodeManager {
         } catch (_: Exception) { false }
     }
 
-    /** Repair path for `opencode-fix`: re-chmod + report. Empty string = OK detail. */
+        /**
+     * System linker for launching the binary. Since Android 10, SELinux W^X
+     * denies untrusted apps direct execve() of app_data_file (our +x bit can
+     * read fine while the kernel still says EACCES — same failure Termux hit).
+     * Executing via /system/bin/linker64 <elf> only needs READ on our file,
+     * which is allowed. Returns null when no linker exists (32-bit fallback).
+     */
+    fun systemLinker(): File? {
+        return listOf("/system/bin/linker64", "/system/bin/linker")
+            .map { File(it) }
+            .firstOrNull { try { it.exists() } catch (_: Exception) { false } }
+    }
+
+    /** Shell fragment that launches [bin]: linker-prefixed when available. */
+    fun launchArgv(bin: File): String {
+        val q = "'" + bin.absolutePath.replace("'", "'\\''") + "'"
+        val link = systemLinker()
+        return if (link != null) "${link.absolutePath} $q" else q
+    }
+
+    /** PT_INTERP of an ELF (e.g. /lib/ld-linux-… = glibc build needing proot). */
+    fun elfInterp(bin: File): String? {
+        return try {
+            val raf = java.io.RandomAccessFile(bin, "r")
+            try {
+                val magic = ByteArray(4); raf.readFully(magic)
+                if (!(magic[0] == 0x7F.toByte() && magic[1] == 'E'.code.toByte() &&
+                        magic[2] == 'L'.code.toByte() && magic[3] == 'F'.code.toByte())
+                ) return null
+                val is64 = raf.readByte() == 2.toByte()
+                val le = raf.readByte() == 1.toByte()
+                fun u16(off: Long): Int {
+                    raf.seek(off)
+                    val b = ByteArray(2); raf.readFully(b)
+                    return if (le) (b[0].toInt() and 0xFF) or ((b[1].toInt() and 0xFF) shl 8)
+                    else ((b[0].toInt() and 0xFF) shl 8) or (b[1].toInt() and 0xFF)
+                }
+                fun u32(off: Long): Long {
+                    raf.seek(off)
+                    val b = ByteArray(4); raf.readFully(b)
+                    var v = 0L
+                    for (i in 0..3) {
+                        val by = b[if (le) i else 3 - i].toLong() and 0xFF
+                        v = v or (by shl (8 * i))
+                    }
+                    return v
+                }
+                fun u64(off: Long): Long {
+                    raf.seek(off)
+                    val b = ByteArray(8); raf.readFully(b)
+                    var v = 0L
+                    for (i in 0..7) {
+                        val by = b[if (le) i else 7 - i].toLong() and 0xFF
+                        v = v or (by shl (8 * i))
+                    }
+                    return v
+                }
+                val (phoff, phentsize, phnum) = if (is64) Triple(u64(0x20), u16(0x36), u16(0x38))
+                else Triple(u32(0x1C), u16(0x2A), u16(0x2C))
+                for (i in 0 until phnum) {
+                    val base = phoff + i * phentsize
+                    val type = u32(base)
+                    if (type == 3L) { // PT_INTERP
+                        val (off, sz) = if (is64) u64(base + 8) to u64(base + 32)
+                        else u32(base + 4) to u32(base + 16)
+                        raf.seek(off)
+                        val s = ByteArray(sz.coerceAtMost(256).toInt()); raf.readFully(s)
+                        return String(s).trim('\u0000')
+                    }
+                }
+                null
+            } finally { try { raf.close() } catch (_: Exception) {} }
+        } catch (_: Exception) { null }
+    }
+
+    /** One-shot diagnostic for `opencode-diag`. */
+    fun diagnose(ctx: Context): String {
+        val app = ctx.applicationContext
+        val f = binFile(app)
+        if (!f.exists()) return "binary missing — run `opencode-install`."
+        val sb = StringBuilder()
+        sb.append("size=${f.length() / 1024}KB r=${f.canRead()} w=${f.canWrite()} x=${f.canExecute()}\n")
+        val interp = elfInterp(f)
+        sb.append("interp=${interp ?: "?"}\n")
+        if (interp != null && interp.contains("ld-linux")) {
+            sb.append("glibc-linked: needs the glibc prefix/proot — standalone run will fail.\n")
+        }
+        val link = systemLinker()
+        sb.append("linker=${link?.absolutePath ?: "none (direct exec only)"}\n")
+        sb.append("archOk=$archOk()")
+        return sb.toString()
+    }
+
+    /** Repair path for `opencode-fix`: re-chmod + report. */
     fun fixInstall(ctx: Context): String {
         val app = ctx.applicationContext
         val f = binFile(app)

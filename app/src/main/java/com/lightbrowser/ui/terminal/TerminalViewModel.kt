@@ -643,7 +643,7 @@ class TerminalViewModel : ViewModel() {
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> {
-                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-fix | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent> (dev tools via apk)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-fix | opencode-diag | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent> (dev tools via apk)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
                     afterCommand()
                 }
                 "clear" -> clear()
@@ -743,6 +743,12 @@ class TerminalViewModel : ViewModel() {
                     } catch (e: Exception) { print("fix error: ${e.message}\n", TermRed) }
                     afterCommand()
                 }
+                "opencode-diag" -> {
+                    try {
+                        print(com.lightbrowser.data.OpencodeManager.diagnose(AppCtx.ctx) + "\n", TermDim)
+                    } catch (e: Exception) { print("diag error: ${e.message}\n", TermRed) }
+                    afterCommand()
+                }
                 "opencode-status", "oc-status" -> {
                     try {
                         val app = AppCtx.ctx
@@ -769,8 +775,11 @@ class TerminalViewModel : ViewModel() {
                             print("Permission denied — auto-fix failed, run `opencode-fix`\n", TermRed)
                             afterCommand()
                         } else {
+                            // SELinux W^X blocks direct execve() of app_data_file
+                            // (canExecute lies) — launch via the system linker.
+                            val argv = com.lightbrowser.data.OpencodeManager.launchArgv(bin)
                             // Long timeout: agent runs take minutes. Redirect to file for more output.
-                            runShell("${bin.absolutePath} $arg", timeoutSec = 300)
+                            runShell("$argv $arg", timeoutSec = 300)
                         }
                     }
                 }

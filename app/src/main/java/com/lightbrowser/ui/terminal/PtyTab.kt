@@ -1,8 +1,11 @@
 package com.lightbrowser.ui.terminal
 
 import android.util.Log
+import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.inputmethod.InputMethodManager
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,10 +65,35 @@ fun PtyTab(
 
     val sd = remember(app) { File(app.filesDir, "sandbox").apply { mkdirs() } }
     val ocBin = remember(sd) { File(sd, "bin/opencode") }
-    val opencodeOk = useOpencode && ocBin.exists() && ocBin.canExecute()
-    val shellPath = if (opencodeOk) ocBin.absolutePath else "/system/bin/sh"
-    val shellArgs = if (opencodeOk) arrayOf(ocBin.absolutePath) else arrayOf("sh")
+    // Don't gate on canExecute(): SELinux can report +x yet refuse direct
+    // execve (W^X) — we launch via the system linker instead (see OpencodeManager).
+    val opencodeOk = useOpencode && ocBin.exists() && ocBin.length() > 1_000_000
+    val sysLinker = remember {
+        listOf("/system/bin/linker64", "/system/bin/linker").firstOrNull { File(it).exists() }
+    }
+    val shellPath = when {
+        opencodeOk && sysLinker != null -> sysLinker
+        opencodeOk -> ocBin.absolutePath
+        else -> "/system/bin/sh"
+    }
+    val shellArgs = when {
+        opencodeOk && sysLinker != null -> arrayOf(sysLinker, ocBin.absolutePath)
+        opencodeOk -> arrayOf(ocBin.absolutePath)
+        else -> arrayOf("sh")
+    }
     val env = remember(sd) { AlpineEnv.buildEnvironment(sd, sd) + "COLORTERM=truecolor" }
+    // setTextSize() takes RAW PX (its "dp" javadoc lies) — Termux multiplies by
+    // density. 13px raw ≈ 4dp: the tiny-text + broken-TUI-grid bug.
+    val fontPx = remember(ctx) {
+        try {
+            TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, 13f, ctx.resources.displayMetrics
+            ).toInt().coerceAtLeast(13)
+        } catch (_: Exception) { 39 }
+    }
+    val imm = remember(ctx) {
+        ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    }
 
     val sessionClient = remember {
         object : TerminalSessionClient {
@@ -170,13 +198,29 @@ fun PtyTab(
             OutlinedButton(onClick = onToggleTarget) {
                 Text(if (useOpencode) "Shell" else "opencode", fontSize = 12.sp)
             }
+            OutlinedButton(
+                onClick = {
+                    // Explicit keyboard toggle: focusing the View on composition
+                    // double-lifts the keys (View pan + Compose imePadding), so
+                    // the keyboard now opens ONLY on user tap / this button.
+                    try {
+                        val v = termView
+                        if (v != null) {
+                            v.requestFocus()
+                            try { imm.showSoftInput(v, 0) } catch (_: Exception) {}
+                        }
+                    } catch (_: Exception) {}
+                }
+            ) {
+                Text("⌨", fontSize = 12.sp)
+            }
         }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AndroidView(
                 factory = { c ->
                     TerminalView(c, null).also { v ->
                         v.setTerminalViewClient(viewClient)
-                        try { v.setTextSize(13) } catch (_: Exception) {}
+                        try { v.setTextSize(fontPx) } catch (_: Exception) {}
                         try { v.setBackgroundColor(Color.Black.toArgb()) } catch (_: Exception) {}
                         v.isFocusable = true
                         v.isFocusableInTouchMode = true
@@ -185,8 +229,11 @@ fun PtyTab(
                 },
                 update = { v ->
                     v.setTerminalViewClient(viewClient)
+                    // Idempotent (no-op when the same session is attached);
+                    // updateSize() inside initializes the emulator once the
+                    // view has a non-zero size. No focus here — keyboard opens
+                    // on user tap / ⌨ only (forced focus double-lifts keys).
                     session?.let { s -> try { v.attachSession(s) } catch (_: Exception) {} }
-                    try { if (v.isFocused) Unit else v.requestFocus() } catch (_: Exception) {}
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -241,7 +288,5 @@ fun PtyTab(
         }
     }
 
-    LaunchedEffect(termView) {
-        try { termView?.requestFocus() } catch (_: Exception) {}
-    }
+    // Focus happens on user tap / ⌨ (see above), never on composition.
 }
