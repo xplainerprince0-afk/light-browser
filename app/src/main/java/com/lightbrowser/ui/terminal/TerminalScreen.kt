@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -235,8 +234,9 @@ fun TerminalScreen(
                 })
             )
 
-            // ── Keys hug the keyboard: single tight block, no dead space ──
-            Column(modifier = Modifier.fillMaxWidth().imePadding()) {
+            // ── Keys stay glued under the input; the keyboard overlays ──
+            // this whole zone (no imePadding — that made keys ride up) ──
+            Column(modifier = Modifier.fillMaxWidth()) {
                 TermKeyRow(
                     keys = listOf(
                         "ESC" to { vm.insertText("\u001B") },

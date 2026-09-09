@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
@@ -281,9 +283,9 @@ private fun AppShell(
             }
         }
     ) {
-        // contentWindowInsets = safeDrawing (no IME) — inputs add imePadding themselves.
-        // This is the exact fix for the old black-gap-above-keyboard bug.
-        Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { inner ->
+        // safeDrawing INCLUDES the IME — exclude it so the keyboard overlays
+        // the pinned bottom zone instead of pushing it up (adjustNothing).
+        Scaffold(contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime)) { inner ->
             BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(inner).consumeWindowInsets(inner)) {
                 val wide = maxWidth >= 600.dp
                 Row(modifier = Modifier.fillMaxSize()) {
@@ -321,15 +323,15 @@ private fun AppShell(
                             SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
                         }
                         // Bottom zone is pinned: never hides, never animates, never rides
-                        // the keyboard (that AnimatedVisibility dance was the lag). The
-                        // keyboard overlays it (adjustNothing); Terminal keys lift
-                        // themselves with their own imePadding.
+                        // the keyboard. The keyboard overlays it (adjustNothing +
+                        // IME excluded above); terminal keys stay glued below the
+                        // input with no imePadding of their own.
                         Column {
                             if (tab != Tab.Music) {
                                 MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
                             }
                             if (!wide) {
-                                NavigationBar {
+                                NavigationBar(windowInsets = WindowInsets.navigationBars) {
                                     Tab.entries.filter { it.inBar }.forEach { t ->
                                         NavigationBarItem(
                                             selected = tab == t,
