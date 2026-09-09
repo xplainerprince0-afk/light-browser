@@ -13,6 +13,7 @@ import com.lightbrowser.data.AppCtx
 import com.lightbrowser.data.HistoryStorage
 import com.lightbrowser.data.Prefs
 import com.lightbrowser.data.ScriptStorage
+import com.lightbrowser.data.TermEnv
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
