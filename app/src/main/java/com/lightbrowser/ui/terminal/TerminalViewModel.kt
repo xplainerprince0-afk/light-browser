@@ -1217,11 +1217,13 @@ class TerminalViewModel : ViewModel() {
                     "", "help" -> out(
                             "b open <url> | back | forward | reload | stop | url | title | home\n" +
                             "b tabs | tab <n> | new <url> | close [n] — tab control\n" +
-                            "b js <expr> | text [max] | dom [css] | snap\n" +
+                            "b js <expr> | text [max] | read [max] — article text only | dom [css] | snap\n" +
                             "b click <ref|css> | fill <ref|css> <val> [--submit] | submit <form|css>\n" +
+                            "b hover <ref|css> — reveal menus | b select <sel> <val> — dropdowns\n" +
+                            "b store <name> <css> | stores | unstore <name> — named selectors\n" +
                             "b pos <ref|css> → coords | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]\n" +
                             "b find <text> | next | prev | b scroll-to <x> <y> | b scroll [px]\n" +
-                            "b shot | console [n] | cookies [get [url] | set \"k=v\" [url] | clear]\n" +
+                            "b shot [--full] | console [n] | cookies [get [url] | set \"k=v\" [url] | clear]\n" +
                             "b history [n] | downloads | save <name>\n" +
                             "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
                             "b record start|stop|save <n>|list | serve\n", TermDim
@@ -1299,7 +1301,7 @@ class TerminalViewModel : ViewModel() {
                     "prev" -> com.lightbrowser.data.BrowserAgent.findNext(false)
                     "pos" -> {
                         // Resolve ref/css → screen coords (CSS px). Feed them to `b tap`.
-                        val sel = parts.getOrNull(1) ?: ""
+                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
                         if (sel.isBlank()) out("Usage: b pos <ref|css>  (try b snap first)\n", TermRed)
                         else {
                             val raw = com.lightbrowser.data.BrowserAgent.locateBlocking(sel)
@@ -1391,7 +1393,7 @@ class TerminalViewModel : ViewModel() {
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
                     }
                     "dom" -> {
-                        val sel = parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "body"
+                        val sel = BStore.resolve(parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "body")
                         val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
                         val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$esc');return e?e.outerHTML.slice(0,20000):'ERR no-node';}catch(e){return 'ERR '+e;}})()")
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
@@ -1401,7 +1403,7 @@ class TerminalViewModel : ViewModel() {
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
                     }
                     "click" -> {
-                        val sel = parts.getOrNull(1) ?: ""
+                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
                         if (sel.isBlank()) out("Usage: b click <ref|css>\n", TermRed)
                         else {
                             val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
@@ -1419,7 +1421,7 @@ class TerminalViewModel : ViewModel() {
                         val sp = rest.indexOf(' ')
                         if (sp < 0) out("Usage: b fill <ref|css> <value> [--submit]\n", TermRed)
                         else {
-                            val sel = rest.substring(0, sp).replace("\\", "\\\\").replace("'", "\\'")
+                            val sel = BStore.resolve(rest.substring(0, sp)).replace("\\", "\\\\").replace("'", "\\'")
                             val v = rest.substring(sp + 1).replace("\\", "\\\\").replace("'", "\\'")
                             var r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.fill('$sel','$v');}catch(e){return 'ERR '+e;}})()")
                             if (r.contains("OK") && submit) {
@@ -1491,8 +1493,10 @@ class TerminalViewModel : ViewModel() {
                         }
                     }
                     "shot" -> {
-                        out("Capturing…\n", TermDim)
-                        val path = com.lightbrowser.data.BrowserAgent.captureShot()
+                        val full = cmd.contains("--full")
+                        out(if (full) "Capturing full page…\n" else "Capturing…\n", TermDim)
+                        val path = if (full) com.lightbrowser.data.BrowserAgent.captureFullShot()
+                        else com.lightbrowser.data.BrowserAgent.captureShot()
                         if (path != null) out("Saved $path\nOpen it in Files → Sandbox → shots.\n", TermGreen)
                         else out("Shot failed (open the Browser tab first).\n", TermRed)
                     }
@@ -1551,12 +1555,62 @@ class TerminalViewModel : ViewModel() {
                         } catch (e: Exception) { out("downloads error: ${e.message}\n", TermRed) }
                     }
                     "submit" -> {
-                        val sel = parts.getOrNull(1) ?: ""
+                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
                         if (sel.isBlank()) out("Usage: b submit <form|css>\n", TermRed)
                         else {
                             val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
                             val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$esc');var f=e?(e.form||e.closest('form')||(e.tagName==='FORM'?e:null)):null;if(!f)return 'ERR no-form';f.submit();return 'OK submitted';}catch(e){return 'ERR '+e;}})()")
                             out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                        }
+                    }
+                    "read" -> {
+                        val max = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(500, 60_000) ?: 6000
+                        val r = com.lightbrowser.data.BrowserAgent.eval(
+                            com.lightbrowser.data.BrowserAgent.readJs(max), maxChars = max + 4000
+                        )
+                        wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
+                    }
+                    "hover" -> {
+                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
+                        if (sel.isBlank()) out("Usage: b hover <ref|css>  (reveals menus/tooltips)\n", TermRed)
+                        else {
+                            val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
+                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$esc');if(!e)return 'ERR no-node';var r=e.getBoundingClientRect();['mouseover','mouseenter','mousemove'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));});try{e.focus();}catch(x){}return 'OK hover '+Math.round(r.left)+','+Math.round(r.top);}catch(e){return 'ERR '+e;}})()")
+                            out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                        }
+                    }
+                    "select" -> {
+                        val rest = cmd.removePrefix("select").trim()
+                        val sp = rest.indexOf(' ')
+                        if (sp < 0) out("Usage: b select <sel> <value-or-text>\n", TermRed)
+                        else {
+                            val sel = BStore.resolve(rest.substring(0, sp)).replace("\\", "\\\\").replace("'", "\\'")
+                            val v = rest.substring(sp + 1).replace("\\", "\\\\").replace("'", "\\'")
+                            val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$sel');if(!e)return 'ERR no-node';if(e.tagName!=='SELECT')return 'ERR not-a-select';var v='$v';var hit=false;for(var i=0;i<e.options.length;i++){if(e.options[i].value===v||e.options[i].text.trim()===v){e.selectedIndex=i;hit=true;break;}}if(!hit)e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'OK selected '+e.selectedIndex;}catch(e){return 'ERR '+e;}})()")
+                            out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                        }
+                    }
+                    "store" -> {
+                        val name = parts.getOrNull(1) ?: ""
+                        val sel = parts.getOrNull(2) ?: ""
+                        if (name.isBlank() || sel.isBlank()) out("Usage: b store <name> <css>  (then: b click <name>)\n", TermRed)
+                        else if (!name.matches(Regex("[a-zA-Z0-9_-]+"))) out("Name must be [a-zA-Z0-9_-]+\n", TermRed)
+                        else {
+                            BStore.set(name, sel)
+                            out("Stored '$name' → $sel\n", TermGreen)
+                        }
+                    }
+                    "stores" -> {
+                        val all = BStore.all()
+                        if (all.isEmpty()) out("(no stored selectors — b store <name> <css>)\n", TermDim)
+                        else all.forEach { (k, v) -> out("$k  →  $v\n", TermWhite) }
+                    }
+                    "unstore" -> {
+                        val name = parts.getOrNull(1) ?: ""
+                        if (name.isBlank()) out("Usage: b unstore <name>\n", TermRed)
+                        else {
+                            BStore.remove(name)
+                            out("Removed '$name'\n", TermGreen)
                         }
                     }
                     "save" -> {
@@ -1624,8 +1678,9 @@ class TerminalViewModel : ViewModel() {
 /** Built-in `b` command heads — aliases may not shadow these. */
 private val BuiltinB = setOf(
     "help", "open", "new", "tabs", "tab", "close", "home", "back", "fwd", "forward",
-    "reload", "stop", "url", "title", "js", "text", "dom", "snap", "click",
-    "fill", "submit", "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
+    "reload", "stop", "url", "title", "js", "text", "read", "dom", "snap", "click",
+    "fill", "submit", "hover", "select", "store", "stores", "unstore",
+    "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
     "alias", "unalias"
 )
@@ -1687,5 +1742,55 @@ object BrowserAliases {
         template = template.replace(Regex("\\$[1-9]"), "")
         template = template.replace("\$@", args.joinToString(" "))
         return template.trim().take(1000).ifBlank { null }
+    }
+}
+
+/**
+ * Named selectors: `b store login "#user"` then `b click login`.
+ * SharedPreferences-backed (survives restarts); resolved in click/fill/
+ * pos/hover/select/submit/dom on EXEC and in HTTP routes for PTY.
+ */
+object BStore {
+    private const val PREF = "b_store"
+    private const val KEY = "stores"
+
+    private fun prefs() = try {
+        com.lightbrowser.data.AppCtx.ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+    } catch (_: Exception) { null }
+
+    fun all(): Map<String, String> {
+        return try {
+            val raw = prefs()?.getString(KEY, null) ?: return emptyMap()
+            val o = org.json.JSONObject(raw)
+            buildMap {
+                o.keys().forEach { k ->
+                    try { put(k, o.optString(k, "")) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    fun set(name: String, sel: String) {
+        try {
+            val o = org.json.JSONObject()
+            all().forEach { (k, v) -> o.put(k, v) }
+            o.put(name, sel.take(500))
+            prefs()?.edit()?.putString(KEY, o.toString())?.apply()
+        } catch (_: Exception) {}
+    }
+
+    fun remove(name: String) {
+        try {
+            val o = org.json.JSONObject()
+            all().filterKeys { it != name }.forEach { (k, v) -> o.put(k, v) }
+            prefs()?.edit()?.putString(KEY, o.toString())?.apply()
+        } catch (_: Exception) {}
+    }
+
+    /** Stored name → selector, else the arg itself. */
+    fun resolve(arg: String): String {
+        val a = arg.trim()
+        if (a.isEmpty()) return arg
+        return all()[a] ?: arg
     }
 }

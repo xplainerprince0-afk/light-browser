@@ -40,11 +40,15 @@ object AlpineEnv {
             "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
             "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
             "  case \"\$_b_c\" in\n" +
-            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|find|snap|text|js|shot|console|cookies|history|downloads|click|fill|submit|pos|tap|swipe|scroll|scrollto (server must be on)';;\n" +
+            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|find|snap|text|read|js|shot|console|cookies|history|downloads|click|fill|submit|hover|select|store|pos|tap|swipe|scroll|scrollto (server must be on)';;\n" +
             "    status|url|title) _b_get '/status';;\n" +
             "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
             "    tabs|home|back|forward|reload|stop|snap|text|console|downloads) _b_get \"/\$_b_c\";;\n" +
-            "    shot) _b_get '/shot';;\n" +
+            "    read) _b_get '/read' --data-urlencode \"max=\${1:-6000}\";;\n" +
+            "    shot) if [ \"\$1\" = \"--full\" ]; then _b_get '/shot' --data-urlencode \"full=1\"; else _b_get '/shot'; fi;;\n" +
+            "    hover) _b_get '/hover' --data-urlencode \"sel=\$1\";;\n" +
+            "    select) _b_sel=\"\$1\"; shift; _b_get '/select' --data-urlencode \"sel=\$_b_sel\" --data-urlencode \"value=\$*\";;\n" +
+            "    store) _b_sub=\"\$1\"; case \"\$_b_sub\" in list|'') _b_get '/store';; remove|unstore) _b_get '/store' --data-urlencode \"op=remove\" --data-urlencode \"name=\$2\";; *) _b_get '/store' --data-urlencode \"op=set\" --data-urlencode \"name=\$1\" --data-urlencode \"sel=\$2\";; esac;;\n" +
             "    close) _b_get '/close' --data-urlencode \"i=\${1:--1}\";;\n" +
             "    tab) _b_get '/switch' --data-urlencode \"i=\$1\";;\n" +
             "    cookies) _b_get '/cookies' --data-urlencode \"op=\${1:-get}\" --data-urlencode \"value=\$2\" --data-urlencode \"url=\$3\";;\n" +

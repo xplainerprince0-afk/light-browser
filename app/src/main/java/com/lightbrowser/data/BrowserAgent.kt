@@ -62,6 +62,19 @@ object BrowserAgent {
     fun clearConsole() { consoleBuf.clear() }
 
     /** Viewport screenshot → sandbox/shots file. Returns path or null. Main-safe (no deadlock). */
+    /** Compact readability extraction (article/main → largest text block,
+     *  chrome stripped). Single source for EXEC `b read` and `/read`. */
+    fun readJs(max: Int): String = "(function(){try{" +
+        "var root=document.querySelector('article')||document.querySelector('main')||document.querySelector('[role=main]')||document.body;" +
+        "var c=root.cloneNode(true);" +
+        "var k=c.querySelectorAll('script,style,nav,header,footer,aside,form');" +
+        "for(var j=k.length-1;j>=0;j--){try{k[j].remove();}catch(x){}}" +
+        "var out=[],ps=c.querySelectorAll('p,h1,h2,h3,li,pre');" +
+        "for(var i=0;i<ps.length;i++){var s=(ps[i].textContent||'').replace(/\\s+/g,' ').trim();if(s.length>40)out.push(s);}" +
+        "var t=out.join('\\n\\n');if(!t)t=(c.textContent||'').replace(/\\s+/g,' ').trim();" +
+        "return (document.title||'')+'\\n\\n'+t.slice(0," + max + ");" +
+        "}catch(e){return 'ERR '+e;}})()"
+
     fun captureShot(): String? {
         // Fast path: already on Main — do directly, no post+wait.
         if (Looper.myLooper() == Looper.getMainLooper()) return captureShotOnMain()
@@ -105,6 +118,50 @@ object BrowserAgent {
             val files = dir.listFiles()?.sortedByDescending { it.lastModified() } ?: return
             files.drop(keep).forEach { try { it.delete() } catch (_: Exception) {} }
         } catch (_: Exception) {}
+    }
+
+    /** Full-page screenshot via capturePicture (viewport-only is captureShot).
+     *  Height-capped (~6MP) so endless pages can't OOM. Main-safe. */
+    fun captureFullShot(): String? {
+        if (Looper.myLooper() == Looper.getMainLooper()) return captureFullShotOnMain()
+        val f = CompletableFuture<String?>()
+        mainHandler.post {
+            try { f.complete(captureFullShotOnMain()) } catch (e: Exception) {
+                Log.w(TAG, "shotfull", e)
+                try { f.complete(null) } catch (_: Exception) {}
+            }
+        }
+        return try {
+            f.get(20, TimeUnit.SECONDS)
+        } catch (_: Exception) { null }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun captureFullShotOnMain(): String? {
+        return try {
+            val wv = webViewProvider?.invoke() ?: return null
+            val pic = try { wv.capturePicture() } catch (_: Exception) { return null }
+            val pw = pic.width; val ph = pic.height
+            if (pw <= 0 || ph <= 0) return null
+            var scale = (1280f / pw).coerceAtMost(1f)
+            val est = pw.toDouble() * ph * scale * scale
+            if (est > 6_000_000.0) scale = Math.sqrt(6_000_000.0 / (pw.toDouble() * ph)).toFloat()
+            val bw = (pw * scale).toInt().coerceAtLeast(1)
+            val bh = (ph * scale).toInt().coerceAtLeast(1)
+            val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(bmp)
+            c.scale(scale, scale)
+            pic.draw(c)
+            val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
+            pruneDir(dir, 30)
+            val out = java.io.File(dir, "full_${System.currentTimeMillis()}.png")
+            java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+            try { bmp.recycle() } catch (_: Exception) {}
+            out.absolutePath
+        } catch (e: Exception) {
+            Log.w(TAG, "shotfull", e)
+            null
+        }
     }
 
     // ── WebView ops (always on Main) ──
@@ -662,7 +719,7 @@ object BrowserAgent {
                 """{"ok":true}"""
             }
             "/pos" -> {
-                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
                 val raw = locateBlocking(sel, 12).take(4_000)
                 JSONObject().put("ok", !raw.startsWith("ERR")).put("rect", raw).toString()
             }
@@ -708,12 +765,12 @@ object BrowserAgent {
             }
             "/snap" -> evalBlocking("(function(){try{return window.LightAgent?window.LightAgent.snapshot():'ERR no-shim';}catch(e){return 'ERR '+e;}})()", 12)
             "/click" -> {
-                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
                 val esc = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
                 val raw = evalBlocking("(function(){try{return window.LightAgent?window.LightAgent.click('$esc'):'ERR no-shim';}catch(e){return 'ERR '+e;}})()", 12)
                 JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
             }
-            "/fill" -> {                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+            "/fill" -> {                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
                 val value = q["value"] ?: ""
                 val e1 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
                 val e2 = value.replace("\\", "\\\\").replace("'", "\\'").take(2000)
@@ -753,15 +810,58 @@ object BrowserAgent {
                     }
                 }
             }
+            "/read" -> {
+                val max = q["max"]?.toIntOrNull()?.coerceIn(500, 60_000) ?: 6000
+                val raw = evalBlocking(readJs(max), 12).take(max + 4000)
+                JSONObject().put("ok", !raw.startsWith("ERR")).put("text", raw).toString()
+            }
+            "/hover" -> {
+                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
+                val e1 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val raw = evalBlocking("(function(){try{var e=document.querySelector('$e1');if(!e)return 'ERR no-node';var r=e.getBoundingClientRect();['mouseover','mouseenter','mousemove'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));});try{e.focus();}catch(x){}return 'OK hover '+Math.round(r.left)+','+Math.round(r.top);}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
+            }
+            "/select" -> {
+                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
+                val value = q["value"] ?: ""
+                val e1 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val e2 = value.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val raw = evalBlocking("(function(){try{var e=document.querySelector('$e1');if(!e)return 'ERR no-node';if(e.tagName!=='SELECT')return 'ERR not-a-select';var v='$e2';var hit=false;for(var i=0;i<e.options.length;i++){if(e.options[i].value===v||e.options[i].text.trim()===v){e.selectedIndex=i;hit=true;break;}}if(!hit)e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'OK selected '+e.selectedIndex;}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
+            }
+            "/store" -> {
+                val S = com.lightbrowser.ui.terminal.BStore
+                when (q["op"] ?: "list") {
+                    "set" -> {
+                        val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""
+                        val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+                        if (!name.matches(Regex("[a-zA-Z0-9_-]+"))) return """{"ok":false,"err":"bad name"}"""
+                        S.set(name, sel)
+                        """{"ok":true}"""
+                    }
+                    "remove" -> {
+                        S.remove(q["name"] ?: "")
+                        """{"ok":true}"""
+                    }
+                    else -> {
+                        val o = JSONObject()
+                        S.all().forEach { (k, v) -> o.put(k, v) }
+                        JSONObject().put("ok", true).put("stores", o).toString()
+                    }
+                }
+            }
             "/shot" -> awaitMain {
-                // Already on Main — capture directly.
-                val path = try { captureShotOnMain() } catch (_: Exception) { null }
+                // Already on Main — capture directly. full=1 renders the whole
+                // page via capturePicture (capped, may differ from viewport).
+                val path = try {
+                    if (q["full"] == "1") captureFullShotOnMain() else captureShotOnMain()
+                } catch (_: Exception) { null }
                 if (path != null) JSONObject().put("ok", true).put("path", path).toString()
                 else """{"ok":false,"err":"shot failed"}"""
             }
             "/tabs" -> awaitMain {
                 // Already on Main — TabBus reads ViewModel state directly.
-                val arr = org.json.JSONArray()
+                val arr = org.json.JSONArray()                val arr = org.json.JSONArray()
                 try {
                     com.lightbrowser.ui.browser.TabBus.listTabs?.invoke()?.forEach { t ->
                         arr.put(JSONObject().put("i", t.index).put("url", t.url)
@@ -792,7 +892,7 @@ object BrowserAgent {
                 """{"ok":true}"""
             }
             "/submit" -> {
-                val sel = q["sel"] ?: return """{"ok":false,"err":"missing sel"}"""
+                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
                 val e1 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
                 val raw = evalBlocking("(function(){try{var e=document.querySelector('$e1');var f=e?(e.form||e.closest('form')||(e.tagName==='FORM'?e:null)):null;if(!f)return 'ERR no-form';f.submit();return 'OK submitted';}catch(e){return 'ERR '+e;}})()", 12)
                 JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
@@ -828,7 +928,7 @@ object BrowserAgent {
                 }
                 """{"ok":true}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /text /snap /js /click /fill /submit /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot /history /downloads"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /text /read /snap /js /click /fill /submit /hover /select /store /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot /history /downloads"}"""
         }
     }
 }
