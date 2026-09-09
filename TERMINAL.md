@@ -2,18 +2,18 @@
 
 Two terminals in one tab. **EXEC** = quick non-interactive shell (type, Enter,
 read output). **PTY** = real Linux terminal (Termux emulator, raw mode,
-alt-screen, resize) for full-screen TUIs like `opencode`. Toggle with the
-slim-bar **PTY/EXEC** chip.
+alt-screen, resize) for full-screen TUIs like `opencode`.
 
-**Top bar is one slim row:** `≡` menu (tap *or* long-press the corner, Termux
-style) + mode chip + context (status `●`, or PTY's `Shell/opencode` + `⌨`).
-Everything else lives in the **drawer**: sessions list + `+ New session`
-(max 8), Agent bridge, Follow output, text size, Rename, Paste, Copy all,
-Clear, Kill. The Agent 🤖 icon is gone from the top — it's in the drawer.
+**No top bar:** the terminal is fullscreen with a tiny translucent status
+(`● EXEC · main`, `● PTY · opencode`) floating top-right. The **left drawer**
+holds the EXEC/PTY switch at the very top (Termux style), then sessions +
+`+ New session` (max 8), Agent bridge, Follow output, text size,
+Rename/Paste/Copy/Clear/Kill, PTY keyboard. Open it with a **long-press on
+the left edge** (taps pass through, middle swipes never trigger it).
 
 **Keys:** two rows, **swipe sideways** for the full set (`ESC TAB / - HOME ↑
 END PGUP PGDN |` and `CTRL ALT ^C ^D ← ↓ → ~ : ;`). They hug the keyboard
-(ime height minus nav zone — no more floating gap).
+(keys end exactly at screenBottom − ime — measured, not guessed).
 
 > Golden path on a fresh install:
 > `install-alpine` → `toolbox-install essentials` → `opencode-install` →
@@ -112,14 +112,24 @@ scrollto. `record/serve/alias` stay EXEC-only (stateful, no HTTP route).
 
 ## PTY mode
 
-- **Shell** button = plain `/system/bin/sh` in sandbox. **opencode** button =
-  relaunches the session straight into the `opencode` TUI (install it first).
-- `⌨` button forces the keyboard (otherwise it opens on tap only — this avoids
-  the double-lift gap).
-- Own key rows: same layout, but arrows/HOME/END/PGUP send real escape
-  sequences and `^C/^D` send `0x03/0x04` through the pty (real SIGINT semantics).
+- **Single target, no toggle:** opencode TUI when installed, plain shell
+  otherwise (status label tells you which). Fewer buttons, more screen.
+- `⌨` (drawer) forces the keyboard; otherwise it opens on tap. Focus is
+  handed back automatically after every key/drawer tap (no invisible typing).
+- Own key rows: same layout, but arrows/HOME/END send real escape sequences
+  and `^C/^D` send `0x03/0x04` through the pty (real SIGINT semantics).
+- Typing `opencode` in the PTY shell runs an `opencode()` shell function
+  (linker path) — deterministic, no toggle dance needed.
 - Session exits → Restart / back-to-EXEC overlay. Font follows density
   (13dip); TUI geometry tracks resizes via `SIGWINCH`.
+
+### Why `b` is a shim in PTY (not built in)
+
+PTY is a raw kernel pty: your keystrokes go straight to `mksh`, our app never
+sees the line, so we *cannot* intercept `b …` the way EXEC does (EXEC owns its
+text field). Hence `b()` is a shell function in `~/.profile` that calls the
+same HTTP bridge (`b-setup` refreshes it; needs server on + `curl`). Same
+commands, same results — different road.
 
 ## Environment, PATH & linking things (`export`)
 
