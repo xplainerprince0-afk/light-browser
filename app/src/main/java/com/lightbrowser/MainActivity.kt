@@ -5,6 +5,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -13,12 +17,17 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
@@ -28,10 +37,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
@@ -48,8 +57,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
@@ -76,8 +87,8 @@ private enum class Tab(
 ) {
     Browser("Browser", Icons.Filled.Language, true),
     Terminal("Terminal", Icons.Filled.Terminal, true),
-    Music("Player", Icons.Filled.AudioFile, true),
     Files("Sandbox", Icons.Filled.Folder, true),
+    Music("Player", Icons.Filled.AudioFile, true),
     Scripts("Scripts", Icons.Filled.Description, false),
     Downloads("Downloads", Icons.Filled.Download, false),
     Settings("Settings", Icons.Filled.Settings, false)
@@ -335,26 +346,20 @@ private fun AppShell(
                             SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
                         }
                         // Bottom zone is pinned behind the keyboard (adjustNothing +
-                        // IME excluded above). The bar hides while typing to free
-                        // screen space (no animation — instant, no lag); swipe
-                        // tab-switching is out: it would fight WebView scrolling.
-                        // (Terminal keeps its own keys above the keyboard.)
+                        // IME excluded above). No tall tab bar: a slim swipe strip
+                        // (drag L/R, tap dots/chevrons) switches Browser ⇄
+                        // Terminal ⇄ Sandbox ⇄ Player. The gesture lives on the
+                        // strip only, so it never fights WebView scrolling.
+                        // Hidden while typing (space for the terminal, which
+                        // keeps its own keys above the keyboard). Instant
+                        // show/hide, no animation, no lag.
                         val kbOpen = com.lightbrowser.ui.terminal.InsetDebug.imeVisible
                         Column {
                             if (tab != Tab.Music) {
                                 MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
                             }
                             if (!wide && !kbOpen) {
-                                NavigationBar(windowInsets = WindowInsets.navigationBars) {
-                                    Tab.entries.filter { it.inBar }.forEach { t ->
-                                        NavigationBarItem(
-                                            selected = tab == t,
-                                            onClick = { tab = t },
-                                            icon = { Icon(t.icon, t.title) },
-                                            label = { Text(t.title) }
-                                        )
-                                    }
-                                }
+                                TabSwipeStrip(current = tab, onSelect = { tab = it })
                             }
                         }
                     }
@@ -372,6 +377,73 @@ private fun AppShell(
                 androidx.compose.material3.TextButton(onClick = { showAbout = false }) { Text("OK") }
             }
         )
+    }
+}
+
+/**
+ * Slim bottom tab switcher replacing the tall NavigationBar. Drag left/right
+ * on the strip to move between main tabs (Browser ⇄ Terminal ⇄ Sandbox ⇄
+ * Player); tap a dot or chevron to jump. The touch target is the strip only,
+ * so swipes never fight WebView scrolling. Hidden while the keyboard is up.
+ */
+@Composable
+private fun TabSwipeStrip(current: Tab, onSelect: (Tab) -> Unit) {
+    val order = remember { Tab.entries.filter { it.inBar } }
+    val idx = order.indexOf(current).coerceAtLeast(0)
+    val scheme = MaterialTheme.colorScheme
+    var drag by remember { mutableStateOf(0f) }
+    Row(
+        modifier = Modifier.fillMaxWidth().height(32.dp)
+            .pointerInput(idx) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        if (drag < -60) {
+                            val n = (idx + 1).coerceAtMost(order.lastIndex)
+                            if (n != idx) onSelect(order[n])
+                        } else if (drag > 60) {
+                            val n = (idx - 1).coerceAtLeast(0)
+                            if (n != idx) onSelect(order[n])
+                        }
+                        drag = 0f
+                    },
+                    onDragCancel = { drag = 0f },
+                    onHorizontalDrag = { _, dx -> drag += dx }
+                )
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        IconButton(
+            onClick = {
+                val n = (idx - 1).coerceAtLeast(0)
+                if (n != idx) onSelect(order[n])
+            },
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Filled.ChevronLeft, "Previous tab")
+        }
+        order.forEach { t ->
+            val active = t == order[idx]
+            Box(
+                modifier = Modifier.padding(horizontal = 5.dp)
+                    .size(width = if (active) 18.dp else 7.dp, height = 7.dp)
+                    .background(
+                        if (active) scheme.primary
+                        else scheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        CircleShape
+                    )
+                    .clickable { onSelect(t) }
+            )
+        }
+        IconButton(
+            onClick = {
+                val n = (idx + 1).coerceAtMost(order.lastIndex)
+                if (n != idx) onSelect(order[n])
+            },
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Filled.ChevronRight, "Next tab")
+        }
     }
 }
 
