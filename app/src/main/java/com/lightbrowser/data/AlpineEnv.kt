@@ -19,9 +19,9 @@ object AlpineEnv {
 
     fun alpineDir(sandbox: File): File = File(sandbox, "alpine")
 
-    /** Default interactive profile: short `$` prompt (not the full path). */
+    /** Default interactive profile: short `sandbox $` prompt (not the full path). */
     private const val DEFAULT_PROFILE =
-        "PS1='\$ '\n" +
+        "PS1='sandbox \$ '\n" +
             "alias ll='ls -la'\n" +
             "alias la='ls -a'\n"
 
@@ -64,7 +64,9 @@ object AlpineEnv {
             "    scroll) _b_get '/scroll' --data-urlencode \"y=\${1:-500}\";;\n" +
             "    scrollto) _b_get '/scrollto' --data-urlencode \"x=\${1:-0}\" --data-urlencode \"y=\${2:-0}\";;\n" +
             "    record|serve|alias|unalias) echo \"use EXEC-mode b \$_b_c (stateful, no HTTP route)\";;\n" +
-            "    *) echo \"unknown b subcommand: \$_b_c\"; return 1;;\n" +
+            "    ext) ls -1 \"\$HOME/.b-ext\" 2>/dev/null || echo '(no extensions — b mkext <name>)';;\n" +
+            "    mkext) _b_n=\"\$1\"; case \"\$_b_n\" in ''|*[!a-z0-9_-]*) echo 'usage: b mkext <name>  ([a-z0-9_-])'; return 1;; esac; mkdir -p \"\$HOME/.b-ext\"; _b_f=\"\$HOME/.b-ext/\$_b_n.sh\"; [ -f \"\$_b_f\" ] && { echo \"exists: \$_b_f\"; return 1; }; printf '%s\\n' '#!/bin/sh' '# custom b command — args in \$1..' '# agent server: \$B_PORT / \$B_KEY (server must be on)' '# example: list tabs' 'curl -s --get \"http://127.0.0.1:\$B_PORT/tabs\" --data-urlencode \"token=\$B_KEY\"; echo' > \"\$_b_f\"; chmod +x \"\$_b_f\"; echo \"created \$_b_f — edit it, then run: b \$_b_n\";;\n" +
+            "    *) if [ -x \"\$HOME/.b-ext/\$_b_c.sh\" ]; then B_PORT=\"\$_b_port\" B_KEY=\"\$_b_key\" sh \"\$HOME/.b-ext/\$_b_c.sh\" \"\$@\"; else echo \"unknown b subcommand: \$_b_c\"; return 1; fi;;\n" +
             "  esac\n" +
             "}\n" +
             "# opencode via the system linker (direct exec is blocked for app files).\n" +
@@ -76,6 +78,8 @@ object AlpineEnv {
             "  else echo 'no system linker on this device'; return 1; fi\n" +
             "  \"\$_o_ld\" \"\$_o_bin\" \"\$@\"\n" +
             "}\n" +
+            "# Short prompt (overrides any earlier PS1 — full paths eat the line).\n" +
+            "PS1='sandbox \$ '\n" +
             "# <<< LIGHTBROWSER-B <<<"
 
     /**
@@ -361,9 +365,9 @@ object AlpineEnv {
             "XDG_CONFIG_HOME=$sb/.config",
             "XDG_DATA_HOME=$sb/.local/share",
             "XDG_STATE_HOME=$sb/.local/state",
-            // Short `$` prompt for interactive shells (mksh sources $ENV);
+            // Short `sandbox $` prompt for interactive shells (mksh sources $ENV);
             // EXEC sh -c runs ignore both.
-            "PS1=\$ ",
+            "PS1=sandbox \$ ",
             "ENV=$sb/.profile",
             "TERM=xterm-256color",
             "HOSTNAME=alpine",

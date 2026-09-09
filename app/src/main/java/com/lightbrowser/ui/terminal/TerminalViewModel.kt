@@ -1200,6 +1200,10 @@ class TerminalViewModel : ViewModel() {
                 out(body.take(12_000) + "\n", TermWhite)
                 out("--- END PAGE CONTENT ---\n", TermDim)
             }
+            fun extDir(): java.io.File? = try {
+                val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
+                java.io.File(sd, ".b-ext")
+            } catch (_: Exception) { null }
             try {
                 // User-alias expansion (max 3 hops, builtins always win) so new
                 // `b` commands can be added inside the terminal, no app update.
@@ -1226,6 +1230,7 @@ class TerminalViewModel : ViewModel() {
                             "b shot [--full] | console [n] | cookies [get [url] | set \"k=v\" [url] | clear]\n" +
                             "b history [n] | downloads | save <name>\n" +
                             "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
+                            "b ext | mkext <name> — your own SCRIPT commands (~/.b-ext/, both modes)\n" +
                             "b record start|stop|save <n>|list | serve\n", TermDim
                     )
                     "open" -> {
@@ -1372,6 +1377,40 @@ class TerminalViewModel : ViewModel() {
                         else {
                             BrowserAliases.remove(sub)
                             out("Removed '$sub'\n", TermGreen)
+                        }
+                    }
+                    "ext" -> {
+                        val files = try {
+                            extDir()?.listFiles { f -> f.isFile && f.name.endsWith(".sh") }
+                                ?.sortedBy { it.name }?.take(30)
+                        } catch (_: Exception) { null }
+                        if (files.isNullOrEmpty()) out("(no extensions — create one: b mkext <name>)\n", TermDim)
+                        else files.forEach { f -> out("• b ${f.name.removeSuffix(".sh")}\n", TermWhite) }
+                    }
+                    "mkext" -> {
+                        val name = parts.getOrNull(1) ?: ""
+                        if (!name.matches(Regex("[a-z0-9_-]+"))) out("Usage: b mkext <name>  (creates sandbox/.b-ext/<name>.sh)\n", TermRed)
+                        else {
+                            try {
+                                val dir = extDir() ?: throw IllegalStateException("no sandbox")
+                                dir.mkdirs()
+                                val f = java.io.File(dir, "$name.sh")
+                                if (f.exists()) out("Exists: ${f.absolutePath}\n", TermRed)
+                                else {
+                                    f.writeText(
+                                        "#!/bin/sh\n" +
+                                            "# custom b command: b $name <args> runs this file (EXEC and PTY)\n" +
+                                            "# args arrive in \$1..\n" +
+                                            "# PTY only: \$B_PORT/\$B_KEY reach the agent server (server must be on).\n" +
+                                            "# example — list tabs:\n" +
+                                            "#   curl -s --get \"http://127.0.0.1:\$B_PORT/tabs\" --data-urlencode \"token=\$B_KEY\"; echo\n" +
+                                            "\n" +
+                                            "echo \"TODO: edit ${f.absolutePath}\"\n"
+                                    )
+                                    try { f.setExecutable(true) } catch (_: Exception) {}
+                                    out("Created ${f.absolutePath}\nEdit it (Files → Sandbox → .b-ext) then run: b $name\n", TermGreen)
+                                }
+                            } catch (e: Exception) { out("mkext failed: ${e.message}\n", TermRed) }
                         }
                     }
                     "url" -> out((com.lightbrowser.data.BrowserAgent.currentUrl() ?: "(none)") + "\n", TermWhite)
@@ -1647,7 +1686,22 @@ class TerminalViewModel : ViewModel() {
                             }
                         }
                     }
-                    else -> out("Unknown b command. Try: b help (or define your own: b alias name expansion)\n", TermRed)
+                    else -> {
+                        // b extensions: ~/.b-ext/<cmd>.sh (create: b mkext <name>).
+                        // Runs in both modes — the PTY `b()` fn dispatches the same dir.
+                        val head = parts.getOrNull(0) ?: ""
+                        val extFile = try {
+                            val f = extDir()?.let { java.io.File(it, "$head.sh") }
+                            if (f != null && f.isFile && f.canExecute()) f else null
+                        } catch (_: Exception) { null }
+                        if (extFile != null) {
+                            val args = cmd.removePrefix(head).trim()
+                                .split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                .joinToString(" ") { "'" + it.replace("'", "'\\''") + "'" }
+                            out("→ ext $head\n", TermDim)
+                            runShell("sh " + extFile.absolutePath + (if (args.isNotBlank()) " $args" else ""), 30)
+                        } else out("Unknown b command. Try: b help (or define your own: b alias name expansion)\n", TermRed)
+                    }
                 }
             } catch (e: Exception) {
                 out("b error: ${e.message}\n", TermRed)
@@ -1682,7 +1736,7 @@ private val BuiltinB = setOf(
     "fill", "submit", "hover", "select", "store", "stores", "unstore",
     "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
-    "alias", "unalias"
+    "alias", "unalias", "ext", "mkext"
 )
 
 /**
