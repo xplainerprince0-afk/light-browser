@@ -156,7 +156,7 @@ object OpencodeManager {
         }
         val link = systemLinker()
         sb.append("linker=${link?.absolutePath ?: "none (direct exec only)"}\n")
-        sb.append("archOk=$archOk()")
+        sb.append("archOk=${archOk()}")
         return sb.toString()
     }
 
