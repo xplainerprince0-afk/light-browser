@@ -5,10 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -16,19 +13,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
@@ -38,8 +31,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -144,34 +135,6 @@ class MainActivity : ComponentActivity() {
         try {
             decor.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
         } catch (_: Exception) {}
-        // Authoritative keyboard signal: an inset listener fires on IME
-        // show/hide/resize in EVERY adjust mode (the layout listener above
-        // never fires under adjustNothing — the window doesn't relayout, so
-        // the measured lift stayed 0 and buried the terminal keys). The
-        // visible frame is read INSIDE the callback (valid anytime — it
-        // reflects occlusion, not layout) and max(ime, frame) covers both a
-        // stale frame and an inset that omits the suggestion strip.
-        // Attached to the content view (not decor) so decor-level handlers
-        // are untouched; insets pass through unconsumed.
-        try {
-            val content = decor.findViewById<android.view.View>(android.R.id.content)
-            if (content != null) {
-                androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
-                    try {
-                        val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
-                        val nav = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
-                        val r = android.graphics.Rect()
-                        decor.getWindowVisibleDisplayFrame(r)
-                        val screenH = decor.height.coerceAtLeast(1)
-                        val frameKb = (decor.height - r.bottom).coerceAtLeast(0)
-                        com.lightbrowser.ui.terminal.InsetDebug.kbHeightPx.intValue = maxOf(ime, frameKb)
-                        com.lightbrowser.ui.terminal.InsetDebug.sysNavPx.intValue = nav
-                        keyboardOpenFlow.value = ime > 0 || frameKb > screenH * 0.15
-                    } catch (_: Exception) {}
-                    insets
-                }
-            }
-        } catch (_: Exception) {}
 
         // Double-back to exit. Compose BackHandlers (search collapse, web go-back)
         // run first; this fires only when nothing else consumes back.
@@ -231,6 +194,32 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        // Keyboard inset listener — attached AFTER setContent: android.R.id.content
+        // doesn't exist before it (findViewById returned null, so the listener
+        // never attached and the terminal lift stayed 0). Fires on IME
+        // show/hide/resize in every adjust mode; the visible frame is read
+        // INSIDE the callback (valid anytime) and max(ime, frame) covers both
+        // a stale frame and an inset that omits the suggestion strip.
+        // Content view (not decor), insets pass through unconsumed.
+        try {
+            val content = decor.findViewById<android.view.View>(android.R.id.content)
+            if (content != null) {
+                androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
+                    try {
+                        val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+                        val nav = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
+                        val r = android.graphics.Rect()
+                        decor.getWindowVisibleDisplayFrame(r)
+                        val screenH = decor.height.coerceAtLeast(1)
+                        val frameKb = (decor.height - r.bottom).coerceAtLeast(0)
+                        com.lightbrowser.ui.terminal.InsetDebug.kbHeightPx.intValue = maxOf(ime, frameKb)
+                        com.lightbrowser.ui.terminal.InsetDebug.sysNavPx.intValue = nav
+                        keyboardOpenFlow.value = ime > 0 || frameKb > screenH * 0.15
+                    } catch (_: Exception) {}
+                    insets
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     private var backHandler: Runnable? = null
@@ -388,22 +377,27 @@ private fun AppShell(
                             ScriptsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Scripts))
                             DownloadsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Downloads))
                             SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
+                            // Edge-swipe tab switching, both sides: drag
+                            // horizontally starting at either screen edge to
+                            // move prev/next (Browser ⇄ Terminal ⇄ Sandbox ⇄
+                            // Player). Taps and vertical scrolls pass through —
+                            // the detector only consumes after horizontal slop —
+                            // so WebView keeps everything except edge-origin
+                            // horizontal drags. (System back may win at the
+                            // extreme edge on gesture-nav devices; start the
+                            // drag a hair inside if a switch doesn't fire.)
+                            EdgeTabStrip(current = tab, onSelect = { tab = it }, modifier = Modifier.align(Alignment.CenterStart))
+                            EdgeTabStrip(current = tab, onSelect = { tab = it }, modifier = Modifier.align(Alignment.CenterEnd))
                         }
-                        // Bottom zone is pinned behind the keyboard (adjustNothing +
-                        // IME excluded above). No tall tab bar: a slim swipe strip
-                        // (drag L/R, tap dots/chevrons) switches Browser ⇄
-                        // Terminal ⇄ Sandbox ⇄ Player. The gesture lives on the
-                        // strip only, so it never fights WebView scrolling.
-                        // Hidden while typing (space for the terminal, which
-                        // keeps its own keys above the keyboard). Instant
-                        // show/hide, no animation, no lag.
-                        val kbOpen = com.lightbrowser.ui.terminal.InsetDebug.imeVisible
+                        // Bottom zone: MiniPlayer only. No tab bar of any kind —
+                        // tabs switch via the left/right edge-swipe strips
+                        // (below). Nothing here changes size with the keyboard,
+                        // so the outer bottom inset is static and terminal math
+                        // stays exact. (Terminal keeps its own keys above the
+                        // keyboard.)
                         Column {
                             if (tab != Tab.Music) {
                                 MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
-                            }
-                            if (!wide && !kbOpen) {
-                                TabSwipeStrip(current = tab, onSelect = { tab = it })
                             }
                         }
                     }
@@ -425,26 +419,31 @@ private fun AppShell(
 }
 
 /**
- * Slim bottom tab switcher replacing the tall NavigationBar. Drag left/right
- * on the strip to move between main tabs (Browser ⇄ Terminal ⇄ Sandbox ⇄
- * Player); tap a dot or chevron to jump. The touch target is the strip only,
- * so swipes never fight WebView scrolling. Hidden while the keyboard is up.
+ * Edge-swipe tab switching (both screen sides). A 28dp strip floats above
+ * the content at each edge: drag horizontally to move between main tabs
+ * (Browser ⇄ Terminal ⇄ Sandbox ⇄ Player). Drag left → next, drag right →
+ * previous. Taps and vertical scrolls pass through untouched (the gesture
+ * detector only consumes after horizontal touch slop), so pages, lists and
+ * the terminal keep all their gestures except edge-origin horizontal drags.
  */
 @Composable
-private fun TabSwipeStrip(current: Tab, onSelect: (Tab) -> Unit) {
+private fun EdgeTabStrip(
+    current: Tab,
+    onSelect: (Tab) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val order = remember { Tab.entries.filter { it.inBar } }
     val idx = order.indexOf(current).coerceAtLeast(0)
-    val scheme = MaterialTheme.colorScheme
     var drag by remember { mutableStateOf(0f) }
-    Row(
-        modifier = Modifier.fillMaxWidth().height(32.dp)
+    Box(
+        modifier = modifier.fillMaxHeight().width(28.dp)
             .pointerInput(idx) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
-                        if (drag < -60) {
+                        if (drag < -80) {
                             val n = (idx + 1).coerceAtMost(order.lastIndex)
                             if (n != idx) onSelect(order[n])
-                        } else if (drag > 60) {
+                        } else if (drag > 80) {
                             val n = (idx - 1).coerceAtLeast(0)
                             if (n != idx) onSelect(order[n])
                         }
@@ -453,42 +452,8 @@ private fun TabSwipeStrip(current: Tab, onSelect: (Tab) -> Unit) {
                     onDragCancel = { drag = 0f },
                     onHorizontalDrag = { _, dx -> drag += dx }
                 )
-            },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
-    ) {
-        IconButton(
-            onClick = {
-                val n = (idx - 1).coerceAtLeast(0)
-                if (n != idx) onSelect(order[n])
-            },
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(Icons.Filled.ChevronLeft, "Previous tab")
-        }
-        order.forEach { t ->
-            val active = t == order[idx]
-            Box(
-                modifier = Modifier.padding(horizontal = 5.dp)
-                    .size(width = if (active) 18.dp else 7.dp, height = 7.dp)
-                    .background(
-                        if (active) scheme.primary
-                        else scheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        CircleShape
-                    )
-                    .clickable { onSelect(t) }
-            )
-        }
-        IconButton(
-            onClick = {
-                val n = (idx + 1).coerceAtMost(order.lastIndex)
-                if (n != idx) onSelect(order[n])
-            },
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(Icons.Filled.ChevronRight, "Next tab")
-        }
-    }
+            }
+    )
 }
 
 /** Parks hidden tabs far offscreen: still composed (state kept), never touched.
