@@ -53,18 +53,3 @@ fun Modifier.keyboardLift(): Modifier {
     val pad = (kb - nav).coerceAtLeast(0)
     return this.padding(bottom = with(density) { pad.toDp() })
 }
-
-/**
- * Bottom padding that hugs the keyboard: keys must end at
- * screenBottom − ime. Our layout bottom already sits at
- * screenBottom − outerPad, so pad = ime − outerPad (clamped ≥ 0).
- * No nav assumptions — correct whether or not the outer insets include IME.
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun Modifier.keyboardHug(): Modifier {
-    val density = LocalDensity.current
-    val ime = WindowInsets.ime.getBottom(density)
-    val pad = (ime - InsetDebug.outerPadPx).coerceAtLeast(0)
-    return this.padding(bottom = with(density) { pad.toDp() })
-}
