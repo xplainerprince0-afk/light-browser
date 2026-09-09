@@ -8,6 +8,7 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -114,11 +115,10 @@ fun TerminalScreen(
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
     val navBottom = WindowInsets.navigationBars.getBottom(density)
-    val imeVis = WindowInsets.isImeVisible
     SideEffect {
         InsetDebug.imeBottomPx = imeBottom
         InsetDebug.navBottomPx = navBottom
-        InsetDebug.imeVisible = imeVis
+        InsetDebug.imeVisible = imeBottom > 0
     }
 
     LaunchedEffect(Unit) { vm.init() }
