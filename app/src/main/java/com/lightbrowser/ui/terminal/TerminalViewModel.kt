@@ -643,7 +643,7 @@ class TerminalViewModel : ViewModel() {
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> {
-                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-status | opencode <args> (AI agent, needs install first)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent> (dev tools via apk)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
                     afterCommand()
                 }
                 "clear" -> clear()
@@ -768,6 +768,38 @@ class TerminalViewModel : ViewModel() {
                     if (!alpineInstalled) {
                         print("Install Alpine first: install-alpine\n", TermRed); afterCommand()
                     } else runShell("apk $arg")
+                }
+                "toolbox", "tools" -> {
+                    print(com.lightbrowser.data.ToolboxManager.listText() + "\ntoolbox-install <name|essentials|agent>  toolbox-remove <apk>  toolbox-update\n", TermDim)
+                    afterCommand()
+                }
+                "toolbox-install", "tool-install" -> {
+                    if (!alpineInstalled) {
+                        print("Install Alpine first: install-alpine\n", TermRed); afterCommand(); return
+                    }
+                    val sd = sandboxDir
+                    if (sd == null) { print("No sandbox\n", TermRed); afterCommand(); return }
+                    val pkgs = com.lightbrowser.data.ToolboxManager.resolve(arg)
+                    if (pkgs.isEmpty()) { print("Unknown tool: $arg — try `toolbox`\n", TermRed); afterCommand(); return }
+                    if (!com.lightbrowser.data.ToolboxManager.ensureNetFiles(sd)) {
+                        print("Could not seed apk config\n", TermRed); afterCommand(); return
+                    }
+                    print("Installing ${pkgs.joinToString(" ")} (~apk download)…\n", TermWhite)
+                    // Long timeout: apk pulls (esp. node/python) take minutes.
+                    runShell("apk update && apk add --no-cache ${pkgs.joinToString(" ")}", timeoutSec = 180)
+                }
+                "toolbox-remove", "tool-remove" -> {
+                    if (!alpineInstalled) {
+                        print("Install Alpine first: install-alpine\n", TermRed); afterCommand(); return
+                    }
+                    if (arg.isBlank()) { print("Usage: toolbox-remove <apk>\n", TermRed); afterCommand(); return }
+                    runShell("apk del $arg", timeoutSec = 60)
+                }
+                "toolbox-update" -> {
+                    if (!alpineInstalled) {
+                        print("Install Alpine first: install-alpine\n", TermRed); afterCommand(); return
+                    }
+                    runShell("apk update && apk upgrade", timeoutSec = 180)
                 }
                 "sh", "shell", "exec" -> {
                     if (arg.isBlank()) {
