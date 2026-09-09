@@ -22,8 +22,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +71,7 @@ private val TermBlack = Color(0xFF000000)
  * keyboard with no dead gap.
  */
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun TerminalScreen(
     modifier: Modifier = Modifier,
     vm: TerminalViewModel = viewModel()
@@ -84,6 +89,8 @@ fun TerminalScreen(
     var sticky by remember { mutableStateOf<String?>(null) }
     var follow by remember { mutableStateOf(true) }
     var overflow by remember { mutableStateOf(false) }
+    var showAgent by remember { mutableStateOf(false) }
+    val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     var renameId by remember { mutableStateOf<String?>(null) }
     var renameText by remember { mutableStateOf("") }
     var fontScale by remember { mutableStateOf(try { Prefs.terminalFontScale } catch (_: Exception) { 1f }) }
@@ -150,6 +157,13 @@ fun TerminalScreen(
                     }
                 }
                 Text("●", color = if (status == "idle") Color(0xFF444444) else TermGreen, fontSize = 10.sp)
+                IconButton(onClick = { showAgent = true }, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        Icons.Filled.SmartToy, "Agent bridge",
+                        tint = if (recording) Color.Red else TermWhite,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
                 Box {
                     IconButton(onClick = { overflow = true }, modifier = Modifier.size(30.dp)) {
                         Icon(Icons.Filled.MoreVert, "Options", tint = TermWhite, modifier = Modifier.size(16.dp))
@@ -181,6 +195,10 @@ fun TerminalScreen(
                                     if (t.isNotEmpty()) vm.insertText(t)
                                 }
                             } catch (_: Exception) {}
+                        })
+                        DropdownMenuItem(text = { Text("Agent bridge") }, onClick = {
+                            overflow = false
+                            showAgent = true
                         })
                         DropdownMenuItem(text = { Text("Copy all output") }, onClick = {
                             overflow = false
@@ -262,6 +280,21 @@ fun TerminalScreen(
                     sticky = sticky
                 )
             }
+        }
+    }
+
+    if (showAgent) {
+        ModalBottomSheet(
+            onDismissRequest = { showAgent = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            AgentPanel(
+                onClose = { showAgent = false },
+                onInsert = { cmd ->
+                    showAgent = false
+                    try { vm.insertText(cmd) } catch (_: Exception) {}
+                }
+            )
         }
     }
 

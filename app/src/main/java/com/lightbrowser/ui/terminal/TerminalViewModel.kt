@@ -1217,9 +1217,24 @@ class TerminalViewModel : ViewModel() {
                         out("$r\n", TermGreen)
                     }
                     "serve" -> {
-                        if (com.lightbrowser.data.BrowserAgent.serverRunning.value) {
-                            out("Agent server: ${com.lightbrowser.data.BrowserAgent.serverLabel.value}\nFrom Termux: curl 'http://127.0.0.1:8089/text?token=…'\n", TermGreen)
-                        } else out("Server is OFF — enable it in Browser ⋮ → Agent bridge.\n", TermDim)
+                        when (parts.getOrNull(1)) {
+                            "on", "start" -> {
+                                try { com.lightbrowser.data.BrowserAgent.startServer() } catch (e: Exception) {
+                                    out("Start failed: ${e.message}\n", TermRed)
+                                    return@launch
+                                }
+                                out("Agent server: ${com.lightbrowser.data.BrowserAgent.serverLabel.value}\n", TermGreen)
+                            }
+                            "off", "stop" -> {
+                                try { com.lightbrowser.data.BrowserAgent.stopServer() } catch (_: Exception) {}
+                                out("Server stopped.\n", TermDim)
+                            }
+                            else -> {
+                                if (com.lightbrowser.data.BrowserAgent.serverRunning.value) {
+                                    out("Agent server: ${com.lightbrowser.data.BrowserAgent.serverLabel.value}\nFrom Termux: curl 'http://127.0.0.1:8089/text?token=…'\n", TermGreen)
+                                } else out("Server is OFF — b serve on to start it.\n", TermDim)
+                            }
+                        }
                     }
                     "record" -> {
                         val sub = parts.getOrNull(1) ?: ""

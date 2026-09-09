@@ -167,7 +167,6 @@ fun BrowserScreen(
     var findOpen by remember { mutableStateOf(false) }
     var findQuery by remember { mutableStateOf("") }
     var sheetSearch by remember { mutableStateOf("") }
-    var showAgent by remember { mutableStateOf(false) }
     var showReader by remember { mutableStateOf(false) }
     var showSite by remember { mutableStateOf(false) }
     var showScriptLog by remember { mutableStateOf(false) }
@@ -451,19 +450,7 @@ fun BrowserScreen(
                         ChromeRow(Icons.Filled.Article, "Reader") { dismissMenuAnd { vm.loadReader(); showReader = true } }
                         ChromeRow(Icons.Filled.Tune, "Site settings") { dismissMenuAnd { showSite = true } }
                         ChromeRow(Icons.Filled.BugReport, "Script log") { dismissMenuAnd { showScriptLog = true } }
-                        ChromeRow(
-                        Icons.Filled.FiberManualRecord,
-                        if (recording) "Stop recording" else "Record taps"
-                        ) {
-                        dismissMenuAnd {
-                        if (com.lightbrowser.data.BrowserAgent.isRecording()) {
-                        com.lightbrowser.data.BrowserAgent.stopRecording()
-                        scope.launch { try { showAgent = true } catch (_: Exception) {} }
-                        } else com.lightbrowser.data.BrowserAgent.startRecording()
-                        }
-                        }
                         ChromeRow(Icons.Filled.Code, "Scripts") { dismissMenuAnd { onOpenScripts() } }
-                        ChromeRow(Icons.Filled.SmartToy, "Agent bridge") { dismissMenuAnd { showAgent = true } }
                         ChromeRow(Icons.Filled.Settings, "Settings") { dismissMenuAnd { onOpenSettings() } }
                         }
                         }
@@ -1134,16 +1121,6 @@ fun BrowserScreen(
         )
     }
 
-    // ── Agent bridge sheet (separate menu: server + terminal commands) ──
-    if (showAgent) {
-        ModalBottomSheet(
-            onDismissRequest = { showAgent = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ) {
-            AgentSheet(onClose = { showAgent = false })
-        }
-    }
-
     // ── Userscript log sheet: what did my scripts do / what broke ──
     if (showScriptLog) {
         ModalBottomSheet(
@@ -1260,137 +1237,6 @@ fun BrowserScreen(
                 }
             }
         )
-    }
-}
-
-@Composable
-private fun AgentSheet(onClose: () -> Unit) {
-    val ctx = LocalContext.current
-    val running by com.lightbrowser.data.BrowserAgent.serverRunning.collectAsState()
-    val label by com.lightbrowser.data.BrowserAgent.serverLabel.collectAsState()
-    val recordingNow by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
-    val scope = rememberCoroutineScope()
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.SmartToy, null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            Text("Agent bridge", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            TextButton(onClick = onClose) { Text("Done") }
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Drive this browser from the Terminal tab (b open, b snap…) or from your main Termux over localhost.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(12.dp))
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (running) "● Server running" else "○ Server stopped",
-                color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = {
-                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                    if (running) com.lightbrowser.data.BrowserAgent.stopServer()
-                    else com.lightbrowser.data.BrowserAgent.startServer()
-                }
-            }) { Text(if (running) "Stop" else "Expose server") }
-        }
-        if (running) {
-            Spacer(Modifier.height(4.dp))
-            Surface(
-                shape = MaterialTheme.shapes.large,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(label, style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = {
-                            // Copy full authed URL (bare IP without token is useless).
-                            copyText(ctx, "http://127.0.0.1:${com.lightbrowser.data.BrowserAgent.PORT}/text?token=${com.lightbrowser.data.BrowserAgent.token}")
-                        }) { Text("Copy URL") }
-                        TextButton(onClick = {
-                            copyText(ctx, com.lightbrowser.data.BrowserAgent.token)
-                        }) { Text("Copy token") }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "From Termux: curl 'http://127.0.0.1:8089/text?token=TOKEN'",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (recordingNow) "● Recording taps (${com.lightbrowser.data.BrowserAgent.recCount()} actions)" else "○ Click recorder",
-                color = if (recordingNow) androidx.compose.ui.graphics.Color.Red else MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = {
-                if (recordingNow) com.lightbrowser.data.BrowserAgent.stopRecording()
-                else com.lightbrowser.data.BrowserAgent.startRecording()
-            }) { Text(if (recordingNow) "Stop" else "Start") }
-        }
-        var recVersion by remember { mutableStateOf(0) }
-        var recs by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
-        // Loaded async — was runBlocking on Main during composition (startup ANR risk).
-        LaunchedEffect(recordingNow, recVersion) {
-            try {
-                recs = withContext(kotlinx.coroutines.Dispatchers.IO) { com.lightbrowser.data.BrowserAgent.listRecordings().take(5) }
-            } catch (_: Exception) { recs = emptyList() }
-        }
-        if (recs.isNotEmpty()) {
-            recs.forEach { (f, n) ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("• $f ($n)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    TextButton(onClick = {
-                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            try { com.lightbrowser.data.BrowserAgent.saveRecording(f.substringBefore("_")) } catch (_: Exception) {}
-                            recVersion++
-                        }
-                    }) { Text("Save") }
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-        }
-        if (!recordingNow && com.lightbrowser.data.BrowserAgent.recCount() > 0) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Unsaved: ${com.lightbrowser.data.BrowserAgent.recCount()} actions", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                        try { com.lightbrowser.data.BrowserAgent.saveRecording("rec") } catch (_: Exception) {}
-                        recVersion++
-                    }
-                }) { Text("Save now") }
-            }
-            Spacer(Modifier.height(4.dp))
-        }
-        Text("Terminal commands", style = MaterialTheme.typography.titleSmall)
-        Spacer(Modifier.height(4.dp))
-        listOf(
-            "b open <url> — navigate (/open?url=)",
-            "b tabs — list tabs | b new <url> | b close [n] | b home",
-            "b back | b forward | b reload | b stop",
-            "b snap — page refs + text (/snap)",
-            "b click <ref> — tap it (/click?sel=)",
-            "b fill <ref> <val> — type it (/fill?sel=&value=)",
-            "b find <text> — find in page (/find?q=)",
-            "b js <expr> — run JS (/js?expr=)",
-            "b shot — save screenshot (/shot)",
-            "b console — JS logs (/console)",
-            "b record start|stop|save — capture taps"
-        ).forEach { cmd ->
-            Text("• $cmd", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Spacer(Modifier.height(24.dp))
     }
 }
 
