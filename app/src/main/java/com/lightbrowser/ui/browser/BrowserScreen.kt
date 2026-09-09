@@ -578,8 +578,17 @@ fun BrowserScreen(
                                             }
                                         },
                                         onLongPressUrl = { longPressUrl = it },
-                                        inject = { w, url, runAt -> vm.injectAll(w, url, runAt) },
-                                        onVisited = { url -> vm.onVisited(url) }
+                                inject = { w, url, runAt -> vm.injectAll(w, url, runAt) },
+                                // Only the FRONT tab may sync the URL: background tabs
+                                // fire doUpdateVisitedHistory on SPA pushState/late
+                                // commits, which used to rewrite the current tab's
+                                // URL (home flashed, then the old site "reloaded";
+                                // new tabs opened the previous tab's link).
+                                onVisited = { url ->
+                                    try {
+                                        if (tab.id == vm.ui.value.tabs.getOrNull(vm.ui.value.currentIndex)?.id) vm.onVisited(url)
+                                    } catch (_: Exception) {}
+                                }
                                     )
                                 )
                                 webViews[tab.id] = wv

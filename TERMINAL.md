@@ -9,12 +9,15 @@ alt-screen, resize) for full-screen TUIs like `opencode`.
 the very top (Termux style), then (in PTY) the opencode/shell target, then
 sessions + `+ New session` (max 8), Agent bridge, Follow output, text size,
 Rename/Paste/Copy/Clear/Kill, PTY keyboard. Open it with a **long-press on
-the left edge** (taps pass through, middle swipes never trigger it); tap the
-dimmed area to close. Drawer is slim (280dp) by design.
+the left edge** (same edge strip that switches tabs — drag switches,
+long-press opens; taps pass through); tap the dimmed area to close.
+Drawer is slim (280dp) by design.
 
 **Keys:** two rows, **swipe sideways** for the full set (`ESC TAB / - HOME ↑
 END PGUP PGDN |` and `CTRL ALT ^C ^D ← ↓ → ~ : ;`). They hug the keyboard
-(keys end exactly at screenBottom − ime — measured, not guessed).
+(keys end exactly at screenBottom − kbHeight — max(decor inset, live IME)
+minus the exact reserved outer pad, measured not guessed). No focus grab at
+app launch: the keyboard only opens when the Terminal tab is frontmost.
 
 > Golden path on a fresh install:
 > `install-alpine` → `toolbox-install essentials` → `opencode-install` →
@@ -200,7 +203,7 @@ Practical rules:
 | Output cut with `…truncated` | 8KB capture / 4KB echo cap — redirect to file instead |
 | `(busy — Ctrl+C to kill)` | A process is still running; Enter is ignored until it ends or you kill it |
 | No stdin / interactive prompts hang | EXEC closes stdin by design — pass flags/args instead (`--yes`, `< file`), or use PTY mode |
-| Prompt hidden / keys misplaced | Keys lift by the MEASURED keyboard height (visible frame — suggestion strip included) minus the reserved nav inset; zero when closed. Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
+| Prompt hidden / keys misplaced | Keys lift by max(decor IME inset, live Compose IME) minus the exact Scaffold outer pad; zero when closed. Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
 | PTY prompt shows full path | Prompt is `sandbox $ ` everywhere (env + managed `~/.profile` block) |
 | Bottom tabs vanish while typing | No tab bar at all: drag horizontally from either screen edge to switch tabs (taps/vertical scrolls pass through). MiniPlayer stays |
 | `b …` says open the Browser tab first | Tab state lives in the Browser tab — visit it once so `TabBus` wires up |

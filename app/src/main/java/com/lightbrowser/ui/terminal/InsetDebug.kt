@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -36,20 +37,30 @@ object InsetDebug {
 
     /** Static system navigation-bar inset, px (already reserved below us). */
     var sysNavPx = mutableIntStateOf(0)
+
+    /**
+     * Drawer open requests (edge-strip long-press lives in MainActivity and
+     * can't reach TerminalScreen's drawer directly). TerminalScreen observes
+     * and opens; only incremented while the Terminal tab is frontmost.
+     */
+    var drawerAsk by mutableLongStateOf(0L)
 }
 
 /**
- * Measured keyboard lift: visible-frame keyboard height (suggestion strip
- * included — Compose IME insets may omit it) minus the static system-nav
- * inset the outer Scaffold already reserves below us. Zero when closed.
- * Immune to inset-consumption quirks: pure measurement, no inset reads.
+ * Keyboard lift for terminal keys. Signal: max(decor-listener height,
+ * live Compose IME at the keys level) — covers a dead listener and an
+ * inset that omits the suggestion strip. Minus outerPadPx (the EXACT px
+ * MainActivity's Scaffold reserves below the content: nav inset + MiniPlayer
+ * + nothing else now that bottom bars are gone). keysBottom =
+ * screenH − outerPad − (kb − outerPad) = screenH − kb: exact under every
+ * inset convention. Zero when closed.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun Modifier.keyboardLift(): Modifier {
     val density = LocalDensity.current
-    val kb = InsetDebug.kbHeightPx.intValue
-    val nav = InsetDebug.sysNavPx.intValue
-    val pad = (kb - nav).coerceAtLeast(0)
+    val kb = maxOf(InsetDebug.kbHeightPx.intValue, WindowInsets.ime.getBottom(density))
+    val outer = InsetDebug.outerPadPx
+    val pad = (kb - outer).coerceAtLeast(0)
     return this.padding(bottom = with(density) { pad.toDp() })
 }

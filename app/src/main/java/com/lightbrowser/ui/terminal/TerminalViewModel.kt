@@ -886,7 +886,7 @@ class TerminalViewModel : ViewModel() {
                         "imeBottom=${InsetDebug.imeBottomPx}px visible=${InsetDebug.imeVisible} " +
                             "navBottom=${InsetDebug.navBottomPx}px outerPad=${InsetDebug.outerPadPx}px\n" +
                             "kbMeasured=${InsetDebug.kbHeightPx.intValue}px sysNav=${InsetDebug.sysNavPx.intValue}px " +
-                            "(lift = max(ime,frame) - sysNav; keys hug iff keysBottom == screenH - lift)\n",
+                            "(lift = max(kb,ime) - outerPad; keys hug iff keysBottom == screenH - lift)\n",
                         TermDim
                     )
                     afterCommand()

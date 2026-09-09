@@ -3,7 +3,6 @@ package com.lightbrowser.ui.terminal
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -13,7 +12,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
@@ -62,7 +60,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -90,6 +87,7 @@ private val TermBlack = Color(0xFF000000)
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 fun TerminalScreen(
     modifier: Modifier = Modifier,
+    active: Boolean = true,
     vm: TerminalViewModel = viewModel()
 ) {
     val editor by vm.editor.collectAsState()
@@ -124,10 +122,17 @@ fun TerminalScreen(
     }
 
     LaunchedEffect(Unit) { vm.init() }
-    LaunchedEffect(Unit) {
+    // Focus only while this tab is frontmost. The screen stays composed
+    // offscreen, so an unconditional requestFocus opened the keyboard at
+    // app launch (and stole it on every return). Leaving clears it.
+    LaunchedEffect(active) {
         try {
-            kotlinx.coroutines.delay(300)
-            focus.requestFocus()
+            if (active) {
+                kotlinx.coroutines.delay(150)
+                focus.requestFocus()
+            } else {
+                focus.freeFocus()
+            }
         } catch (_: Exception) {}
     }
     // Keep the caret visible when output lands; typing at the end is already there.
@@ -173,6 +178,13 @@ fun TerminalScreen(
             try { focusManager.clearFocus() } catch (_: Exception) {}
             try { kotlinx.coroutines.delay(150); ptyCtl.refocus?.invoke() } catch (_: Exception) {}
         }
+    }
+    // Drawer opens on left-edge long-press (forwarded by MainActivity's
+    // edge strip via drawerAsk — the old corner strip sat under the edge
+    // zones and lost the gesture race).
+    val drawerAsk = InsetDebug.drawerAsk
+    LaunchedEffect(drawerAsk) {
+        if (drawerAsk > 0) openDrawer()
     }
     // Drawer closed in PTY → hand focus back (toggles steal it → invisible typing).
     LaunchedEffect(drawerState.currentValue) {
@@ -443,14 +455,6 @@ fun TerminalScreen(
             } // exec Box
             } // else: exec mode
         } // content Column
-        // Left-corner strip: LONG-PRESS opens the drawer. Taps pass through
-        // (no onClick), middle-screen swipes never trigger it — no lag.
-        Box(
-            modifier = Modifier.align(Alignment.CenterStart)
-                .fillMaxHeight()
-                .width(24.dp)
-                .pointerInput(Unit) { detectTapGestures(onLongPress = { openDrawer() }) }
-        )
         } // outer Box
     }
     }

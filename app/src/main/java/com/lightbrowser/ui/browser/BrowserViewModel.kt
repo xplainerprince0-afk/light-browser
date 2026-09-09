@@ -81,13 +81,10 @@ class BrowserViewModel : ViewModel() {
     private val scrollMemory = mutableMapOf<String, Int>()
 
     init {
-        val restored = restoreTabs()
-        if (restored != null) {
-            _ui.update { it.copy(tabs = restored.first, currentIndex = restored.second, currentUrl = restored.first.getOrNull(restored.second)?.url ?: "") }
-        } else {
-            val home = HOME_URL
-            _ui.update { it.copy(tabs = listOf(BrowserTab(url = home)), currentUrl = home) }
-        }
+        // Cold start always lands on the homepage — never the last site.
+        // (Session restore is what reopened yesterday's page at launch.)
+        val home = HOME_URL
+        _ui.update { it.copy(tabs = listOf(BrowserTab(url = home)), currentUrl = home) }
         refreshLists()
     }
 

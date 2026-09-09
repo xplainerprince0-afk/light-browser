@@ -340,20 +340,28 @@ private fun AppShell(
                             )
                             FilesScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Files))
                             MusicScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Music), vm = musicVm)
-                            TerminalScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Terminal))
+                            TerminalScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Terminal), active = tab == Tab.Terminal)
                             ScriptsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Scripts))
                             DownloadsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Downloads))
                             SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
                             // Edge-swipe tab switching, both sides: drag
                             // horizontally starting at either screen edge to
                             // move prev/next (Browser ⇄ Terminal ⇄ Sandbox ⇄
-                            // Player). Taps and vertical scrolls pass through —
+                            // Player). 44dp wide so drags starting inside the
+                            // system-back zone still reach us on gesture-nav
+                            // devices. Taps and vertical scrolls pass through —
                             // the detector only consumes after horizontal slop —
                             // so WebView keeps everything except edge-origin
-                            // horizontal drags. (System back may win at the
-                            // extreme edge on gesture-nav devices; start the
-                            // drag a hair inside if a switch doesn't fire.)
-                            EdgeTabStrip(current = tab, onSelect = { tab = it }, modifier = Modifier.align(Alignment.CenterStart))
+                            // horizontal drags. Long-press on the LEFT edge
+                            // opens the terminal drawer (Terminal tab only).
+                            EdgeTabStrip(
+                                current = tab,
+                                onSelect = { tab = it },
+                                onLongPress = if (tab == Tab.Terminal) {
+                                    { com.lightbrowser.ui.terminal.InsetDebug.drawerAsk++ }
+                                } else null,
+                                modifier = Modifier.align(Alignment.CenterStart)
+                            )
                             EdgeTabStrip(current = tab, onSelect = { tab = it }, modifier = Modifier.align(Alignment.CenterEnd))
                         }
                         // Bottom zone: MiniPlayer only. No tab bar of any kind —
@@ -386,24 +394,27 @@ private fun AppShell(
 }
 
 /**
- * Edge-swipe tab switching (both screen sides). A 28dp strip floats above
+ * Edge-swipe tab switching (both screen sides). A 44dp strip floats above
  * the content at each edge: drag horizontally to move between main tabs
  * (Browser ⇄ Terminal ⇄ Sandbox ⇄ Player). Drag left → next, drag right →
  * previous. Taps and vertical scrolls pass through untouched (the gesture
  * detector only consumes after horizontal touch slop), so pages, lists and
  * the terminal keep all their gestures except edge-origin horizontal drags.
+ * Long-press (left edge only, via onLongPress) is the terminal drawer's
+ * handle — it replaces the old corner strip the edge zones covered.
  */
 @Composable
 private fun EdgeTabStrip(
     current: Tab,
     onSelect: (Tab) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLongPress: (() -> Unit)? = null
 ) {
     val order = remember { Tab.entries.filter { it.inBar } }
     val idx = order.indexOf(current).coerceAtLeast(0)
     var drag by remember { mutableStateOf(0f) }
     Box(
-        modifier = modifier.fillMaxHeight().width(28.dp)
+        modifier = modifier.fillMaxHeight().width(44.dp)
             .pointerInput(idx) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
@@ -418,6 +429,11 @@ private fun EdgeTabStrip(
                     },
                     onDragCancel = { drag = 0f },
                     onHorizontalDrag = { _, dx -> drag += dx }
+                )
+            }
+            .pointerInput(onLongPress, idx) {
+                androidx.compose.foundation.gestures.detectTapGestures(
+                    onLongPress = { try { onLongPress?.invoke() } catch (_: Exception) {} }
                 )
             }
     )
