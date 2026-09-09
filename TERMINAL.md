@@ -4,12 +4,13 @@ Two terminals in one tab. **EXEC** = quick non-interactive shell (type, Enter,
 read output). **PTY** = real Linux terminal (Termux emulator, raw mode,
 alt-screen, resize) for full-screen TUIs like `opencode`.
 
-**No top bar:** the terminal is fullscreen with a tiny translucent status
-(`● EXEC · main`, `● PTY · opencode`) floating top-right. The **left drawer**
-holds the EXEC/PTY switch at the very top (Termux style), then sessions +
-`+ New session` (max 8), Agent bridge, Follow output, text size,
+**No top bar:** the terminal is fullscreen with a tiny dot floating top-right
+(green = PTY, amber = EXEC). The **left drawer** holds the EXEC/PTY switch at
+the very top (Termux style), then (in PTY) the opencode/shell target, then
+sessions + `+ New session` (max 8), Agent bridge, Follow output, text size,
 Rename/Paste/Copy/Clear/Kill, PTY keyboard. Open it with a **long-press on
-the left edge** (taps pass through, middle swipes never trigger it).
+the left edge** (taps pass through, middle swipes never trigger it); tap the
+dimmed area to close. Drawer is slim (280dp) by design.
 
 **Keys:** two rows, **swipe sideways** for the full set (`ESC TAB / - HOME ↑
 END PGUP PGDN |` and `CTRL ALT ^C ^D ← ↓ → ~ : ;`). They hug the keyboard
@@ -113,9 +114,14 @@ scrollto. `record/serve/alias` stay EXEC-only (stateful, no HTTP route).
 ## PTY mode
 
 - **Single target, no toggle:** opencode TUI when installed, plain shell
-  otherwise (status label tells you which). Fewer buttons, more screen.
-- `⌨` (drawer) forces the keyboard; otherwise it opens on tap. Focus is
-  handed back automatically after every key/drawer tap (no invisible typing).
+  otherwise (green dot = PTY either way). Quit the TUI and you get
+  Restart / **Shell** / Exec — Shell drops you to a real shell without
+  leaving PTY (drawer also has a PTY-target switch).
+- Tapping the terminal opens the keyboard; back button hides it again.
+- Typing `opencode` in the PTY shell runs an `opencode()` shell function
+  (linker path) — deterministic, no toggle dance needed.
+- `⌨` (drawer) forces the keyboard; focus is handed back automatically
+  after every key/drawer tap (no invisible typing).
 - Own key rows: same layout, but arrows/HOME/END send real escape sequences
   and `^C/^D` send `0x03/0x04` through the pty (real SIGINT semantics).
 - Typing `opencode` in the PTY shell runs an `opencode()` shell function
@@ -189,7 +195,8 @@ Practical rules:
 | Output cut with `…truncated` | 8KB capture / 4KB echo cap — redirect to file instead |
 | `(busy — Ctrl+C to kill)` | A process is still running; Enter is ignored until it ends or you kill it |
 | No stdin / interactive prompts hang | EXEC closes stdin by design — pass flags/args instead (`--yes`, `< file`), or use PTY mode |
-| Prompt hidden / keys misplaced | Keys hug the keyboard via scoped `imePadding`; transcript follows (`Follow output` in ⋮). In PTY, keyboard opens on tap/`⌨` |
+| Prompt hidden / keys misplaced | Content shrinks to the keyboard top (IME consumed at the terminal root — hug by construction, both modes). Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
+| Bottom tabs vanish while typing | Intended: the bar hides when the keyboard is up (space for the terminal) and returns when it closes. Swipe tab-switch was rejected: horizontal swipes fight WebView scrolling |
 | `b …` says open the Browser tab first | Tab state lives in the Browser tab — visit it once so `TabBus` wires up |
 | `Server is OFF` | `b serve on` or 🤖 → Start server; copy URL+token from the panel |
 | TUI garbage in EXEC | Expected — full-screen TUIs need PTY mode, not EXEC |
