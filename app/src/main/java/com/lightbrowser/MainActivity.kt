@@ -88,10 +88,10 @@ private enum class Tab(
 
 class MainActivity : ComponentActivity() {
 
-    // Resize-proof keyboard signal: measures the visible window frame, so it works
-    // even on devices where the window shrinks for the keyboard (insets read 0 there).
+    // Keyboard state: fed ONLY by the decor inset listener below (single
+    // writer — a second frame-based writer kept clobbering good values
+    // with 0 under adjustNothing). Drives double-back-to-exit.
     private val keyboardOpenFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
-    private var layoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -107,33 +107,30 @@ class MainActivity : ComponentActivity() {
         val startUrl = intent?.data?.toString()?.takeIf { it.startsWith("http") }
 
         val decor = window.decorView
-        layoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
-            try {
-                val r = android.graphics.Rect()
-                decor.getWindowVisibleDisplayFrame(r)
-                val screenH = decor.height.coerceAtLeast(1)
-                val keyH = screenH - r.bottom
-                keyboardOpenFlow.value = keyH > screenH * 0.15
-                // Measured lift for terminal keys: the visible frame excludes
-                // the WHOLE IME window (suggestion strip included — Compose
-                // IME insets may omit it). Publish height + static nav inset.
-                try {
-                    com.lightbrowser.ui.terminal.InsetDebug.kbHeightPx.intValue =
-                        if (keyH > screenH * 0.15) keyH else 0
-                    val ri = decor.rootWindowInsets
-                    if (ri != null) {
-                        val compat = androidx.core.view.WindowInsetsCompat
-                            .toWindowInsetsCompat(ri, decor)
-                        com.lightbrowser.ui.terminal.InsetDebug.sysNavPx.intValue =
-                            compat.getInsets(
-                                androidx.core.view.WindowInsetsCompat.Type.navigationBars()
-                            ).bottom
-                    }
-                } catch (_: Exception) {}
-            } catch (_: Exception) {}
-        }
+        // Keyboard signal: inset listener on the DECOR (dispatch root — immune
+        // to child CONSUMED and to setContent timing; enableEdgeToEdge sets no
+        // listener so there is no ordering hazard). Fires on IME show/hide/
+        // resize in every adjust mode. max(ime, frame): the frame is frozen
+        // at 0 under adjustNothing (by definition — no resize/pan), the inset
+        // is the live one (suggestion strip included — it's inside the IME
+        // window). Insets pass through unconsumed. requestApplyInsets forces
+        // the initial dispatch so we never sit on stale 0.
         try {
-            decor.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(decor) { _, insets ->
+                try {
+                    val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+                    val nav = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
+                    val r = android.graphics.Rect()
+                    decor.getWindowVisibleDisplayFrame(r)
+                    val screenH = decor.height.coerceAtLeast(1)
+                    val frameKb = (decor.height - r.bottom).coerceAtLeast(0)
+                    com.lightbrowser.ui.terminal.InsetDebug.kbHeightPx.intValue = maxOf(ime, frameKb)
+                    com.lightbrowser.ui.terminal.InsetDebug.sysNavPx.intValue = nav
+                    keyboardOpenFlow.value = ime > 0 || frameKb > screenH * 0.15
+                } catch (_: Exception) {}
+                insets
+            }
+            androidx.core.view.ViewCompat.requestApplyInsets(decor)
         } catch (_: Exception) {}
 
         // Double-back to exit. Compose BackHandlers (search collapse, web go-back)
@@ -194,32 +191,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // Keyboard inset listener — attached AFTER setContent: android.R.id.content
-        // doesn't exist before it (findViewById returned null, so the listener
-        // never attached and the terminal lift stayed 0). Fires on IME
-        // show/hide/resize in every adjust mode; the visible frame is read
-        // INSIDE the callback (valid anytime) and max(ime, frame) covers both
-        // a stale frame and an inset that omits the suggestion strip.
-        // Content view (not decor), insets pass through unconsumed.
-        try {
-            val content = decor.findViewById<android.view.View>(android.R.id.content)
-            if (content != null) {
-                androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
-                    try {
-                        val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
-                        val nav = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
-                        val r = android.graphics.Rect()
-                        decor.getWindowVisibleDisplayFrame(r)
-                        val screenH = decor.height.coerceAtLeast(1)
-                        val frameKb = (decor.height - r.bottom).coerceAtLeast(0)
-                        com.lightbrowser.ui.terminal.InsetDebug.kbHeightPx.intValue = maxOf(ime, frameKb)
-                        com.lightbrowser.ui.terminal.InsetDebug.sysNavPx.intValue = nav
-                        keyboardOpenFlow.value = ime > 0 || frameKb > screenH * 0.15
-                    } catch (_: Exception) {}
-                    insets
-                }
-            }
-        } catch (_: Exception) {}
     }
 
     private var backHandler: Runnable? = null
@@ -228,10 +199,6 @@ class MainActivity : ComponentActivity() {
     private var backMainHandler: android.os.Handler? = null
 
     override fun onDestroy() {
-        try {
-            layoutListener?.let { window.decorView.viewTreeObserver.removeOnGlobalLayoutListener(it) }
-        } catch (_: Exception) {}
-        layoutListener = null
         try { backHandler?.let { backMainHandler?.removeCallbacks(it) } } catch (_: Exception) {}
         super.onDestroy()
     }
