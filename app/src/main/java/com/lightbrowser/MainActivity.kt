@@ -144,6 +144,34 @@ class MainActivity : ComponentActivity() {
         try {
             decor.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
         } catch (_: Exception) {}
+        // Authoritative keyboard signal: an inset listener fires on IME
+        // show/hide/resize in EVERY adjust mode (the layout listener above
+        // never fires under adjustNothing — the window doesn't relayout, so
+        // the measured lift stayed 0 and buried the terminal keys). The
+        // visible frame is read INSIDE the callback (valid anytime — it
+        // reflects occlusion, not layout) and max(ime, frame) covers both a
+        // stale frame and an inset that omits the suggestion strip.
+        // Attached to the content view (not decor) so decor-level handlers
+        // are untouched; insets pass through unconsumed.
+        try {
+            val content = decor.findViewById<android.view.View>(android.R.id.content)
+            if (content != null) {
+                androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { _, insets ->
+                    try {
+                        val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+                        val nav = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
+                        val r = android.graphics.Rect()
+                        decor.getWindowVisibleDisplayFrame(r)
+                        val screenH = decor.height.coerceAtLeast(1)
+                        val frameKb = (decor.height - r.bottom).coerceAtLeast(0)
+                        com.lightbrowser.ui.terminal.InsetDebug.kbHeightPx.intValue = maxOf(ime, frameKb)
+                        com.lightbrowser.ui.terminal.InsetDebug.sysNavPx.intValue = nav
+                        keyboardOpenFlow.value = ime > 0 || frameKb > screenH * 0.15
+                    } catch (_: Exception) {}
+                    insets
+                }
+            }
+        } catch (_: Exception) {}
 
         // Double-back to exit. Compose BackHandlers (search collapse, web go-back)
         // run first; this fires only when nothing else consumes back.
