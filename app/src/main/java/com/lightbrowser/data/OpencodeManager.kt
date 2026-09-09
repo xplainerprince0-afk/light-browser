@@ -49,6 +49,34 @@ object OpencodeManager {
         return abi.contains("arm64") || abi.contains("aarch64")
     }
 
+    /**
+     * Make the installed binary executable. File.setExecutable() alone is not
+     * reliable on all devices (fused/odd mounts), so fall back to a real
+     * chmod(1) and verify with canExecute().
+     */
+    fun ensureExecutable(bin: File): Boolean {
+        return try {
+            if (bin.canExecute()) return true
+            try { bin.setExecutable(true) } catch (_: Exception) {}
+            if (bin.canExecute()) return true
+            try {
+                val p = Runtime.getRuntime().exec(arrayOf("chmod", "755", bin.absolutePath))
+                try { p.waitFor() } catch (_: Exception) {}
+            } catch (_: Exception) {}
+            bin.canExecute()
+        } catch (_: Exception) { false }
+    }
+
+    /** Repair path for `opencode-fix`: re-chmod + report. Empty string = OK detail. */
+    fun fixInstall(ctx: Context): String {
+        val app = ctx.applicationContext
+        val f = binFile(app)
+        if (!f.exists() || f.length() < 1_000_000) return "missing — run `opencode-install` first."
+        if (!archOk()) return "opencode-termux ships aarch64 only — this device is not supported."
+        return if (ensureExecutable(f)) "OK — ${f.length() / 1024}KB, executable."
+        else "chmod failed — reinstall with `opencode-install`."
+    }
+
     private fun verScore(v: String): Long {
         return try {
             val parts = v.split(".").map { it.toLongOrNull() ?: 0L }
@@ -149,9 +177,12 @@ object OpencodeManager {
             val dest = binFile(app)
             try {
                 cand.copyTo(dest, overwrite = true)
-                dest.setExecutable(true)
             } catch (e: Exception) {
                 onProgress("Install failed: ${e.message}")
+                return false
+            }
+            if (!ensureExecutable(dest)) {
+                onProgress("Installed but not executable — run `opencode-fix` once.")
                 return false
             }
             try { tmp.deleteRecursively() } catch (_: Exception) {}

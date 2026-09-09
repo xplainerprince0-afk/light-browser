@@ -643,7 +643,7 @@ class TerminalViewModel : ViewModel() {
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> {
-                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent> (dev tools via apk)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-fix | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent> (dev tools via apk)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
                     afterCommand()
                 }
                 "clear" -> clear()
@@ -729,6 +729,13 @@ class TerminalViewModel : ViewModel() {
                 }
                 "install-alpine", "alpine-install" -> installAlpine()
                 "opencode-install", "opencode-update" -> installOpencode()
+                "opencode-fix" -> {
+                    try {
+                        val msg = com.lightbrowser.data.OpencodeManager.fixInstall(AppCtx.ctx)
+                        print("opencode-fix: $msg\n", if (msg.startsWith("OK")) TermGreen else TermRed)
+                    } catch (e: Exception) { print("fix error: ${e.message}\n", TermRed) }
+                    afterCommand()
+                }
                 "opencode-status", "oc-status" -> {
                     try {
                         val app = AppCtx.ctx
@@ -746,13 +753,17 @@ class TerminalViewModel : ViewModel() {
                         afterCommand()
                     } else {
                         val app = AppCtx.ctx
-                        if (!com.lightbrowser.data.OpencodeManager.isInstalled(app)) {
+                        val bin = com.lightbrowser.data.OpencodeManager.binFile(app)
+                        if (!bin.exists()) {
                             print("opencode not installed — run `opencode-install` first\n", TermRed)
                             afterCommand()
+                        } else if (!bin.canExecute() && !com.lightbrowser.data.OpencodeManager.ensureExecutable(bin)) {
+                            // Self-heal the classic "Permission denied" (lost +x bit).
+                            print("Permission denied — auto-fix failed, run `opencode-fix`\n", TermRed)
+                            afterCommand()
                         } else {
-                            val bin = com.lightbrowser.data.OpencodeManager.binFile(app).absolutePath
                             // Long timeout: agent runs take minutes. Redirect to file for more output.
-                            runShell("$bin $arg", timeoutSec = 300)
+                            runShell("${bin.absolutePath} $arg", timeoutSec = 300)
                         }
                     }
                 }
