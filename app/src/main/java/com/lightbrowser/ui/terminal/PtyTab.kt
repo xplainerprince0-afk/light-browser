@@ -80,7 +80,18 @@ fun PtyTab(
             override fun onPasteTextFromClipboard(session: TerminalSession?) {}
             override fun onBell(session: TerminalSession) {}
             override fun onColorsChanged(session: TerminalSession) {}
+            override fun onTerminalCursorStateChange(state: Boolean) {}
+            override fun getTerminalCursorStyle(): Int = 0
             override fun setTerminalShellPid(session: TerminalSession, pid: Int) {}
+            override fun logError(tag: String, message: String) { Log.e(PTY_TAG, "$tag: $message") }
+            override fun logWarn(tag: String, message: String) { Log.w(PTY_TAG, "$tag: $message") }
+            override fun logInfo(tag: String, message: String) {}
+            override fun logDebug(tag: String, message: String) {}
+            override fun logVerbose(tag: String, message: String) {}
+            override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) {
+                Log.e(PTY_TAG, "$tag: $message", e)
+            }
+            override fun logStackTrace(tag: String, e: Exception) { Log.e(PTY_TAG, tag, e) }
         }
     }
     val viewClient = remember {
@@ -120,6 +131,7 @@ fun PtyTab(
             override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) {
                 Log.e(PTY_TAG, "$tag: $message", e)
             }
+            override fun logStackTrace(tag: String, e: Exception) { Log.e(PTY_TAG, tag, e) }
         }
     }
 
