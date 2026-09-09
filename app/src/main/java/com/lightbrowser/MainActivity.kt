@@ -40,12 +40,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
@@ -286,6 +288,16 @@ private fun AppShell(
         // safeDrawing INCLUDES the IME — exclude it so the keyboard overlays
         // the pinned bottom zone instead of pushing it up (adjustNothing).
         Scaffold(contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime)) { inner ->
+            // Publish the real outer bottom pad: TerminalScreen.keyboardHug()
+            // needs it (keys end at screenBottom − ime, layout sits at
+            // screenBottom − outerPad). No nav assumptions.
+            val outerDensity = LocalDensity.current
+            SideEffect {
+                try {
+                    com.lightbrowser.ui.terminal.InsetDebug.outerPadPx =
+                        with(outerDensity) { inner.calculateBottomPadding().toPx().toInt() }
+                } catch (_: Exception) {}
+            }
             BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(inner).consumeWindowInsets(inner)) {
                 val wide = maxWidth >= 600.dp
                 Row(modifier = Modifier.fillMaxSize()) {

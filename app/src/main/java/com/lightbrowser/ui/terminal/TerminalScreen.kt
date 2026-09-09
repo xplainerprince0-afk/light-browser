@@ -2,16 +2,15 @@ package com.lightbrowser.ui.terminal
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
@@ -26,7 +25,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -61,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -103,7 +102,6 @@ fun TerminalScreen(
     var sticky by remember { mutableStateOf<String?>(null) }
     var follow by remember { mutableStateOf(true) }
     var ptyMode by remember { mutableStateOf(false) }
-    var ptyOpencode by remember { mutableStateOf(false) }
     var showAgent by remember { mutableStateOf(false) }
     val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
     var renameId by remember { mutableStateOf<String?>(null) }
@@ -158,14 +156,26 @@ fun TerminalScreen(
     }
 
     // PTY owns focus (a View): release the EXEC editor so typing can't land
-    // in the hidden field (the "invisible input" bug).
+    // in the hidden field (the "invisible input" bug). Refocus the PTY view
+    // on entering (no keyboard force — it opens on tap/⌨).
     LaunchedEffect(ptyMode) {
-        if (ptyMode) { try { focusManager.clearFocus() } catch (_: Exception) {} }
+        if (ptyMode) {
+            try { focusManager.clearFocus() } catch (_: Exception) {}
+            try { kotlinx.coroutines.delay(150); ptyCtl.refocus?.invoke() } catch (_: Exception) {}
+        }
+    }
+    // Drawer closed in PTY → hand focus back (toggles steal it → invisible typing).
+    LaunchedEffect(drawerState.currentValue) {
+        if (ptyMode && !drawerState.isOpen) {
+            try { ptyCtl.refocus?.invoke() } catch (_: Exception) {}
+        }
     }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = true,
+        // No swipe capture: middle-screen drags must reach the terminal
+        // (was: laggy conflicts). Corner long-press strip only (below).
+        gesturesEnabled = false,
         modifier = modifier.fillMaxSize(),
         drawerContent = {
             ModalDrawerSheet(drawerContainerColor = Color(0xFF111111)) {
@@ -176,6 +186,20 @@ fun TerminalScreen(
                     fontSize = 14.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
                 )
+                // Mode switch lives here (Termux style).
+                NavigationDrawerItem(
+                    label = { Text(if (ptyMode) "✓ PTY terminal" else "PTY terminal", fontSize = 13.sp) },
+                    selected = ptyMode,
+                    onClick = { ptyMode = true; closeDrawer() },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                NavigationDrawerItem(
+                    label = { Text(if (!ptyMode) "✓ EXEC terminal" else "EXEC terminal", fontSize = 13.sp) },
+                    selected = !ptyMode,
+                    onClick = { ptyMode = false; closeDrawer() },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                 Text(
                     "Sessions",
                     color = Color(0xFF888888),
@@ -294,43 +318,19 @@ fun TerminalScreen(
         snackbarHost = { SnackbarHost(snacks) },
         containerColor = TermBlack
     ) { _ ->
-        Column(modifier = Modifier.fillMaxSize().background(TermBlack)) {
-            // ── Slim bar: drawer + mode + context. Everything else → drawer. ──
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Tap OR long-press the corner → drawer (Termux-style).
-                Box(
-                    modifier = Modifier
-                        .combinedClickable(onClick = { openDrawer() }, onLongClick = { openDrawer() })
-                        .padding(10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Filled.Menu, "Menu", tint = TermWhite, modifier = Modifier.size(18.dp))
-                }
-                if (ptyMode) {
-                    ModeChip("EXEC") { ptyMode = false }
-                    ModeChip(if (ptyOpencode) "Shell" else "opencode") { ptyOpencode = !ptyOpencode }
-                    Spacer(modifier = Modifier.weight(1f))
-                    TextButton(onClick = { try { ptyCtl.showKeyboard?.invoke() } catch (_: Exception) {} }) {
-                        Text("⌨", color = TermWhite, fontSize = 14.sp)
-                    }
-                } else {
-                    ModeChip("PTY") { ptyMode = true }
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text("●", color = if (status == "idle") Color(0xFF444444) else TermGreen, fontSize = 10.sp, modifier = Modifier.padding(end = 12.dp))
-                }
-            }
-
+        // No top bar: content fills everything; drawer opens via the
+        // left-corner strip (long-press) below.
+        Box(modifier = Modifier.fillMaxSize().background(TermBlack)) {
+        Column(modifier = Modifier.fillMaxSize()) {
             if (ptyMode) {
                 PtyTab(
-                    useOpencode = ptyOpencode,
                     ctl = ptyCtl,
                     onExitToExec = { ptyMode = false },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 )
             } else {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxSize()) {
             // ── THE editor: everything is one field ──
             BasicTextField(
                 value = editor,
@@ -403,8 +403,27 @@ fun TerminalScreen(
                     sticky = sticky
                 )
             }
+            } // inner Column
+            // Tiny overlay status (non-interactive — touches pass through).
+            Text(
+                "● EXEC · ${sessions.firstOrNull { it.id == activeId }?.name ?: ""}",
+                color = TermWhite.copy(alpha = 0.4f),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 8.dp)
+            )
+            } // exec Box
             } // else: exec mode
-        }
+        } // content Column
+        // Left-corner strip: LONG-PRESS opens the drawer. Taps pass through
+        // (no onClick), middle-screen swipes never trigger it — no lag.
+        Box(
+            modifier = Modifier.align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .width(24.dp)
+                .pointerInput(Unit) { detectTapGestures(onLongPress = { openDrawer() }) }
+        )
+        } // outer Box
     }
     }
 
@@ -436,14 +455,6 @@ fun TerminalScreen(
             },
             dismissButton = { TextButton(onClick = { renameId = null }) { Text("Cancel") } }
         )
-    }
-}
-
-/** Small mode chip for the slim bar. */
-@Composable
-private fun ModeChip(label: String, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.padding(horizontal = 0.dp)) {
-        Text(label, color = TermWhite, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
     }
 }
 

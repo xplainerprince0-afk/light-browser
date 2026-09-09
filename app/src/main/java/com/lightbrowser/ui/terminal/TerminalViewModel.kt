@@ -884,8 +884,8 @@ class TerminalViewModel : ViewModel() {
                 "kbd-diag" -> {
                     print(
                         "imeBottom=${InsetDebug.imeBottomPx}px visible=${InsetDebug.imeVisible} " +
-                            "navBottom=${InsetDebug.navBottomPx}px\n" +
-                            "(screenshot these numbers with the gap visible)\n",
+                            "navBottom=${InsetDebug.navBottomPx}px outerPad=${InsetDebug.outerPadPx}px\n" +
+                            "(keys hug iff keysBottom == screenH - imeBottom)\n",
                         TermDim
                     )
                     afterCommand()

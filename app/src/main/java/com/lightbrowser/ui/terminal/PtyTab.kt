@@ -43,20 +43,21 @@ import java.io.File
 
 private const val PTY_TAG = "PtyTab"
 
-/** Bridge so the slim top bar (drawer/⌨) can drive the PTY view. */
+/** Bridge so the drawer/bar can drive the PTY view. */
 class PtyControl {
     var showKeyboard: (() -> Unit)? = null
     var pasteText: ((String) -> Unit)? = null
+    var refocus: (() -> Unit)? = null
 }
 
 /**
  * True PTY terminal (Termux emulator+view, Apache-2.0): full-screen TUIs like
  * `opencode` work here — raw mode, alt-screen, resize, real signals.
  * Runs with cwd=sandbox so agents act inside the sandbox.
+ * Single target: opencode when installed, plain shell otherwise.
  */
 @Composable
 fun PtyTab(
-    useOpencode: Boolean,
     ctl: PtyControl,
     onExitToExec: () -> Unit,
     modifier: Modifier = Modifier
@@ -71,9 +72,10 @@ fun PtyTab(
 
     val sd = remember(app) { File(app.filesDir, "sandbox").apply { mkdirs() } }
     val ocBin = remember(sd) { File(sd, "bin/opencode") }
-    // Don't gate on canExecute(): SELinux can report +x yet refuse direct
-    // execve (W^X) — we launch via the system linker instead (see OpencodeManager).
-    val opencodeOk = useOpencode && ocBin.exists() && ocBin.length() > 1_000_000
+    // Single target, no toggle button: opencode when present, else shell.
+    // (Don't gate on canExecute(): SELinux can report +x yet refuse direct
+    // execve — we launch via the system linker, see OpencodeManager.)
+    val opencodeOk = ocBin.exists() && ocBin.length() > 1_000_000
     val sysLinker = remember {
         listOf("/system/bin/linker64", "/system/bin/linker").firstOrNull { File(it).exists() }
     }
@@ -266,21 +268,11 @@ fun PtyTab(
             } catch (_: Exception) {}
             refocus()
         }
-        onDispose { ctl.showKeyboard = null; ctl.pasteText = null }
+        ctl.refocus = { refocus() }
+        onDispose { ctl.showKeyboard = null; ctl.pasteText = null; ctl.refocus = null }
     }
 
     Column(modifier = modifier.fillMaxSize().background(Color.Black)) {
-        // Slim status line (toggles live in the top bar now — space matters).
-        Text(
-            when {
-                useOpencode && opencodeOk -> "● PTY · opencode"
-                useOpencode -> "● PTY · shell (opencode missing — opencode-install)"
-                else -> "● PTY · shell"
-            },
-            color = Color(0xFF4CAF50),
-            fontSize = 11.sp,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 1.dp)
-        )
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AndroidView(
                 factory = { c ->
@@ -302,6 +294,16 @@ fun PtyTab(
                     session?.let { s -> try { v.attachSession(s) } catch (_: Exception) {} }
                 },
                 modifier = Modifier.fillMaxSize()
+            )
+            // Tiny overlay status (non-interactive — touches pass through).
+            Text(
+                if (opencodeOk) "● PTY · opencode" else "● PTY · shell",
+                color = Color(0xFF4CAF50).copy(alpha = 0.75f),
+                fontSize = 10.sp,
+                modifier = Modifier.align(Alignment.TopStart)
+                    .padding(4.dp)
+                    .background(Color(0x99000000))
+                    .padding(horizontal = 6.dp, vertical = 1.dp)
             )
             if (exited != null) {
                 Column(

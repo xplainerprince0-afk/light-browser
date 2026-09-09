@@ -59,6 +59,15 @@ object AlpineEnv {
             "    *) echo \"unknown b subcommand: \$_b_c\"; return 1;;\n" +
             "  esac\n" +
             "}\n" +
+            "# opencode via the system linker (direct exec is blocked for app files).\n" +
+            "opencode() {\n" +
+            "  _o_bin=\"\$HOME/bin/opencode\"\n" +
+            "  if [ ! -f \"\$_o_bin\" ]; then echo 'not installed — run: opencode-install'; return 1; fi\n" +
+            "  if [ -f /system/bin/linker64 ]; then _o_ld=/system/bin/linker64\n" +
+            "  elif [ -f /system/bin/linker ]; then _o_ld=/system/bin/linker\n" +
+            "  else echo 'no system linker on this device'; return 1; fi\n" +
+            "  \"\$_o_ld\" \"\$_o_bin\" \"\$@\"\n" +
+            "}\n" +
             "# <<< LIGHTBROWSER-B <<<"
 
     /**
