@@ -40,7 +40,7 @@ object AlpineEnv {
             "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
             "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
             "  case \"\$_b_c\" in\n" +
-            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|find|snap|text|read|js|shot|console|cookies|history|downloads|click|fill|submit|hover|select|store|pos|tap|swipe|scroll|scrollto (server must be on)';;\n" +
+            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|find|snap|text|read|js|shot|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|mkext|ext|pos|tap|swipe|scroll|scrollto (server must be on)';;\n" +
             "    status|url|title) _b_get '/status';;\n" +
             "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
             "    tabs|home|back|forward|reload|stop|snap|text|console|downloads) _b_get \"/\$_b_c\";;\n" +
@@ -54,6 +54,7 @@ object AlpineEnv {
             "    cookies) _b_get '/cookies' --data-urlencode \"op=\${1:-get}\" --data-urlencode \"value=\$2\" --data-urlencode \"url=\$3\";;\n" +
             "    history) _b_get '/history' --data-urlencode \"n=\${1:-20}\";;\n" +
             "    submit) _b_get '/submit' --data-urlencode \"sel=\$1\";;\n" +
+            "    key) _b_get '/key' --data-urlencode \"sel=\$1\";;\n" +
             "    find) _b_get '/find' --data-urlencode \"q=\$*\";;\n" +
             "    js) _b_get '/js' --data-urlencode \"expr=\$*\";;\n" +
             "    click) _b_get '/click' --data-urlencode \"sel=\$1\";;\n" +

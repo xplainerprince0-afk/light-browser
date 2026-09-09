@@ -77,13 +77,18 @@ END PGUP PGDN |` and `CTRL ALT ^C ^D ← ↓ → ~ : ;`). They hug the keyboard
 ### `b` — drive the Browser tab from here
 
 `b help` prints the list. Highlights: `b open <url>` (localhost + bare
-domains OK), `b tabs | new <url> | close [n] | home | back | forward |
-reload | stop`, `b snap` (page refs+text), `b click <ref> | fill <ref> <val>
-[--submit]`, `b pos | tap <x> <y> | swipe <x1> <y1> <x2> <y2> [ms]`,
+domains OK), `b tabs | tab <n> | new <url> | close [n] | home | back |
+forward | reload | stop`, `b snap` (page refs+text), `b read [max]`
+(article text), `b click <ref|name> | fill <ref|name> <val> [--submit] |
+submit <form> | key [sel]` (nearest-button tap),
+`b hover | select <sel> <val>`, `b store <name> <css> | stores | unstore`,
+`b pos | tap <x> <y> | swipe <x1> <y1> <x2> <y2> [ms]`,
 `b find <text> | next | prev`, `b scroll [px] | scroll-to <x> <y>`,
-`b js <expr> | text | dom | shot | console | cookies | save <name>`,
-`b serve [on|off]` (start/stop the agent HTTP server),
-`b record start|stop|save <n>|list` (tap recorder).
+`b js <expr> | text | dom | shot [--full] | console`,
+`b cookies [get [url] | set "k=v" [url] | clear] | history [n] | downloads |
+save <name>`, `b serve [on|off]` (start/stop the agent HTTP server),
+`b record start|stop|save <n>|list` (tap recorder),
+`b ext | mkext <name>` (your own script commands).
 
 **Make your own:** `b alias deploy 'b open https://example.com'` → `b deploy`
 works forever (stored on-device, `$1…$9` + `$@` supported). `b unalias deploy`

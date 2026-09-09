@@ -75,6 +75,33 @@ object BrowserAgent {
         "return (document.title||'')+'\\n\\n'+t.slice(0," + max + ");" +
         "}catch(e){return 'ERR '+e;}})()"
 
+    /**
+     * Probe JS for `b key`: anchor field (explicit sel → focused field →
+     * field with text → first search/text field), then the nearest visible
+     * button (same-form submit first, else closest by distance). Returns
+     * JSON {x,y,label} or ERR. Single source for EXEC + `/key`.
+     */
+    fun keyProbeJs(sel: String): String {
+        val e0 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+        return "(function(){try{" +
+            "var anchor=null;" +
+            (if (e0.isNotBlank()) "try{anchor=document.querySelector('$e0');}catch(x){}" else "") +
+            "if(!anchor){var ae=document.activeElement;if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.isContentEditable))anchor=ae;}" +
+            "if(!anchor){var ins=document.querySelectorAll('input');for(var i=0;i<ins.length;i++){var t=(ins[i].type||'text').toLowerCase();if((t==='text'||t==='search'||t==='email'||t==='password'||t==='url'||t==='number')&&ins[i].value&&ins[i].offsetParent!==null){anchor=ins[i];break;}}}" +
+            "if(!anchor){var ss=document.querySelectorAll('input');for(var s2=0;s2<ss.length;s2++){var t2=(ss[s2].type||'text').toLowerCase();if((t2==='text'||t2==='search')&&ss[s2].offsetParent!==null){anchor=ss[s2];break;}}}" +
+            "if(!anchor)return 'ERR no-field (focus a field or pass a selector)';" +
+            "function vis(e){if(!e||e.offsetParent===null)return false;var r=e.getBoundingClientRect();return r.width>4&&r.height>4&&r.bottom>0&&r.top<window.innerHeight;}" +
+            "function isBtn(e){if(!e||!e.tagName)return false;var t=e.tagName;if(t==='BUTTON')return true;if(t==='INPUT'){var ty=(e.type||'').toLowerCase();return ty==='submit'||ty==='button'||ty==='image';}return e.getAttribute&&e.getAttribute('role')==='button';}" +
+            "var ar=anchor.getBoundingClientRect(),ax=ar.left+ar.width/2,ay=ar.top+ar.height/2;" +
+            "var best=null,f=anchor.form||(anchor.closest?anchor.closest('form'):null);" +
+            "if(f){var bs=f.querySelectorAll('button,input[type=submit],input[type=image],input[type=button],[role=button]');for(var b=0;b<bs.length;b++){if(isBtn(bs[b])&&vis(bs[b])){best=bs[b];break;}}}" +
+            "if(!best){var bd=1e18,all=document.querySelectorAll('button,input[type=submit],input[type=image],input[type=button],[role=button]');for(var k=0;k<all.length&&k<600;k++){var e=all[k];if(!isBtn(e)||!vis(e))continue;var r=e.getBoundingClientRect();var dx=r.left+r.width/2-ax,dy=r.top+r.height/2-ay;var d=dx*dx+dy*dy;if(d<bd){bd=d;best=e;}}}" +
+            "if(!best)return 'ERR no-button near field';" +
+            "var rr=best.getBoundingClientRect();" +
+            "return JSON.stringify({x:Math.round(rr.left+rr.width/2),y:Math.round(rr.top+rr.height/2),label:(best.innerText||best.value||(best.getAttribute&&best.getAttribute('aria-label'))||best.tagName||'').toString().trim().slice(0,40)});" +
+            "}catch(e){return 'ERR '+e;}})()"
+    }
+
     fun captureShot(): String? {
         // Fast path: already on Main — do directly, no post+wait.
         if (Looper.myLooper() == Looper.getMainLooper()) return captureViewportOnMain()
@@ -834,6 +861,31 @@ object BrowserAgent {
                 consoleTail(n).forEach { arr.put(it) }
                 JSONObject().put("ok", true).put("lines", arr).toString()
             }
+            "/key" -> {
+                // Nearest-button tap: probe coords via JS, then tap (tapAt is
+                // Main-safe from this worker thread, same as /tap).
+                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: "")
+                val raw = evalBlocking(keyProbeJs(sel), 12)
+                try {
+                    var s = raw.trim()
+                    repeat(2) {
+                        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                            s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                        }
+                    }
+                    if (s.startsWith("ERR")) """{"ok":false,"err":"${s.take(200)}"}"""
+                    else {
+                        val o = org.json.JSONObject(s)
+                        val x = o.optDouble("x", -1.0); val y = o.optDouble("y", -1.0)
+                        if (x < 0 || y < 0) """{"ok":false,"err":"no button found"}"""
+                        else {
+                            tapAt(x.toFloat(), y.toFloat())
+                            JSONObject().put("ok", true).put("x", x).put("y", y)
+                                .put("label", o.optString("label", "")).toString()
+                        }
+                    }
+                } catch (_: Exception) { """{"ok":false,"err":"probe failed: ${raw.take(120)}"}""" }
+            }
             "/cookies" -> awaitMain {
                 // Already on Main — CookieManager calls are Main-safe.
                 val op = q["op"] ?: "get"
@@ -979,7 +1031,7 @@ object BrowserAgent {
                 }
                 """{"ok":true}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /text /read /snap /js /click /fill /submit /hover /select /store /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot /history /downloads"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /text /read /snap /js /click /fill /submit /key /hover /select /store /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot /history /downloads"}"""
         }
     }
 }

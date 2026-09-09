@@ -54,6 +54,7 @@ b tabs | tab <n> | new <url> | close [n]
 b js <expr>             # raw eval, truncated (power-user hatch)
 b text [max] | b read [max] | b dom [css] | b snap
 b click <ref|css|name> | b fill <ref|css|name> <value> [--submit] | b submit <form>
+b key [sel|name]      # nearest visible button to the field (typed/focused) + tap it
 b hover <ref|css|name> | b select <sel|name> <value-or-text>
 b store <name> <css> | stores | unstore <name>   # named selectors
 b pos <ref|css> | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]

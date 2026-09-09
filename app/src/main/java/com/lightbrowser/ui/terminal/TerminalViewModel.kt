@@ -1223,7 +1223,7 @@ class TerminalViewModel : ViewModel() {
                             "b open <url> | back | forward | reload | stop | url | title | home\n" +
                             "b tabs | tab <n> | new <url> | close [n] — tab control\n" +
                             "b js <expr> | text [max] | read [max] — article text only | dom [css] | snap\n" +
-                            "b click <ref|css> | fill <ref|css> <val> [--submit] | submit <form|css>\n" +
+                            "b click <ref|css|name> | fill <..> <val> [--submit] | submit <form> | key [sel]\n" +
                             "b hover <ref|css> — reveal menus | b select <sel> <val> — dropdowns\n" +
                             "b store <name> <css> | stores | unstore <name> — named selectors\n" +
                             "b pos <ref|css> → coords | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]\n" +
@@ -1640,6 +1640,31 @@ class TerminalViewModel : ViewModel() {
                             out("Stored '$name' → $sel\n", TermGreen)
                         }
                     }
+                    "key" -> {
+                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
+                        out("Probing for the button near the field…\n", TermDim)
+                        val raw = com.lightbrowser.data.BrowserAgent.eval(
+                            com.lightbrowser.data.BrowserAgent.keyProbeJs(sel)
+                        )
+                        try {
+                            var s = raw.trim()
+                            repeat(2) {
+                                if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                                    s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                                }
+                            }
+                            if (s.startsWith("ERR")) out("$s\n", TermRed)
+                            else {
+                                val o = org.json.JSONObject(s)
+                                val x = o.optDouble("x", -1.0); val y = o.optDouble("y", -1.0)
+                                if (x < 0 || y < 0) out("No button found near the field\n", TermRed)
+                                else {
+                                    com.lightbrowser.data.BrowserAgent.tapAt(x.toFloat(), y.toFloat())
+                                    out("Tapped '${o.optString("label", "button")}' at ${x.toInt()},${y.toInt()}\n", TermGreen)
+                                }
+                            }
+                        } catch (_: Exception) { out("$raw\n", TermWhite) }
+                    }
                     "stores" -> {
                         val all = BStore.all()
                         if (all.isEmpty()) out("(no stored selectors — b store <name> <css>)\n", TermDim)
@@ -1734,7 +1759,7 @@ class TerminalViewModel : ViewModel() {
 private val BuiltinB = setOf(
     "help", "open", "new", "tabs", "tab", "close", "home", "back", "fwd", "forward",
     "reload", "stop", "url", "title", "js", "text", "read", "dom", "snap", "click",
-    "fill", "submit", "hover", "select", "store", "stores", "unstore",
+    "fill", "submit", "key", "hover", "select", "store", "stores", "unstore",
     "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
     "alias", "unalias", "ext", "mkext"
