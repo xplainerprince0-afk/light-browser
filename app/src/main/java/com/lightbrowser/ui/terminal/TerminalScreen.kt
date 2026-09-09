@@ -108,12 +108,13 @@ fun TerminalScreen(
 
     // Live inset readings for `kbd-diag` (diagnose keys-vs-keyboard spacing).
     val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val navBottom = WindowInsets.navigationBars.getBottom(density)
+    val imeVis = WindowInsets.isImeVisible
     SideEffect {
-        try {
-            InsetDebug.imeBottomPx = WindowInsets.ime.getBottom(density)
-            InsetDebug.navBottomPx = WindowInsets.navigationBars.getBottom(density)
-            InsetDebug.imeVisible = WindowInsets.isImeVisible
-        } catch (_: Exception) {}
+        InsetDebug.imeBottomPx = imeBottom
+        InsetDebug.navBottomPx = navBottom
+        InsetDebug.imeVisible = imeVis
     }
 
     LaunchedEffect(Unit) { vm.init() }

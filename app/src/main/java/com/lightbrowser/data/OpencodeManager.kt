@@ -33,6 +33,26 @@ object OpencodeManager {
 
     fun binFile(ctx: Context): File = File(binDir(ctx), "opencode")
 
+    /**
+     * Standard layout (no wrappers, no renames):
+     *   sandbox/bin/opencode                 — the real ELF, chmod 755
+     *   sandbox/lib/opencode/*.so            — sidecar libs (libopencode-crhandler.so)
+     * LD_LIBRARY_PATH points at the lib dir (see AlpineEnv).
+     */
+    fun libDir(ctx: Context): File =
+        File(ctx.filesDir, "sandbox/lib/opencode").apply { if (!exists()) mkdirs() }
+
+    fun installedLibs(ctx: Context): List<String> {
+        return try {
+            libDir(ctx).listFiles()
+                ?.filter { it.isFile && (it.name.endsWith(".so") || ".so." in it.name) }
+                ?.map { it.name }
+                ?.sorted() ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+    }
+
+    fun libsOk(ctx: Context): Boolean = installedLibs(ctx).isNotEmpty()
+
     fun isInstalled(ctx: Context): Boolean {
         return try {
             val f = binFile(ctx)
@@ -156,18 +176,35 @@ object OpencodeManager {
         }
         val link = systemLinker()
         sb.append("linker=${link?.absolutePath ?: "none (direct exec only)"}\n")
+        val libs = installedLibs(app)
+        sb.append("libs=${if (libs.isEmpty()) "MISSING — reinstall with `opencode-install`" else libs.joinToString(",")}\n")
+        val tmp = File(app.filesDir, "sandbox/tmp")
+        sb.append("tmpdir=${if (tmp.isDirectory && tmp.canWrite()) "OK" else "BAD — restart terminal"}\n")
         sb.append("archOk=${archOk()}")
         return sb.toString()
     }
 
-    /** Repair path for `opencode-fix`: re-chmod + report. */
+    /**
+     * Full repair pass (was: chmod only). Checks binary, sidecar libs,
+     * tmpdir, and linker, then says exactly what to do next.
+     */
     fun fixInstall(ctx: Context): String {
         val app = ctx.applicationContext
         val f = binFile(app)
-        if (!f.exists() || f.length() < 1_000_000) return "missing — run `opencode-install` first."
+        if (!f.exists() || f.length() < 1_000_000) return "binary missing — run `opencode-install`."
         if (!archOk()) return "opencode-termux ships aarch64 only — this device is not supported."
-        return if (ensureExecutable(f)) "OK — ${f.length() / 1024}KB, executable."
-        else "chmod failed — reinstall with `opencode-install`."
+        val out = StringBuilder()
+        out.append(if (ensureExecutable(f)) "binary: OK (${f.length() / 1024}KB, x-bit set)\n"
+        else "binary: chmod FAILED — reinstall with `opencode-install`\n")
+        val libs = installedLibs(app)
+        out.append(if (libs.isNotEmpty()) "libs: ${libs.joinToString(",")}\n"
+        else "libs: MISSING — reinstall with `opencode-install` (keeps .so now)\n")
+        val tmp = File(app.filesDir, "sandbox/tmp")
+        out.append(if (tmp.isDirectory && tmp.canWrite()) "tmpdir: OK\n"
+        else "tmpdir: BAD — restart the terminal tab\n")
+        out.append("linker: ${systemLinker()?.absolutePath ?: "none"}\n")
+        out.append("launch: ${if (systemLinker() != null) "via linker (SELinux-safe)" else "direct"}")
+        return out.toString().trimEnd()
     }
 
     private fun verScore(v: String): Long {
@@ -237,7 +274,9 @@ object OpencodeManager {
                 return false
             }
             val cur = installedVersion(app)
-            if (cur == rel.version && isInstalled(app)) {
+            // Re-install when the binary OR its sidecar libs are missing
+            // (older installs kept only the binary → linker "not found").
+            if (cur == rel.version && isInstalled(app) && libsOk(app)) {
                 onProgress("opencode ${rel.version} already installed.")
                 return true
             }
@@ -274,6 +313,24 @@ object OpencodeManager {
                 onProgress("Install failed: ${e.message}")
                 return false
             }
+            // Sidecar libs: the package ships usr/lib/opencode/*.so
+            // (libopencode-crhandler.so). Old installs dropped them — the
+            // "library not found" bug. Flatten into sandbox/lib/opencode.
+            var libCount = 0
+            try {
+                val ld = libDir(app)
+                out.walkTopDown()
+                    .filter { it.isFile && (it.name.endsWith(".so") || ".so." in it.name) }
+                    .forEach { so ->
+                        try {
+                            val d = File(ld, so.name)
+                            so.copyTo(d, overwrite = true)
+                            ensureExecutable(d)
+                            libCount++
+                        } catch (_: Exception) {}
+                    }
+                onProgress("Sidecar libs: $libCount kept in lib/opencode.")
+            } catch (_: Exception) {}
             if (!ensureExecutable(dest)) {
                 onProgress("Installed but not executable — run `opencode-fix` once.")
                 return false
@@ -281,7 +338,7 @@ object OpencodeManager {
             try { tmp.deleteRecursively() } catch (_: Exception) {}
             return if (isInstalled(app)) {
                 try { prefs(app).edit().putString("version", rel.version).apply() } catch (_: Exception) {}
-                onProgress("✓ opencode ${rel.version} ready — try `opencode --help` (use `opencode run \"task\"`; the TUI needs a PTY we don't have yet).")
+                onProgress("✓ opencode ${rel.version} ready — `opencode run \"task\"`, or the full TUI in the PTY tab.")
                 true
             } else {
                 onProgress("Binary won't execute on this device.")

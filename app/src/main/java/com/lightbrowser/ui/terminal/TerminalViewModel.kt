@@ -740,7 +740,8 @@ class TerminalViewModel : ViewModel() {
                 "opencode-fix" -> {
                     try {
                         val msg = com.lightbrowser.data.OpencodeManager.fixInstall(AppCtx.ctx)
-                        print("opencode-fix: $msg\n", if (msg.startsWith("OK")) TermGreen else TermRed)
+                        val bad = msg.contains("FAILED") || msg.contains("MISSING") || msg.contains("missing")
+                        print("opencode-fix:\n$msg\n", if (bad) TermRed else TermGreen)
                     } catch (e: Exception) { print("fix error: ${e.message}\n", TermRed) }
                     afterCommand()
                 }
@@ -763,7 +764,7 @@ class TerminalViewModel : ViewModel() {
                 }
                 "opencode", "oc" -> {
                     if (arg.isBlank()) {
-                        print("Usage: opencode --help | opencode run \"task\" | opencode-status\nThe interactive TUI needs a PTY — use non-interactive `run`.\n", TermDim)
+                        print("Usage: opencode --help | opencode run \"task\" | opencode-status\nThe full-screen TUI can't render here — switch to the PTY tab and tap `opencode`.\n", TermDim)
                         afterCommand()
                     } else {
                         val app = AppCtx.ctx
@@ -771,16 +772,15 @@ class TerminalViewModel : ViewModel() {
                         if (!bin.exists()) {
                             print("opencode not installed — run `opencode-install` first\n", TermRed)
                             afterCommand()
-                        } else if (!bin.canExecute() && !com.lightbrowser.data.OpencodeManager.ensureExecutable(bin)) {
-                            // Self-heal the classic "Permission denied" (lost +x bit).
-                            print("Permission denied — auto-fix failed, run `opencode-fix`\n", TermRed)
-                            afterCommand()
                         } else {
-                            // SELinux W^X blocks direct execve() of app_data_file
-                            // (canExecute lies) — launch via the system linker.
-                            val argv = com.lightbrowser.data.OpencodeManager.launchArgv(bin)
-                            // Long timeout: agent runs take minutes. Redirect to file for more output.
-                            runShell("$argv $arg", timeoutSec = 300)
+                            val cmd = buildLaunch(bin, arg)
+                            if (cmd == null) {
+                                print("Can't launch — run `opencode-fix` then `opencode-diag`\n", TermRed)
+                                afterCommand()
+                            } else {
+                                // Long timeout: agent runs take minutes. Redirect to file for more output.
+                                runShell(cmd, timeoutSec = 300)
+                            }
                         }
                     }
                 }
@@ -833,6 +833,24 @@ class TerminalViewModel : ViewModel() {
                     if (arg.isBlank()) {
                         print("Usage: sh <cmd>\n", TermRed); afterCommand()
                     } else runShell(arg)
+                }
+                "run" -> {
+                    // Generic ELF/script runner: ELF → system linker (noexec
+                    // workaround), #! script → its interpreter, else error.
+                    if (arg.isBlank()) {
+                        print("Usage: run <program> [args] — ELFs + scripts in sandbox\n", TermRed); afterCommand(); return
+                    }
+                    val toks = splitArgs(arg)
+                    val target = resolveBin(toks[0])
+                    if (target == null || !target.exists()) {
+                        print("Not found in sandbox: ${toks[0]}\n", TermRed); afterCommand(); return
+                    }
+                    val rest = toks.drop(1).joinToString(" ") { shQuote(it) }
+                    val cmd = buildLaunch(target, rest)
+                    if (cmd == null) {
+                        print("Can't launch ${toks[0]} (need ELF or #! script)\n", TermRed); afterCommand(); return
+                    }
+                    runShell(cmd, timeoutSec = 60)
                 }
                 "ping" -> runShell("ping -c 3 ${arg.ifBlank { "8.8.8.8" }}")
                 "curl" -> {
@@ -932,6 +950,59 @@ class TerminalViewModel : ViewModel() {
 
     /** Single-quote shell escaping (filenames with " $ ` are crafted via import/zip). */
     private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /** Bare names resolve to sandbox/bin first, paths via the jail. */
+    private fun resolveBin(name: String): File? {
+        val sd = sandboxDir ?: return null
+        return if ("/" in name) resolve(name)
+        else {
+            val b = File(sd, "bin/$name")
+            if (b.exists()) b else resolve(name)
+        }
+    }
+
+    /** 1 = ELF, 2 = #! script, 0 = neither. */
+    private fun sniffKind(f: File): Int {
+        return try {
+            f.inputStream().use {
+                val b = ByteArray(4)
+                if (it.read(b) < 4) return 0
+                if (b[0] == 0x7F.toByte() && b[1] == 'E'.code.toByte() &&
+                    b[2] == 'L'.code.toByte() && b[3] == 'F'.code.toByte()
+                ) return 1
+                if (b[0] == '#'.code.toByte() && b[1] == '!'.code.toByte()) return 2
+                0
+            }
+        } catch (_: Exception) { 0 }
+    }
+
+    /**
+     * Build a shell command line that launches [f] despite noexec/W^X:
+     * ELF → system linker, #! script → its interpreter. Null = can't launch.
+     * [rawArgs] is appended verbatim (already quoted by the caller).
+     */
+    private fun buildLaunch(f: File, rawArgs: String): String? {
+        val tail = if (rawArgs.isBlank()) "" else " $rawArgs"
+        return when (sniffKind(f)) {
+            1 -> {
+                if (!f.canExecute()) {
+                    try { com.lightbrowser.data.OpencodeManager.ensureExecutable(f) } catch (_: Exception) {}
+                }
+                com.lightbrowser.data.OpencodeManager.launchArgv(f) + tail
+            }
+            2 -> {
+                val line = try {
+                    f.bufferedReader().readLine()?.removePrefix("#!")?.trim()
+                } catch (_: Exception) { null }
+                if (line.isNullOrBlank()) return null
+                val sp = line.split(Regex("\\s+"), limit = 2)
+                val interp = sp[0]
+                val interpArg = if (sp.size > 1) " ${sp[1]}" else ""
+                "$interp$interpArg ${shQuote(f.absolutePath)}$tail"
+            }
+            else -> null
+        }
+    }
 
     /** Built-ins win over user aliases. */
     private fun isBuiltinB(head: String): Boolean = BuiltinB.contains(head.trim().lowercase())
