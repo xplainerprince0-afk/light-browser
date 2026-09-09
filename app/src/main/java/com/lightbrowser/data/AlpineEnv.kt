@@ -128,7 +128,10 @@ object AlpineEnv {
         }
     }
 
-    private fun extractTarGz(tarGz: File, destDir: File) {
+    /** Generic tar.gz extractor (Alpine rootfs, opencode Termux pkgs, …).
+     *  Symlinks/hardlinks/pax entries are SKIPPED (bytes still consumed) — only
+     *  regular files + dirs materialize. Zip-slip guarded, fail-closed. */
+    fun extractTarGz(tarGz: File, destDir: File) {
         GZIPInputStream(BufferedInputStream(tarGz.inputStream())).use { gzip ->
             val buffer = ByteArray(512)
             while (true) {
@@ -194,6 +197,17 @@ object AlpineEnv {
                             }
                         }
                     }
+                    else -> {
+                        // Symlink/hardlink/pax/etc: skip entry bytes to stay aligned.
+                        var toSkip = size
+                        val data = ByteArray(8192)
+                        while (toSkip > 0) {
+                            val toRead = minOf(toSkip, data.size.toLong()).toInt()
+                            val n = gzip.read(data, 0, toRead)
+                            if (n <= 0) break
+                            toSkip -= n
+                        }
+                    }
                 }
                 val pad = (512 - (size % 512)) % 512
                 if (pad > 0) {
@@ -221,9 +235,9 @@ object AlpineEnv {
             ).joinToString(":")
         } else ""
         val path = if (alpinePath.isNotEmpty()) {
-            "$alpinePath:/system/bin:/system/xbin"
+            "${sandbox.absolutePath}/bin:$alpinePath:/system/bin:/system/xbin"
         } else {
-            "/system/bin:/system/xbin:/vendor/bin"
+            "${sandbox.absolutePath}/bin:/system/bin:/system/xbin:/vendor/bin"
         }
         return arrayOf(
             "HOME=${sandbox.absolutePath}",
@@ -239,8 +253,8 @@ object AlpineEnv {
     fun shellPrefix(sandbox: File): String {
         return if (isInstalled(sandbox)) {
             val a = alpineDir(sandbox).absolutePath
-            // Keep sbin dirs (was dropped vs buildEnvironment) so apk/busybox resolve.
-            "export PATH=$a/usr/local/sbin:$a/usr/local/bin:$a/usr/sbin:$a/usr/bin:$a/sbin:$a/bin:/system/bin:/system/xbin; "
-        } else ""
+            // sandbox/bin first: user tools (opencode) shadow system ones.
+            "export PATH=${sandbox.absolutePath}/bin:$a/usr/local/sbin:$a/usr/local/bin:$a/usr/sbin:$a/usr/bin:$a/sbin:$a/bin:/system/bin:/system/xbin; "
+        } else "export PATH=${sandbox.absolutePath}/bin:/system/bin:/system/xbin; "
     }
 }

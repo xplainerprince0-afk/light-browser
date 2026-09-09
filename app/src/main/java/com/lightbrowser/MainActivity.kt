@@ -320,28 +320,23 @@ private fun AppShell(
                             DownloadsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Downloads))
                             SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
                         }
-                        // Bottom zone is IME-immune AND hidden while typing: the tab bar
-                        // can never float above the keyboard on any device — when keys
-                        // are out, this whole zone slides away; it returns on dismiss.
-                        androidx.compose.animation.AnimatedVisibility(
-                            visible = !keyboardOpen,
-                            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
-                            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it }
-                        ) {
-                            Column(modifier = Modifier.consumeWindowInsets(WindowInsets.ime)) {
-                                if (tab != Tab.Music) {
-                                    MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
-                                }
-                                if (!wide) {
-                                    NavigationBar {
-                                        Tab.entries.filter { it.inBar }.forEach { t ->
-                                            NavigationBarItem(
-                                                selected = tab == t,
-                                                onClick = { tab = t },
-                                                icon = { Icon(t.icon, t.title) },
-                                                label = { Text(t.title) }
-                                            )
-                                        }
+                        // Bottom zone is pinned: never hides, never animates, never rides
+                        // the keyboard (that AnimatedVisibility dance was the lag). The
+                        // keyboard overlays it (adjustNothing); Terminal keys lift
+                        // themselves with their own imePadding.
+                        Column {
+                            if (tab != Tab.Music) {
+                                MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
+                            }
+                            if (!wide) {
+                                NavigationBar {
+                                    Tab.entries.filter { it.inBar }.forEach { t ->
+                                        NavigationBarItem(
+                                            selected = tab == t,
+                                            onClick = { tab = t },
+                                            icon = { Icon(t.icon, t.title) },
+                                            label = { Text(t.title) }
+                                        )
                                     }
                                 }
                             }

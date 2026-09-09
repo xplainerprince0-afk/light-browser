@@ -493,6 +493,73 @@ class TerminalViewModel : ViewModel() {
         } catch (_: Exception) { false }
     }
 
+    /**
+     * CTRL+C аналог: without a PTY there are no signals, so interrupting means
+     * killing the running process. Idle + empty line: fresh prompt (like a tty).
+     */
+    fun interrupt() {
+        try {
+            if (running != null || lockBefore >= 0) {
+                killRunning()
+                print("^C\n", TermDim)
+                printPrompt()
+            } else {
+                print("^C\n", TermDim)
+                printPrompt()
+            }
+        } catch (_: Exception) {}
+    }
+
+    /** CTRL+D аналог: EOF on an idle line clears the screen. */
+    fun sendEof() {
+        try {
+            if (running != null || lockBefore >= 0) {
+                print("(busy — ^C to interrupt)\n", TermDim)
+                return
+            }
+            clear()
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Sticky-key application with REAL bytes (was "^x"/"M-x" caret notation).
+     * CTRL+letter → control byte, CTRL+/ → US (\u001F), ALT+x → ESC+x.
+     * Returns true when consumed (caller clears the sticky).
+     */
+    fun applyStickyKey(sticky: String?, ins: String): Boolean {
+        if (sticky == null) {
+            insertText(ins)
+            return false
+        }
+        try {
+            when (sticky) {
+                "CTRL" -> {
+                    if (ins.length == 1) {
+                        val c = ins[0]
+                        val code = when {
+                            c.lowercaseChar() in 'a'..'z' -> c.lowercaseChar() - 'a' + 1
+                            c == "/" -> 0x1F
+                            else -> -1
+                        }
+                        if (code >= 0) {
+                            insertText(String(Character.toChars(code)))
+                            return true
+                        }
+                    }
+                    insertText(ins)
+                    return true
+                }
+                else -> { // ALT: ESC prefix, like a real Meta key.
+                    insertText("\u001B$ins")
+                    return true
+                }
+            }
+        } catch (_: Exception) {
+            try { insertText(ins) } catch (_: Exception) {}
+            return true
+        }
+    }
+
     /** Replace everything after the last newline with [line], caret to end. */
     private fun replaceLastLine(line: String) {
         val v = _editor.value
@@ -576,7 +643,7 @@ class TerminalViewModel : ViewModel() {
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> {
-                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\n", TermDim)
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-status | opencode <args> (AI agent, needs install first)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
                     afterCommand()
                 }
                 "clear" -> clear()
@@ -661,6 +728,34 @@ class TerminalViewModel : ViewModel() {
                     afterCommand()
                 }
                 "install-alpine", "alpine-install" -> installAlpine()
+                "opencode-install", "opencode-update" -> installOpencode()
+                "opencode-status", "oc-status" -> {
+                    try {
+                        val app = AppCtx.ctx
+                        if (com.lightbrowser.data.OpencodeManager.isInstalled(app)) {
+                            val v = com.lightbrowser.data.OpencodeManager.installedVersion(app) ?: "?"
+                            val kb = com.lightbrowser.data.OpencodeManager.binFile(app).length() / 1024
+                            print("opencode $v installed (${kb}KB)\n`opencode --help`, `opencode run \"task\"`\n", TermGreen)
+                        } else print("opencode not installed — run `opencode-install` (~50MB, aarch64 only)\n", TermDim)
+                    } catch (e: Exception) { print("status error: ${e.message}\n", TermRed) }
+                    afterCommand()
+                }
+                "opencode", "oc" -> {
+                    if (arg.isBlank()) {
+                        print("Usage: opencode --help | opencode run \"task\" | opencode-status\nThe interactive TUI needs a PTY — use non-interactive `run`.\n", TermDim)
+                        afterCommand()
+                    } else {
+                        val app = AppCtx.ctx
+                        if (!com.lightbrowser.data.OpencodeManager.isInstalled(app)) {
+                            print("opencode not installed — run `opencode-install` first\n", TermRed)
+                            afterCommand()
+                        } else {
+                            val bin = com.lightbrowser.data.OpencodeManager.binFile(app).absolutePath
+                            // Long timeout: agent runs take minutes. Redirect to file for more output.
+                            runShell("$bin $arg", timeoutSec = 300)
+                        }
+                    }
+                }
                 "alpine-status" -> {
                     val sd = sandboxDir
                     if (sd == null) print("No sandbox\n", TermRed)
@@ -704,6 +799,37 @@ class TerminalViewModel : ViewModel() {
         } catch (e: Exception) {
             print("exec error: ${e.message}\n", TermRed)
             afterCommand()
+        }
+    }
+
+    private var ocBusy = false
+
+    private fun installOpencode() {
+        val sd = sandboxDir ?: return
+        if (ocBusy || _status.value == "installing") {
+            print("Already installing…\n", TermDim)
+            afterCommand()
+            return
+        }
+        ocBusy = true
+        print("Installing opencode-termux (AI agent, ~50MB)…\n", TermWhite)
+        _status.value = "installing"
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = try {
+                com.lightbrowser.data.OpencodeManager.install(AppCtx.ctx) { msg ->
+                    viewModelScope.launch(Dispatchers.Main) { print("$msg\n", TermDim) }
+                }
+            } catch (e: Exception) {
+                viewModelScope.launch(Dispatchers.Main) { print("Install failed: ${e.message}\n", TermRed) }
+                false
+            }
+            withContext(Dispatchers.Main) {
+                ocBusy = false
+                if (ok) print("Use: `opencode --help` or `opencode run \"your task\"`\n", TermGreen)
+                afterCommand()
+                _status.value = "idle"
+                try { sd.resolve("bin").mkdirs() } catch (_: Exception) {}
+            }
         }
     }
 
@@ -771,10 +897,11 @@ class TerminalViewModel : ViewModel() {
         return out
     }
 
-    private fun runShell(cmd: String) {
+    private fun runShell(cmd: String, timeoutSec: Int = 15) {
         val sd = sandboxDir ?: return
         val cwd = try { active().dir } catch (_: Exception) { null } ?: sd
         _status.value = "running"
+        val wallMs = (timeoutSec.coerceIn(5, 600) * 1000).toLong()
         viewModelScope.launch(Dispatchers.IO) {
             var process: Process? = null
             try {
@@ -796,7 +923,7 @@ class TerminalViewModel : ViewModel() {
                                 outBuf.appendLine(l)
                                 if (outBuf.length > 8000) { outBuf.append("\n…truncated"); break }
                             }
-                            if (System.currentTimeMillis() - start > 15_000) break
+                            if (System.currentTimeMillis() - start > wallMs) break
                         }
                     } catch (_: Exception) {}
                 }.also { it.isDaemon = true; it.start() }
@@ -814,7 +941,7 @@ class TerminalViewModel : ViewModel() {
                 val start = System.currentTimeMillis()
                 var timedOut = false
                 while (tOut.isAlive || tErr.isAlive) {
-                    if (System.currentTimeMillis() - start > 15_000) { timedOut = true; break }
+                    if (System.currentTimeMillis() - start > wallMs) { timedOut = true; break }
                     try { Thread.sleep(50) } catch (_: Exception) { break }
                     // If killed externally, stop waiting (killRunning destroys process).
                     if (running == null) break
@@ -822,7 +949,7 @@ class TerminalViewModel : ViewModel() {
                 try {
                     if (timedOut || !process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
                         try { process.destroyForcibly() } catch (_: Exception) {}
-                        synchronized(outBuf) { outBuf.appendLine(if (timedOut) "…timed out (15s)" else "…killed after 20s") }
+                        synchronized(outBuf) { outBuf.appendLine(if (timedOut) "…timed out (${wallMs / 1000}s)" else "…killed after wait") }
                     }
                 } catch (_: Exception) {
                     try { process.destroy() } catch (_: Exception) {}

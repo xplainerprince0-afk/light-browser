@@ -51,6 +51,14 @@ object HistoryStorage {
 
     fun saveList(ctx: Context, list: List<HistoryEntry>) = save(ctx, list)
 
+    /** Delete entries newer than ts (Chrome-style "last hour" range). Returns removed count. */
+    fun deleteNewerThan(ctx: Context, ts: Long): Int {
+        val list = all(ctx)
+        val kept = list.filter { it.time < ts }
+        save(ctx, kept)
+        return list.size - kept.size
+    }
+
     fun clear(ctx: Context) { prefs(ctx).edit().remove(KEY).apply() }
 }
 
@@ -96,6 +104,14 @@ object BookmarkStorage {
         val arr = JSONArray()
         list.forEach { e -> val o = JSONObject(); o.put("url", e.url); o.put("title", e.title); o.put("time", e.time); arr.put(o) }
         prefs(ctx).edit().putString(KEY, arr.toString()).apply()
+    }
+
+    /** Delete bookmarks older than ts. Returns removed count. */
+    fun deleteOlderThan(ctx: Context, ts: Long): Int {
+        val list = all(ctx)
+        val kept = list.filter { it.time >= ts }
+        save(ctx, kept)
+        return list.size - kept.size
     }
 
     fun clear(ctx: Context) { prefs(ctx).edit().remove(KEY).apply() }

@@ -19,18 +19,22 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -104,6 +108,15 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
     var termScale by remember { mutableFloatStateOf(safeGet { Prefs.terminalFontScale } ?: 1f) }
     var playerSpeed by remember { mutableFloatStateOf(safeGet { Prefs.playerSpeed } ?: 1f) }
     val backupScope = rememberCoroutineScope()
+
+    // Two-step delete flows (shared by the Data card buttons and the About reset).
+    var deleteFlow by remember { mutableStateOf<String?>(null) } // history|bookmarks|site
+    var confirmFlow by remember { mutableStateOf<String?>(null) } // history|bookmarks|site|prefs
+    var historyScope by remember { mutableStateOf(3) } // 0=hour 1=day 2=week 3=all
+    var bookmarkScope by remember { mutableStateOf(0) } // 0=all 1=older30
+    var siteHist by remember { mutableStateOf(true) }
+    var siteCookies by remember { mutableStateOf(true) }
+    var siteCache by remember { mutableStateOf(true) }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) backupScope.launch(Dispatchers.IO) {
@@ -302,48 +315,51 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
         }
 
         item {
+            // Two-step deletes: 1) pick scope, 2) confirm. Nothing destructive is one tap.
+            val histCount = try { HistoryStorage.all(ctx).size } catch (_: Exception) { 0 }
+            val markCount = try { BookmarkStorage.all(ctx).size } catch (_: Exception) { 0 }
+
+            fun historyCutoff(): Long {
+                val now = System.currentTimeMillis()
+                return when (historyScope) {
+                    0 -> now - 3_600_000L
+                    1 -> now - 86_400_000L
+                    2 -> now - 7 * 86_400_000L
+                    else -> 0L
+                }
+            }
+            fun historyDesc(): String = when (historyScope) {
+                0 -> "history from the last hour"
+                1 -> "history from the last 24 hours"
+                2 -> "history from the last 7 days"
+                else -> "all $histCount history entries"
+            }
+            fun bookmarkDesc(): String = if (bookmarkScope == 0) "all $markCount bookmarks"
+                else "bookmarks older than 30 days"
+            fun siteDesc(): String {
+                val parts = mutableListOf<String>()
+                if (siteHist) parts.add("history")
+                if (siteCookies) parts.add("cookies & logins")
+                if (siteCache) parts.add("cached files")
+                return if (parts.isEmpty()) "nothing" else parts.joinToString(", ")
+            }
+
             SettingsCard(title = "Data") {
                 FilledTonalButton(
                     onClick = {
-                        try {
-                            CookieManager.getInstance().removeAllCookies(null)
-                            CookieManager.getInstance().flush()
-                            WebStorage.getInstance().deleteAllData()
-                            try {
-                                WebView(ctx).apply {
-                                    clearCache(true)
-                                    destroy()
-                                }
-                            } catch (_: Exception) {}
-                            Toast.makeText(ctx, "Cache & cookies cleared", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show()
-                        }
+                        siteHist = true; siteCookies = true; siteCache = true
+                        deleteFlow = "site"
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Clear cache & cookies") }
+                ) { Text("Clear browsing data…") }
                 FilledTonalButton(
-                    onClick = {
-                        try {
-                            HistoryStorage.clear(ctx)
-                            Toast.makeText(ctx, "History cleared", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show()
-                        }
-                    },
+                    onClick = { historyScope = 3; deleteFlow = "history" },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Clear history") }
+                ) { Text("Clear history… ($histCount)") }
                 FilledTonalButton(
-                    onClick = {
-                        try {
-                            BookmarkStorage.clear(ctx)
-                            Toast.makeText(ctx, "Bookmarks cleared", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show()
-                        }
-                    },
+                    onClick = { bookmarkScope = 0; deleteFlow = "bookmarks" },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Clear bookmarks") }
+                ) { Text("Clear bookmarks… ($markCount)") }
                 FilledTonalButton(
                     onClick = { exportLauncher.launch("lightbrowser-backup.json") },
                     modifier = Modifier.fillMaxWidth()
@@ -352,6 +368,169 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                     onClick = { importLauncher.launch(arrayOf("application/json")) },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("Import backup") }
+            }
+
+            // ── Step 1: scope pickers ──
+            if (deleteFlow == "site") {
+                AlertDialog(
+                    onDismissRequest = { deleteFlow = null },
+                    title = { Text("Clear browsing data") },
+                    text = {
+                        Column {
+                            CheckRow("Browsing history", siteHist) { siteHist = it }
+                            CheckRow("Cookies & site data (logs you out)", siteCookies) { siteCookies = it }
+                            CheckRow("Cached images & files", siteCache) { siteCache = it }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = { deleteFlow = null; confirmFlow = "site" },
+                            enabled = siteHist || siteCookies || siteCache
+                        ) { Text("Continue") }
+                    },
+                    dismissButton = { TextButton(onClick = { deleteFlow = null }) { Text("Cancel") } }
+                )
+            }
+            if (deleteFlow == "history") {
+                val options = listOf("Last hour", "Last 24 hours", "Last 7 days", "Everything")
+                AlertDialog(
+                    onDismissRequest = { deleteFlow = null },
+                    title = { Text("Clear history ($histCount)") },
+                    text = {
+                        Column {
+                            options.forEachIndexed { i, label ->
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { historyScope = i }) {
+                                    RadioButton(selected = historyScope == i, onClick = { historyScope = i })
+                                    Text(label)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { deleteFlow = null; confirmFlow = "history" }) { Text("Continue") }
+                    },
+                    dismissButton = { TextButton(onClick = { deleteFlow = null }) { Text("Cancel") } }
+                )
+            }
+            if (deleteFlow == "bookmarks") {
+                AlertDialog(
+                    onDismissRequest = { deleteFlow = null },
+                    title = { Text("Clear bookmarks ($markCount)") },
+                    text = {
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { bookmarkScope = 0 }) {
+                                RadioButton(selected = bookmarkScope == 0, onClick = { bookmarkScope = 0 })
+                                Text("Everything")
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { bookmarkScope = 1 }) {
+                                RadioButton(selected = bookmarkScope == 1, onClick = { bookmarkScope = 1 })
+                                Text("Only older than 30 days")
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { deleteFlow = null; confirmFlow = "bookmarks" }) { Text("Continue") }
+                    },
+                    dismissButton = { TextButton(onClick = { deleteFlow = null }) { Text("Cancel") } }
+                )
+            }
+
+            // ── Step 2: are-you-sure confirm ──
+            if (confirmFlow != null) {
+                val (title, text) = when (confirmFlow) {
+                    "site" -> "Delete ${siteDesc()}?" to "This cannot be undone. Cookies will log you out everywhere."
+                    "history" -> "Delete ${historyDesc()}?" to "This cannot be undone."
+                    "bookmarks" -> "Delete ${bookmarkDesc()}?" to "This cannot be undone."
+                    "prefs" -> "Reset all preferences?" to "Homepage, theme, search engine, player and terminal settings go back to defaults. Tabs, history and files are kept."
+                    else -> "" to ""
+                }
+                AlertDialog(
+                    onDismissRequest = { confirmFlow = null },
+                    title = { Text(title) },
+                    text = { Text(text) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val flow = confirmFlow
+                            confirmFlow = null
+                            try {
+                                when (flow) {
+                                    "site" -> {
+                                        if (siteHist) { try { HistoryStorage.clear(ctx) } catch (_: Exception) {} }
+                                        if (siteCookies) {
+                                            try {
+                                                CookieManager.getInstance().removeAllCookies(null)
+                                                CookieManager.getInstance().flush()
+                                            } catch (_: Exception) {}
+                                        }
+                                        if (siteCache) {
+                                            try { WebStorage.getInstance().deleteAllData() } catch (_: Exception) {}
+                                            try {
+                                                WebView(ctx).apply { clearCache(true); destroy() }
+                                            } catch (_: Exception) {}
+                                        }
+                                        Toast.makeText(ctx, "Deleted ${siteDesc()}", Toast.LENGTH_SHORT).show()
+                                    }
+                                    "history" -> {
+                                        val n = if (historyScope == 3) {
+                                            try { HistoryStorage.clear(ctx) } catch (_: Exception) {}
+                                            histCount
+                                        } else {
+                                            try { HistoryStorage.deleteNewerThan(ctx, historyCutoff()) } catch (_: Exception) { 0 }
+                                        }
+                                        Toast.makeText(ctx, "Deleted $n history entries", Toast.LENGTH_SHORT).show()
+                                    }
+                                    "bookmarks" -> {
+                                        val n = if (bookmarkScope == 0) {
+                                            try { BookmarkStorage.clear(ctx) } catch (_: Exception) {}
+                                            markCount
+                                        } else {
+                                            try { BookmarkStorage.deleteOlderThan(ctx, System.currentTimeMillis() - 30 * 86_400_000L) } catch (_: Exception) { 0 }
+                                        }
+                                        Toast.makeText(ctx, "Deleted $n bookmarks", Toast.LENGTH_SHORT).show()
+                                    }
+                                    "prefs" -> {
+                                        safeSet {
+                                            Prefs.homePage = "lb://home"
+                                            Prefs.jsEnabled = true
+                                            Prefs.desktopMode = false
+                                            Prefs.adBlock = false
+                                            Prefs.saveSiteData = true
+                                            Prefs.cacheEnabled = true
+                                            Prefs.searchEngine = "google"
+                                            Prefs.themeMode = "system"
+                                            Prefs.trueBlack = false
+                                            Prefs.uiFontScale = 1f
+                                            Prefs.appLang = "system"
+                                            Prefs.terminalFontScale = 1f
+                                            Prefs.playerShuffle = false
+                                            Prefs.playerRepeat = 0
+                                            Prefs.playerSpeed = 1f
+                                        }
+                                        home = "lb://home"
+                                        js = true
+                                        desktop = false
+                                        adblock = false
+                                        saveSiteData = true
+                                        cache = true
+                                        engine = "google"
+                                        themeMode = "system"
+                                        trueBlack = false
+                                        uiScale = 1f
+                                        lang = "system"
+                                        applyLang(ctx, "system")
+                                        termScale = 1f
+                                        playerSpeed = 1f
+                                        onThemeChange("system")
+                                        Toast.makeText(ctx, "Preferences reset", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, e.message, Toast.LENGTH_LONG).show()
+                            }
+                        }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                    },
+                    dismissButton = { TextButton(onClick = { confirmFlow = null }) { Text("Cancel") } }
+                )
             }
         }
 
@@ -368,46 +547,12 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                 )
                 Spacer(Modifier.height(4.dp))
                 Button(
-                    onClick = {
-                        safeSet {
-                            Prefs.homePage = "lb://home"
-                            Prefs.jsEnabled = true
-                            Prefs.desktopMode = false
-                            Prefs.adBlock = false
-                            Prefs.saveSiteData = true
-                            Prefs.cacheEnabled = true
-                            Prefs.searchEngine = "google"
-                            Prefs.themeMode = "system"
-                            Prefs.trueBlack = false
-                            Prefs.uiFontScale = 1f
-                            Prefs.appLang = "system"
-                            Prefs.terminalFontScale = 1f
-                            Prefs.playerShuffle = false
-                            Prefs.playerRepeat = 0
-                            Prefs.playerSpeed = 1f
-                        }
-                        home = "lb://home"
-                        js = true
-                        desktop = false
-                        adblock = false
-                        saveSiteData = true
-                        cache = true
-                        engine = "google"
-                        themeMode = "system"
-                        trueBlack = false
-                        uiScale = 1f
-                        lang = "system"
-                        applyLang(ctx, "system")
-                        termScale = 1f
-                        playerSpeed = 1f
-                        onThemeChange("system")
-                        Toast.makeText(ctx, "Preferences reset", Toast.LENGTH_SHORT).show()
-                    },
+                    onClick = { confirmFlow = "prefs" },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Reset preferences")
+                    Text("Reset preferences…")
                 }
             }
         }
@@ -453,6 +598,21 @@ private fun SwitchRow(
             modifier = Modifier.weight(1f)
         )
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+@Composable
+private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onChange)
+        Spacer(Modifier.width(8.dp))
+        Text(label, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

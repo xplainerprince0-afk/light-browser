@@ -219,14 +219,17 @@ fun TerminalScreen(
                 keyboardActions = KeyboardActions(onSend = {
                     val mod = sticky
                     if (mod != null) {
-                        // CTRL converts the lone typed char (prompt-aware — the old check
-                        // counted the prompt so it never fired). ALT sends ESC prefix.
-                        if (mod == "CTRL") {
+                        // CTRL+Enter while busy = interrupt (the ^C everyone reaches for).
+                        // Otherwise convert the lone char (prompt-aware) then submit.
+                        if (mod == "CTRL" && status != "idle") {
+                            try { vm.interrupt() } catch (_: Exception) {}
+                        } else if (mod == "CTRL") {
                             try { vm.consumeCtrlChar() } catch (_: Exception) {}
                         } else if (mod == "ALT") {
                             try { vm.insertText("\u001B") } catch (_: Exception) {}
                         }
                         sticky = null
+                        if (mod == "CTRL" && status != "idle") return@KeyboardActions
                     }
                     vm.submit()
                 })
@@ -237,8 +240,8 @@ fun TerminalScreen(
                 TermKeyRow(
                     keys = listOf(
                         "ESC" to { vm.insertText("\u001B") },
-                        "/" to { applySticky(sticky, { sticky = null }, vm, "/") },
-                        "-" to { applySticky(sticky, { sticky = null }, vm, "-") },
+                        "/" to { if (vm.applyStickyKey(sticky, "/")) sticky = null },
+                        "-" to { if (vm.applyStickyKey(sticky, "-")) sticky = null },
                         "HOME" to { vm.moveLineHome() },
                         "↑" to { vm.historyUp() },
                         "END" to { vm.moveLineEnd() },
@@ -248,13 +251,13 @@ fun TerminalScreen(
                 )
                 TermKeyRow(
                     keys = listOf(
-                        "⇥" to { vm.insertText("\t") },
                         "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL" },
                         "ALT" to { sticky = if (sticky == "ALT") null else "ALT" },
+                        "^C" to { try { vm.interrupt() } catch (_: Exception) {} },
+                        "^D" to { try { vm.sendEof() } catch (_: Exception) {} },
                         "←" to { vm.moveCursor(-1) },
                         "↓" to { vm.historyDown() },
-                        "→" to { vm.moveCursor(1) },
-                        "PGDN" to { vm.moveCursorTo(vm.editor.value.text.length) }
+                        "→" to { vm.moveCursor(1) }
                     ),
                     sticky = sticky
                 )
@@ -304,11 +307,4 @@ private fun TermKeyRow(
             }
         }
     }
-}
-
-private fun applySticky(sticky: String?, clear: () -> Unit, vm: TerminalViewModel, ins: String) {
-    if (sticky != null) {
-        vm.insertText(if (sticky == "CTRL") "^$ins" else "M-$ins")
-        clear()
-    } else vm.insertText(ins)
 }

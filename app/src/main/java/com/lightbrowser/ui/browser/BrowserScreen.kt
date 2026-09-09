@@ -373,11 +373,94 @@ fun BrowserScreen(
                     }
                     // Plain tabs button — no count badge
                     TextButton(onClick = { showTabs = true }) { Text("Tabs") }
-                    IconButton(onClick = { showMenu = true }) {
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
                         Icon(
-                            Icons.Filled.MoreVert, "Menu",
-                            tint = if (recording) androidx.compose.ui.graphics.Color.Red else MaterialTheme.colorScheme.onSurface
+                        Icons.Filled.MoreVert, "Menu",
+                        tint = if (recording) androidx.compose.ui.graphics.Color.Red else MaterialTheme.colorScheme.onSurface
                         )
+                        }
+                        if (showMenu) {
+                        // Desktop checkbox must recompose on toggle: prefsVer is the trigger.
+                        val desktopOn = remember(prefsVer, showMenu) {
+                        try { Prefs.desktopMode } catch (_: Exception) { false }
+                        }
+                        // Anchored to the ⋮ button: drops down right-aligned, Chrome-style.
+                        DropdownMenu(
+                        expanded = true,
+                        onDismissRequest = { showMenu = false },
+                        modifier = Modifier.width(300.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))
+                        ) {
+                        // Top action row: forward | bookmark | download page | site info | refresh
+                        Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                        ) {
+                        IconButton(onClick = { try { webView?.goForward() } catch (_: Exception) {} }, enabled = canGoForward) {
+                        Icon(Icons.Filled.ArrowForward, "Forward")
+                        }
+                        IconButton(onClick = { vm.toggleBookmark() }) {
+                        Icon(if (ui.bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, "Bookmark")
+                        }
+                        IconButton(onClick = dismissMenu@{
+                        val u = ui.currentUrl
+                        if (u.isBlank() || u.startsWith("lb://")) return@dismissMenu
+                        try { DownloadHelper.enqueue(ctx, u, null, null, null) } catch (_: Exception) {}
+                        }) { Icon(Icons.Filled.Download, "Download page") }
+                        IconButton(onClick = { showMenu = false; showSite = true }) { Icon(Icons.Filled.Info, "Site info") }
+                        IconButton(onClick = { try { webView?.reload() } catch (_: Exception) {} }) { Icon(Icons.Filled.Refresh, "Refresh") }
+                        }
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp))
+                        ChromeRow(Icons.Filled.Add, "New tab") { dismissMenuAnd { vm.openTab(HOME_URL) } }
+                        ChromeRow(Icons.Filled.History, "History") { dismissMenuAnd { sheetSearch = ""; showHistory = true } }
+                        ChromeRow(Icons.Filled.Delete, "Delete browsing data") { showMenu = false; showClearCacheConfirm = true }
+                        ChromeRow(Icons.Filled.Download, "Downloads") { dismissMenuAnd { onOpenDownloads() } }
+                        ChromeRow(Icons.Filled.Bookmark, "Bookmarks") { dismissMenuAnd { sheetSearch = ""; showBookmarks = true } }
+                        ChromeRow(Icons.Filled.OpenInNew, "Recent tabs") { dismissMenuAnd { showTabs = true } }
+                        ChromeRow(Icons.Filled.Share, "Share…") { dismissMenuAnd { shareUrl(ctx, ui.currentUrl) } }
+                        ChromeRow(Icons.Filled.FindReplace, "Find in page") { dismissMenuAnd { findQuery = ""; vm.clearFind(); findOpen = true } }
+                        // Desktop site with trailing checkbox — toggles in place, menu stays open.
+                        DropdownMenuItem(
+                        text = { Text("Desktop site") },
+                        leadingIcon = { Icon(Icons.Filled.DesktopWindows, null) },
+                        trailingIcon = {
+                        Checkbox(
+                        checked = desktopOn,
+                        onCheckedChange = {
+                        try { Prefs.desktopMode = it } catch (_: Exception) {}
+                        prefsVer++
+                        try { webView?.reload() } catch (_: Exception) {}
+                        }
+                        )
+                        },
+                        onClick = {
+                        try { Prefs.desktopMode = !Prefs.desktopMode } catch (_: Exception) {}
+                        prefsVer++
+                        try { webView?.reload() } catch (_: Exception) {}
+                        }
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp))
+                        ChromeRow(Icons.Filled.Article, "Reader") { dismissMenuAnd { vm.loadReader(); showReader = true } }
+                        ChromeRow(Icons.Filled.Tune, "Site settings") { dismissMenuAnd { showSite = true } }
+                        ChromeRow(Icons.Filled.BugReport, "Script log") { dismissMenuAnd { showScriptLog = true } }
+                        ChromeRow(
+                        Icons.Filled.FiberManualRecord,
+                        if (recording) "Stop recording" else "Record taps"
+                        ) {
+                        dismissMenuAnd {
+                        if (com.lightbrowser.data.BrowserAgent.isRecording()) {
+                        com.lightbrowser.data.BrowserAgent.stopRecording()
+                        scope.launch { try { showAgent = true } catch (_: Exception) {} }
+                        } else com.lightbrowser.data.BrowserAgent.startRecording()
+                        }
+                        }
+                        ChromeRow(Icons.Filled.Code, "Scripts") { dismissMenuAnd { onOpenScripts() } }
+                        ChromeRow(Icons.Filled.SmartToy, "Agent bridge") { dismissMenuAnd { showAgent = true } }
+                        ChromeRow(Icons.Filled.Settings, "Settings") { dismissMenuAnd { onOpenSettings() } }
+                        }
+                        }
+                    }
                     }
                 }
             }
@@ -667,88 +750,6 @@ fun BrowserScreen(
     fun dismissMenuAnd(action: () -> Unit) {
         showMenu = false
         try { action() } catch (_: Exception) {}
-    }
-    if (showMenu) {
-        // Desktop checkbox must recompose on toggle: prefsVer is the trigger.
-        val desktopOn = remember(prefsVer, showMenu) {
-            try { Prefs.desktopMode } catch (_: Exception) { false }
-        }
-        // Anchor: full-width box, menu aligned top-end under the toolbar.
-        Box(modifier = Modifier.fillMaxWidth()) {
-            DropdownMenu(
-                expanded = true,
-                onDismissRequest = { showMenu = false },
-                modifier = Modifier.width(300.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))
-            ) {
-                // Top action row: forward | bookmark | download page | site info | refresh
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = { try { webView?.goForward() } catch (_: Exception) {} }, enabled = canGoForward) {
-                        Icon(Icons.Filled.ArrowForward, "Forward")
-                    }
-                    IconButton(onClick = { vm.toggleBookmark() }) {
-                        Icon(if (ui.bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, "Bookmark")
-                    }
-                    IconButton(onClick = dismissMenu@{
-                        val u = ui.currentUrl
-                        if (u.isBlank() || u.startsWith("lb://")) return@dismissMenu
-                        try { DownloadHelper.enqueue(ctx, u, null, null, null) } catch (_: Exception) {}
-                    }) { Icon(Icons.Filled.Download, "Download page") }
-                    IconButton(onClick = { showMenu = false; showSite = true }) { Icon(Icons.Filled.Info, "Site info") }
-                    IconButton(onClick = { try { webView?.reload() } catch (_: Exception) {} }) { Icon(Icons.Filled.Refresh, "Refresh") }
-                }
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp))
-                ChromeRow(Icons.Filled.Add, "New tab") { dismissMenuAnd { vm.openTab(HOME_URL) } }
-                ChromeRow(Icons.Filled.History, "History") { dismissMenuAnd { sheetSearch = ""; showHistory = true } }
-                ChromeRow(Icons.Filled.Delete, "Delete browsing data") { showMenu = false; showClearCacheConfirm = true }
-                ChromeRow(Icons.Filled.Download, "Downloads") { dismissMenuAnd { onOpenDownloads() } }
-                ChromeRow(Icons.Filled.Bookmark, "Bookmarks") { dismissMenuAnd { sheetSearch = ""; showBookmarks = true } }
-                ChromeRow(Icons.Filled.OpenInNew, "Recent tabs") { dismissMenuAnd { showTabs = true } }
-                ChromeRow(Icons.Filled.Share, "Share…") { dismissMenuAnd { shareUrl(ctx, ui.currentUrl) } }
-                ChromeRow(Icons.Filled.FindReplace, "Find in page") { dismissMenuAnd { findQuery = ""; vm.clearFind(); findOpen = true } }
-                // Desktop site with trailing checkbox — toggles in place, menu stays open.
-                DropdownMenuItem(
-                    text = { Text("Desktop site") },
-                    leadingIcon = { Icon(Icons.Filled.DesktopWindows, null) },
-                    trailingIcon = {
-                        Checkbox(
-                            checked = desktopOn,
-                            onCheckedChange = {
-                                try { Prefs.desktopMode = it } catch (_: Exception) {}
-                                prefsVer++
-                                try { webView?.reload() } catch (_: Exception) {}
-                            }
-                        )
-                    },
-                    onClick = {
-                        try { Prefs.desktopMode = !Prefs.desktopMode } catch (_: Exception) {}
-                        prefsVer++
-                        try { webView?.reload() } catch (_: Exception) {}
-                    }
-                )
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp))
-                ChromeRow(Icons.Filled.Article, "Reader") { dismissMenuAnd { vm.loadReader(); showReader = true } }
-                ChromeRow(Icons.Filled.Tune, "Site settings") { dismissMenuAnd { showSite = true } }
-                ChromeRow(Icons.Filled.BugReport, "Script log") { dismissMenuAnd { showScriptLog = true } }
-                ChromeRow(
-                    Icons.Filled.FiberManualRecord,
-                    if (recording) "Stop recording" else "Record taps"
-                ) {
-                    dismissMenuAnd {
-                        if (com.lightbrowser.data.BrowserAgent.isRecording()) {
-                            com.lightbrowser.data.BrowserAgent.stopRecording()
-                            scope.launch { try { showAgent = true } catch (_: Exception) {} }
-                        } else com.lightbrowser.data.BrowserAgent.startRecording()
-                    }
-                }
-                ChromeRow(Icons.Filled.Code, "Scripts") { dismissMenuAnd { onOpenScripts() } }
-                ChromeRow(Icons.Filled.SmartToy, "Agent bridge") { dismissMenuAnd { showAgent = true } }
-                ChromeRow(Icons.Filled.Settings, "Settings") { dismissMenuAnd { onOpenSettings() } }
-            }
-        }
     }
     if (showClearCacheConfirm) {
         AlertDialog(

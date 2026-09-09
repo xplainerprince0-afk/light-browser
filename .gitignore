@@ -16,3 +16,6 @@ captures/
 .idea/
 *.log
 .DS_Store
+
+# user reference screenshots
+Screenshot_*.png
