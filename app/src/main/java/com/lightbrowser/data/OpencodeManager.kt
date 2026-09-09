@@ -35,8 +35,8 @@ object OpencodeManager {
 
     /**
      * Standard layout (no wrappers, no renames):
-     *   sandbox/bin/opencode                 — the real ELF, chmod 755
-     *   sandbox/lib/opencode/*.so            — sidecar libs (libopencode-crhandler.so)
+     *   sandbox/bin/opencode      — the real ELF, chmod 755
+     *   sandbox/lib/opencode/     — sidecar libs (libopencode-crhandler.so)
      * LD_LIBRARY_PATH points at the lib dir (see AlpineEnv).
      */
     fun libDir(ctx: Context): File =
