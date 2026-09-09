@@ -241,7 +241,8 @@ object AlpineEnv {
      *  regular files + dirs materialize. Zip-slip guarded, fail-closed. */
     fun extractTarGz(tarGz: File, destDir: File) {
         GZIPInputStream(BufferedInputStream(tarGz.inputStream())).use { gzip ->
-            val buffer = ByteArray(512)            while (true) {
+            val buffer = ByteArray(512)
+            while (true) {
                 val header = ByteArray(512)
                 var read = 0
                 while (read < 512) {
