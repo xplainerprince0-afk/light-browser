@@ -26,6 +26,32 @@ object InsetDebug {
 
     /** Outer content bottom pad (MainActivity Scaffold), px. State: recomposes readers. */
     var outerPadPx by mutableIntStateOf(0)
+
+    /**
+     * Measured keyboard height, px (visible window frame — includes
+     * suggestion strips that Compose IME insets may omit). 0 when closed.
+     * Published by MainActivity's layout listener; drives the keys lift.
+     */
+    var kbHeightPx = mutableIntStateOf(0)
+
+    /** Static system navigation-bar inset, px (already reserved below us). */
+    var sysNavPx = mutableIntStateOf(0)
+}
+
+/**
+ * Measured keyboard lift: visible-frame keyboard height (suggestion strip
+ * included — Compose IME insets may omit it) minus the static system-nav
+ * inset the outer Scaffold already reserves below us. Zero when closed.
+ * Immune to inset-consumption quirks: pure measurement, no inset reads.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun Modifier.keyboardLift(): Modifier {
+    val density = LocalDensity.current
+    val kb = InsetDebug.kbHeightPx.intValue
+    val nav = InsetDebug.sysNavPx.intValue
+    val pad = (kb - nav).coerceAtLeast(0)
+    return this.padding(bottom = with(density) { pad.toDp() })
 }
 
 /**

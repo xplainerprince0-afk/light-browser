@@ -340,20 +340,14 @@ fun TerminalScreen(
         snackbarHost = { SnackbarHost(snacks) },
         containerColor = TermBlack
     ) { _ ->
-        // ONE lift, exact: content rises by the keyboard MINUS the system nav
-        // inset the outer Scaffold already reserves below us (that inset is
-        // dead space once the keyboard covers it — it was the visible "gap
-        // between keys and keyboard"). Keys add zero of their own (hug() here
-        // double-lifted). No arithmetic beyond this, no nav assumptions.
-        val imePadBottom = with(density) {
-            (WindowInsets.ime.getBottom(density) - WindowInsets.navigationBars.getBottom(density))
-                .coerceAtLeast(0).toDp()
-        }
+        // Measured lift lives on the keys themselves (keyboardLift()):
+        // visible-frame height covers suggestion strips that IME insets
+        // omit. Nothing to pad here — just consume so nested
+        // windowInsetsPadding readers don't double-apply.
         Box(modifier = Modifier.fillMaxSize().background(TermBlack)) {
         Column(
             modifier = Modifier.fillMaxSize()
                 .consumeWindowInsets(WindowInsets.ime)
-                .padding(bottom = imePadBottom)
         ) {
             if (ptyMode) {
                 PtyTab(
@@ -404,10 +398,11 @@ fun TerminalScreen(
                 })
             )
 
-            // ── Keys ride the content bottom with zero own padding (the ──
-            // root lifted exactly to the keyboard top) and scroll sideways ──
+            // ── Keys ride the measured keyboard top (keyboardLift(): ──
+            // visible-frame height, suggestion strip included) and scroll ──
+            // sideways for the full set ──
             androidx.compose.material3.HorizontalDivider(color = Color(0xFF222222))
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.fillMaxWidth().keyboardLift()) {
                 TermKeyRow(
                     keys = listOf(
                         "ESC" to { vm.insertText("\u001B") },

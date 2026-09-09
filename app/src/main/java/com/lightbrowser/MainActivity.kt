@@ -123,6 +123,22 @@ class MainActivity : ComponentActivity() {
                 val screenH = decor.height.coerceAtLeast(1)
                 val keyH = screenH - r.bottom
                 keyboardOpenFlow.value = keyH > screenH * 0.15
+                // Measured lift for terminal keys: the visible frame excludes
+                // the WHOLE IME window (suggestion strip included — Compose
+                // IME insets may omit it). Publish height + static nav inset.
+                try {
+                    com.lightbrowser.ui.terminal.InsetDebug.kbHeightPx.intValue =
+                        if (keyH > screenH * 0.15) keyH else 0
+                    val ri = decor.rootWindowInsets
+                    if (ri != null) {
+                        val compat = androidx.core.view.WindowInsetsCompat
+                            .toWindowInsetsCompat(ri, decor)
+                        com.lightbrowser.ui.terminal.InsetDebug.sysNavPx.intValue =
+                            compat.getInsets(
+                                androidx.core.view.WindowInsetsCompat.Type.navigationBars()
+                            ).bottom
+                    }
+                } catch (_: Exception) {}
             } catch (_: Exception) {}
         }
         try {
