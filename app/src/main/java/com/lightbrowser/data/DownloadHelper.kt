@@ -29,6 +29,15 @@ object DownloadHelper {
     private val cancelConns = java.util.concurrent.ConcurrentHashMap<Long, java.net.HttpURLConnection>()
     private var nextId = 1L
 
+    /**
+     * Bounded pool (was: one raw Thread per download — a spam/retry loop
+     * exhausts threads). Daemon threads, max 3 concurrent; extra tasks queue.
+     */
+    private val dlPool: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newFixedThreadPool(3) { r ->
+            Thread(r, "lb-download").also { it.isDaemon = true }
+        }
+
     fun cancel(id: Long) {
         try { cancelFlags[id]?.set(true) } catch (_: Exception) {}
         try { cancelConns[id]?.disconnect() } catch (_: Exception) {}
@@ -72,7 +81,8 @@ object DownloadHelper {
             cancelFlags[id] = flag
             updateDl(ActiveDl(id, safeName, url, null, 0, -1))
             toastOnMain(app, "Downloading $safeName…")
-            Thread {
+            try {
+                dlPool.execute {
                 var conn: java.net.HttpURLConnection? = null
                 try {
                     val sandboxDir = getSandboxDownloadsDir(app)
@@ -87,12 +97,14 @@ object DownloadHelper {
                     if (!ua.isNullOrBlank()) conn.setRequestProperty("User-Agent", ua)
                     try {
                         val ck = try {
-                            // CookieManager should be read on Main; post-and-wait briefly, fall back direct.
+                            // CookieManager must be read on Main; post-and-wait briefly.
+                            // On timeout proceed WITHOUT cookies (was: direct bg-thread
+                            // getCookie — a thread-affinity violation after a 2s stall).
                             if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) CookieManager.getInstance().getCookie(url)
                             else {
                                 val f = java.util.concurrent.CompletableFuture<String?>()
                                 mainHandler.post { try { f.complete(CookieManager.getInstance().getCookie(url)) } catch (_: Exception) { f.complete(null) } }
-                                try { f.get(2, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { CookieManager.getInstance().getCookie(url) }
+                                try { f.get(2, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) { null }
                             }
                         } catch (_: Exception) { null }
                         if (!ck.isNullOrBlank()) conn.setRequestProperty("Cookie", ck)
@@ -124,7 +136,7 @@ object DownloadHelper {
                         try { outFile.delete() } catch (_: Exception) {}
                         removeDl(id)
                         toastOnMain(app, "Download cancelled")
-                        return@Thread
+                        return@execute
                     }
                     removeDl(id)
                     try {
@@ -145,7 +157,13 @@ object DownloadHelper {
                     try { cancelConns.remove(id) } catch (_: Exception) {}
                     try { conn?.disconnect() } catch (_: Exception) {}
                 }
-            }.also { it.isDaemon = true }.start()
+                }
+            } catch (e: Exception) {
+                // Pool reject (practically unreachable: unbounded queue, never
+                // shut down) — leave the queued entry; user can cancel/retry.
+                removeDl(id)
+                toastOnMain(app, "Download failed. Tap to retry.", long = true)
+            }
         } catch (e: Exception) {
             toastOnMain(ctx, "Download failed: ${e.message}", long = true)
         }
@@ -179,12 +197,22 @@ object DownloadHelper {
     // NOTE: @JavascriptInterface runs on a background thread — never touch Toast/Views directly.
     class BlobBridge(private val ctx: Context) {
         private val appCtx: Context = ctx.applicationContext
-        private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+        companion object {
+            /**
+             * Shared single-thread executor (was: one per bridge, i.e. per
+             * WebView — a thread + context chain leaked per page).
+             */
+            private val sharedIo: java.util.concurrent.ExecutorService =
+                java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                    Thread(r, "lb-blob").also { it.isDaemon = true }
+                }
+        }
 
         @android.webkit.JavascriptInterface
         fun onBlobDownload(base64data: String, mime: String?, disposition: String?) {
             // Offload Base64 decode + file write off the JS thread (large videos = multi-MB).
-            try { io.execute { saveBlob(base64data, mime, disposition) } } catch (_: Exception) {
+            try { sharedIo.execute { saveBlob(base64data, mime, disposition) } } catch (_: Exception) {
                 try { saveBlob(base64data, mime, disposition) } catch (_: Exception) {}
             }
         }
@@ -197,7 +225,13 @@ object DownloadHelper {
                     toastOnMain(appCtx, "Blob too large to save in-app", long = true)
                     return
                 }
-                val dataPart = base64data.substringAfter(",", base64data)
+                // substringAfter copies the (huge) payload — OOM-guarded like decode.
+                val dataPart = try {
+                    base64data.substringAfter(",", base64data)
+                } catch (e: OutOfMemoryError) {
+                    toastOnMain(appCtx, "Blob too large (out of memory)", long = true)
+                    return
+                }
                 val bytes = try {
                     android.util.Base64.decode(dataPart, android.util.Base64.DEFAULT)
                 } catch (e: OutOfMemoryError) {

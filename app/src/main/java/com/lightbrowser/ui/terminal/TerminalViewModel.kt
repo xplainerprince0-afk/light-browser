@@ -69,6 +69,9 @@ class TerminalViewModel : ViewModel() {
     private val store = mutableListOf<Sess>()
     private var sessionCounter = 0
 
+    // Volatile: written on IO (spawn/teardown), read on Main (busy guard).
+    // A stale read used to allow concurrent runShell + leaked handles.
+    @Volatile
     private var running: Process? = null
     /** Offset before which the transcript is frozen while a command runs (-1 idle). */
     private var lockBefore: Int = -1
@@ -77,6 +80,17 @@ class TerminalViewModel : ViewModel() {
         private set
     var alpineInstalled = false
         private set
+
+    override fun onCleared() {
+        // Tear down any live child + drain threads (was: process, fds and
+        // two blocking readLine() threads leaked on rotate/exit).
+        try {
+            running?.destroyForcibly()
+        } catch (_: Exception) {}
+        running = null
+        lockBefore = -1
+        super.onCleared()
+    }
 
     private fun active(): Sess {
         if (store.isEmpty()) {
@@ -656,10 +670,17 @@ class TerminalViewModel : ViewModel() {
                 }
                 "clear" -> clear()
                 "history" -> {
-                    val list = try { HistoryStorage.all(AppCtx.ctx) } catch (_: Exception) { emptyList() }
-                    if (list.isEmpty()) print("No browsing history\n", TermDim)
-                    else list.take(10).forEach { print("• ${it.title} – ${it.url}\n", TermDim) }
-                    afterCommand()
+                    // History JSON parses on IO (was: up to 200 entries on Main).
+                    // Unlock first: this branch is async like agentCmd.
+                    lockBefore = -1
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val list = try { HistoryStorage.all(AppCtx.ctx) } catch (_: Exception) { emptyList() }
+                        withContext(Dispatchers.Main) {
+                            if (list.isEmpty()) print("No browsing history\n", TermDim)
+                            else list.take(10).forEach { print("• ${it.title} – ${it.url}\n", TermDim) }
+                            afterCommand()
+                        }
+                    }
                 }
                 "scripts" -> {
                     val list = try { ScriptStorage.all(AppCtx.ctx) } catch (_: Exception) { emptyList() }
@@ -874,12 +895,26 @@ class TerminalViewModel : ViewModel() {
                     } else runShell("curl -I $arg")
                 }
                 "cache" -> {
-                    try {
-                        val dir = AppCtx.ctx.cacheDir
-                        val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-                        print("Cache: ${size / 1024} KB\n", TermDim)
-                    } catch (e: Exception) { print((e.message ?: "") + "\n", TermRed) }
-                    afterCommand()
+                    // File walk on IO (was: walkTopDown synchronously on Main).
+                    lockBefore = -1
+                    viewModelScope.launch(Dispatchers.IO) {
+                        var msg = ""
+                        var color = TermDim
+                        try {
+                            val dir = AppCtx.ctx.cacheDir
+                            val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                            msg = "Cache: ${size / 1024} KB\n"
+                        } catch (e: Exception) {
+                            msg = (e.message ?: "") + "\n"
+                            color = TermRed
+                        }
+                        val out = msg
+                        val col = color
+                        withContext(Dispatchers.Main) {
+                            print(out, col)
+                            afterCommand()
+                        }
+                    }
                 }
                 "kbd-diag" -> {
                     print(

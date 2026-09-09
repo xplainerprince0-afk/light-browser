@@ -79,10 +79,26 @@ object OpencodeManager {
             if (bin.canExecute()) return true
             try { bin.setExecutable(true) } catch (_: Exception) {}
             if (bin.canExecute()) return true
+            // chmod(1) fallback: bounded wait, streams closed, process
+            // destroyed (was: bare waitFor() — callers run on Main via
+            // buildLaunch, so a stuck chmod = ANR + leaked fd).
+            var p: Process? = null
             try {
-                val p = Runtime.getRuntime().exec(arrayOf("chmod", "755", bin.absolutePath))
-                try { p.waitFor() } catch (_: Exception) {}
-            } catch (_: Exception) {}
+                p = Runtime.getRuntime().exec(arrayOf("chmod", "755", bin.absolutePath))
+                try { p.inputStream.close() } catch (_: Exception) {}
+                try { p.errorStream.close() } catch (_: Exception) {}
+                try { p.outputStream.close() } catch (_: Exception) {}
+                try {
+                    if (!p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        try { p.destroyForcibly() } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {
+                    try { p.destroyForcibly() } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { p?.destroy() } catch (_: Exception) {}
+            }
             bin.canExecute()
         } catch (_: Exception) { false }
     }

@@ -241,8 +241,7 @@ object AlpineEnv {
      *  regular files + dirs materialize. Zip-slip guarded, fail-closed. */
     fun extractTarGz(tarGz: File, destDir: File) {
         GZIPInputStream(BufferedInputStream(tarGz.inputStream())).use { gzip ->
-            val buffer = ByteArray(512)
-            while (true) {
+            val buffer = ByteArray(512)            while (true) {
                 val header = ByteArray(512)
                 var read = 0
                 while (read < 512) {
@@ -273,12 +272,10 @@ object AlpineEnv {
                 } catch (_: Exception) { unsafeEntry = true }
                 if (unsafeEntry) {
                     // Consume this entry's bytes so the stream stays aligned, then skip it.
-                    var toSkip = size + (512 - (size % 512)) % 512
-                    while (toSkip > 0) {
-                        val skipped = gzip.skip(toSkip)
-                        if (skipped <= 0) break
-                        toSkip -= skipped
-                    }
+                    // Read-loop, NOT skip(): GZIPInputStream.skip() may return 0
+                    // with data remaining, which misaligns the stream and
+                    // corrupts the rest of the extract.
+                    discardFully(gzip, size + (512 - (size % 512)) % 512)
                     continue
                 }
                 when (type) {
@@ -319,14 +316,24 @@ object AlpineEnv {
                 }
                 val pad = (512 - (size % 512)) % 512
                 if (pad > 0) {
-                    var toSkip = pad.toLong()
-                    while (toSkip > 0) {
-                        val skipped = gzip.skip(toSkip)
-                        if (skipped <= 0) break
-                        toSkip -= skipped
-                    }
+                    discardFully(gzip, pad.toLong())
                 }
             }
+        }
+    }
+
+    /**
+     * Discard exactly [n] bytes via reads (see above: skip() lies on
+     * GZIPInputStream). Stops early only at EOF.
+     */
+    private fun discardFully(input: java.io.InputStream, n: Long) {
+        var remaining = n
+        val buf = ByteArray(8192)
+        while (remaining > 0) {
+            val toRead = minOf(remaining, buf.size.toLong()).toInt()
+            val r = try { input.read(buf, 0, toRead) } catch (_: Exception) { -1 }
+            if (r <= 0) break
+            remaining -= r
         }
     }
 
