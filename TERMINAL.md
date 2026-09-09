@@ -24,8 +24,8 @@ alt-screen, resize) for full-screen TUIs like `opencode`. Toggle with the
 | `toolbox-update` | `apk update && apk upgrade` |
 | `opencode-install` | Downloads Hope2333 opencode-termux (~50MB, aarch64 only) to `sandbox/bin/opencode` |
 | `opencode-status` | Version + size, or "not installed" |
-| `opencode-fix` | Re-chmods the binary, reports OK/failed |
-| `opencode-diag` | ELF interpreter, rwx bits, linker presence — run this when exec fails |
+| `opencode-fix` | Full repair pass: binary x-bit, sidecar libs, tmpdir, linker — says exactly what's wrong and what to run next |
+| `opencode-diag` | ELF interpreter, rwx bits, libs, tmpdir, linker presence — run this when exec fails |
 | `cache` | App cache size |
 
 ### Files (jailed to `sandbox/`, `..` escapes denied)
@@ -47,6 +47,7 @@ alt-screen, resize) for full-screen TUIs like `opencode`. Toggle with the
 | Command | What it does |
 |---|---|
 | `sh <cmd>` / `shell` / `exec` | Run anything (`sh "for f in *.txt; do …; done"`) |
+| `run <program> [args]` | Smart launcher: ELF → system linker (beats noexec), `#!` script → its interpreter. Bare names search `$HOME/bin` first, paths stay jailed |
 | `<anything else>` | Falls through to the shell too — `ls`, `grep`, `chmod`, `ln -s` all work if the binary exists |
 | `apk …` | Raw apk (Alpine must be installed first) |
 | `ping [host]` | `ping -c 3` (default 8.8.8.8) |
@@ -111,29 +112,44 @@ export PATH=…          # prefix the app sets for you, highest priority first:
                        # sandbox/bin SHADOWS everything — your shims win.
 export HOME=<sandbox> PWD=<cwd> TERM=xterm-256color
 export OSTYPE=linux-musl ALPINE_ROOT=<sandbox/alpine> HOSTNAME=alpine
+export TMPDIR=<sandbox>/tmp TEMP TMP BUN_TMPDIR (same value — Bun/Rust temp)
+export LD_LIBRARY_PATH=<sandbox>/lib/opencode:<sandbox>/lib:<sandbox>/bin
+export XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME (sandboxed)
+export PS1='$ ' ENV=<sandbox>/.profile   # short `$` prompt; mksh sources $ENV
 ```
+
+| Command | What it does |
+|---|---|
+| `export NAME=value …` | **Saved persistently** — re-applied to every EXEC command and new PTY sessions. `export` alone lists saved vars. Compound lines (`;`, `&&`) still go to the live shell |
+| `unset NAME …` | Forgets saved vars (built-in defaults underneath are untouched) |
+| `env` | Lists your saved vars |
 
 Practical rules:
 
-1. **`export` does NOT persist between commands.** Each Enter = new process.
-   Chain it: `export FOO=bar && mytool --use $FOO`. (PTY mode *does* keep a
-   live shell, so exports persist there for the session.)
-2. **Link a tool:** drop a shim in `sandbox/bin` (first on PATH) —
+1. **Link a tool:** drop a shim in `$HOME/bin` (first on PATH) —
    `sh "printf '#!/system/bin/sh\nexec node /path/app.js \"$@\"\n' > $HOME/bin/myapp && chmod +x $HOME/bin/myapp"`,
-   then `myapp` works everywhere. Or symlink: `ln -s <target> $HOME/bin/name`.
-3. **Per-command env without export:** `VAR=value cmd args` (e.g.
+   then `myapp` (or `run myapp`) works everywhere. Or symlink: `ln -s <target> $HOME/bin/name`.
+   (`$HOME` = `sandbox/` — always use `$HOME/bin`, never a bare `/bin`.)
+2. **Per-command env without export:** `VAR=value cmd args` (e.g.
    `OPENCODE_SERVER_PASSWORD=x opencode serve --port 4096`).
-4. **Extend PATH for one command:**
+3. **Extend PATH for one command:**
    `sh "export PATH=$HOME/mytools:$PATH && which mytool"`.
-5. **opencode + tools:** after `toolbox-install agent`, `git/node/rg/python`
+   Make it permanent instead: `export PATH=$HOME/mytools:…` (saved;
+   `unset PATH` restores the default).
+4. **opencode + tools:** after `toolbox-install agent`, `git/node/rg/python`
    are on PATH for both EXEC and `opencode run` (same prefix). Agents acting
    with `cwd=sandbox` stay inside the sandbox.
+5. **PTY sessions** start with the same env (saved exports + `$ENV` profile).
+   `~/.profile` is auto-created (`PS1='$ '`, `ll`/`la` aliases) — edit it for
+   your own prompt/aliases; interactive shells source it.
 
 ## Fix-this-issue cheat sheet
 
 | Symptom | Fix |
 |---|---|
-| `…/bin/opencode: Permission denied` | Android ≥10 SELinux blocks direct exec of app-data files even with `+x`. The app auto-launches via `/system/bin/linker64`. If it still fails: `opencode-fix`, then `opencode-diag` and read `interp=` |
+| `…/bin/opencode: Permission denied` | Android ≥10 SELinux blocks direct exec of app-data files even with `+x`. The app auto-launches via `/system/bin/linker64` (`run` does this for any ELF). If it still fails: `opencode-fix`, then `opencode-diag` and read `interp=`/`libs=` |
+| `library "….so" not found` | Sidecar lib missing — new installs keep `usr/lib/opencode/*.so` into `lib/opencode/` automatically; old installs: re-run `opencode-install`. `LD_LIBRARY_PATH` already covers that dir |
+| `mkdir /data/local/tmp…: EACCES` | Fixed: `TMPDIR`/`TEMP`/`TMP`/`BUN_TMPDIR` now point at sandbox `tmp/` (auto-created) |
 | `interp=/lib/ld-linux…` (glibc) | That build needs Termux's glibc prefix/proot — standalone run can't work; next step is the proot runner |
 | `opencode not installed` | `opencode-install` (needs net, aarch64 only, ~50MB) |
 | `Install Alpine first` | `install-alpine`, then retry |
