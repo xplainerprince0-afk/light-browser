@@ -77,10 +77,10 @@ object BrowserAgent {
 
     fun captureShot(): String? {
         // Fast path: already on Main — do directly, no post+wait.
-        if (Looper.myLooper() == Looper.getMainLooper()) return captureShotOnMain()
+        if (Looper.myLooper() == Looper.getMainLooper()) return captureViewportOnMain()
         val f = CompletableFuture<String?>()
         mainHandler.post {
-            try { f.complete(captureShotOnMain()) } catch (e: Exception) {
+            try { f.complete(captureViewportOnMain()) } catch (e: Exception) {
                 Log.w(TAG, "shot", e)
                 try { f.complete(null) } catch (_: Exception) {}
             }
@@ -88,6 +88,57 @@ object BrowserAgent {
         return try {
             f.get(15, TimeUnit.SECONDS)
         } catch (_: Exception) { null }
+    }
+
+    /**
+     * Viewport-only capture. PixelCopy from the window when the WebView is
+     * actually on-screen — draw() can't copy hardware-rendered surfaces
+     * (blank shots — the "shot isn't working" bug; same root cause as the
+     * MAUI WebView screenshot fix). draw() stays as the fallback for
+     * parked tabs / pre-26 / PixelCopy failure.
+     */
+    private fun captureViewportOnMain(): String? {
+        return try {
+            val wv = webViewProvider?.invoke() ?: return null
+            if (wv.width <= 0 || wv.height <= 0) return null
+            val loc = IntArray(2)
+            try { wv.getLocationInWindow(loc) } catch (_: Exception) { return captureShotOnMain() }
+            // Parked offscreen tabs (our offscreen() modifier) sit at
+            // -100000: PixelCopy would grab the wrong pixels — fall back.
+            if (loc[0] < 0 || loc[1] < 0) return captureShotOnMain()
+            if (android.os.Build.VERSION.SDK_INT < 26) return captureShotOnMain()
+            val act = try {
+                var c: android.content.Context? = wv.context
+                while (c is android.content.ContextWrapper && c !is android.app.Activity) c = c.baseContext
+                c as? android.app.Activity
+            } catch (_: Exception) { null } ?: return captureShotOnMain()
+            val win = try { act.window } catch (_: Exception) { null } ?: return captureShotOnMain()
+            val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + wv.width, loc[1] + wv.height)
+            val bmp = android.graphics.Bitmap.createBitmap(wv.width, wv.height, android.graphics.Bitmap.Config.ARGB_8888)
+            val f = CompletableFuture<Boolean>()
+            try {
+                android.view.PixelCopy.request(win, rect, bmp, { res ->
+                    try { f.complete(res == android.view.PixelCopy.SUCCESS) } catch (_: Exception) {}
+                }, mainHandler)
+            } catch (_: Exception) {
+                try { bmp.recycle() } catch (_: Exception) {}
+                return captureShotOnMain()
+            }
+            val ok = try { f.get(10, TimeUnit.SECONDS) } catch (_: Exception) { false }
+            if (!ok) {
+                try { bmp.recycle() } catch (_: Exception) {}
+                return captureShotOnMain()
+            }
+            val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
+            pruneDir(dir, 30)
+            val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
+            java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+            try { bmp.recycle() } catch (_: Exception) {}
+            out.absolutePath
+        } catch (e: Exception) {
+            Log.w(TAG, "shot", e)
+            null
+        }
     }
 
     private fun captureShotOnMain(): String? {
