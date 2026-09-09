@@ -81,7 +81,19 @@ fun PtyTab(
         opencodeOk -> arrayOf(ocBin.absolutePath)
         else -> arrayOf("sh")
     }
-    val env = remember(sd) { AlpineEnv.buildEnvironment(sd, sd) + "COLORTERM=truecolor" }
+    val env = remember(sd) {
+        // Saved `export`s apply to new PTY sessions too (plus ~/.profile via $ENV).
+        val saved = try { com.lightbrowser.data.TermEnv.all() } catch (_: Exception) { emptyMap() }
+        val base = AlpineEnv.buildEnvironment(sd, sd).toMutableList()
+        saved["PATH"]?.let { p ->
+            if (p.isNotBlank()) {
+                val i = base.indexOfFirst { it.startsWith("PATH=") }
+                if (i >= 0) base[i] = "PATH=$p" else base.add("PATH=$p")
+            }
+        }
+        (base + saved.filterKeys { it != "PATH" }.map { (k, v) -> "$k=$v" } +
+            "COLORTERM=truecolor").toTypedArray()
+    }
     // setTextSize() takes RAW PX (its "dp" javadoc lies) — Termux multiplies by
     // density. 13px raw ≈ 4dp: the tiny-text + broken-TUI-grid bug.
     val fontPx = remember(ctx) {

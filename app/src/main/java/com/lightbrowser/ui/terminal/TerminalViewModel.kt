@@ -878,6 +878,45 @@ class TerminalViewModel : ViewModel() {
                 "echo" -> {
                     print("$arg\n", TermWhite); afterCommand()
                 }
+                "export" -> {
+                    // Persistent: EXEC runs every command in a fresh sh, so
+                    // bare `export` would die with the process. Assignments
+                    // here are saved and re-applied to every command + PTY.
+                    if (arg.isBlank()) {
+                        val saved = TermEnv.all()
+                        if (saved.isEmpty()) print("(no saved vars — export NAME=value to persist)\n", TermDim)
+                        else saved.forEach { (k, v) -> print("$k=$v\n", TermWhite) }
+                        afterCommand(); return
+                    }
+                    if (arg.contains(";") || arg.contains("&&") || arg.contains("||")) {
+                        runShell(raw); return
+                    }
+                    val saved = mutableListOf<String>()
+                    var ok = true
+                    for (t in splitArgs(arg)) {
+                        val eq = t.indexOf('=')
+                        val name = if (eq > 0) t.substring(0, eq) else ""
+                        if (eq <= 0 || !TermEnv.validName(name)) { ok = false; break }
+                        TermEnv.set(name, t.substring(eq + 1))
+                        saved.add(name)
+                    }
+                    if (!ok || saved.isEmpty()) {
+                        print("Usage: export NAME=value [NAME=value …] (saved persistently)\n", TermRed)
+                    } else print("Saved: ${saved.joinToString(" ")} (applies to every command + new PTY)\n", TermGreen)
+                    afterCommand()
+                }
+                "unset" -> {
+                    if (arg.isBlank()) { print("Usage: unset NAME [NAME …]\n", TermRed); afterCommand(); return }
+                    val gone = splitArgs(arg).filter { TermEnv.remove(it) }
+                    print(if (gone.isEmpty()) "Nothing saved under those names\n" else "Unset: ${gone.joinToString(" ")}\n", TermDim)
+                    afterCommand()
+                }
+                "env" -> {
+                    val saved = TermEnv.all()
+                    if (saved.isEmpty()) print("(no saved vars — see `export`)\n", TermDim)
+                    else saved.forEach { (k, v) -> print("$k=$v\n", TermWhite) }
+                    afterCommand()
+                }
                 "ua", "js" -> {
                     print("Run from Browser tab\n", TermDim); afterCommand()
                 }
@@ -1045,8 +1084,16 @@ class TerminalViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             var process: Process? = null
             try {
-                val fullCmd = AlpineEnv.shellPrefix(sd) + cmd
-                val env = AlpineEnv.buildEnvironment(sd, cwd)
+                // Saved exports (see `export`): PATH override honored in the
+                // prefix, everything else appended to the env (wins over defaults).
+                val saved = try { TermEnv.all() } catch (_: Exception) { emptyMap() }
+                val prefix = try {
+                    val p = saved["PATH"]
+                    if (!p.isNullOrBlank()) "export PATH=$p; " else AlpineEnv.shellPrefix(sd)
+                } catch (_: Exception) { AlpineEnv.shellPrefix(sd) }
+                val fullCmd = prefix + cmd
+                val env = AlpineEnv.buildEnvironment(sd, cwd) +
+                    saved.filterKeys { it != "PATH" }.map { (k, v) -> "$k=$v" }.toTypedArray()
                 process = Runtime.getRuntime().exec(arrayOf("sh", "-c", fullCmd), env, cwd)
                 running = process
                 // Nothing ever writes to stdin: close it so readers can't hang on it.
