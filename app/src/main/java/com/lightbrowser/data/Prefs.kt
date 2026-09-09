@@ -96,6 +96,15 @@ object Prefs {
         get() = p(AppCtx.ctx).getString("ui_lang", "system") ?: "system"
         set(v) { p(AppCtx.ctx).edit().putString("ui_lang", v).apply() }
 
+    /**
+     * Edge-swipe tab switching (default OFF: a full-height edge drag steals
+     * the SYSTEM back gesture and fights the terminal toolbar scroll).
+     * When on, MainActivity shows slim middle-band strips instead.
+     */
+    var edgeSwipe: Boolean
+        get() = p(AppCtx.ctx).getBoolean("edge_swipe", false)
+        set(v) { p(AppCtx.ctx).edit().putBoolean("edge_swipe", v).apply() }
+
     /** Build search URL for the given query using the configured search engine */
     fun buildSearchUrl(query: String): String {
         val encoded = android.net.Uri.encode(query)

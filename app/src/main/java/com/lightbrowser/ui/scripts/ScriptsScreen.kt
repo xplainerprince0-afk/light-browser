@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,7 +70,11 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScriptsScreen(modifier: Modifier = Modifier) {
+fun ScriptsScreen(
+    modifier: Modifier = Modifier,
+    active: Boolean = true,
+    onExitToBrowser: () -> Unit = {}
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -91,6 +96,11 @@ fun ScriptsScreen(modifier: Modifier = Modifier) {
     }
 
     LaunchedEffect(Unit) { refresh() }
+
+    // Editor/delete dialogs auto-dismiss. Back clears search first, then
+    // returns to Browser — the exit arm stays last.
+    BackHandler(enabled = active && query.isNotEmpty()) { query = "" }
+    BackHandler(enabled = active && query.isEmpty()) { onExitToBrowser() }
 
     val filtered = remember(scripts.toList(), query) {
         val q = query.trim().lowercase()

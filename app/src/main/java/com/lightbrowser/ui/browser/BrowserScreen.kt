@@ -226,11 +226,28 @@ fun BrowserScreen(
     }
     // canGoBack state (updated on progress/finish) drives enablement — not webView?.canGoBack()
     // directly (non-reactive). Falls back to live check for safety.
-    BackHandler(enabled = active && !ui.searchExpanded && !keyboardOpen && (canGoBack || webView?.canGoBack() == true)) {
+    BackHandler(enabled = active && !ui.searchExpanded && !findOpen && !keyboardOpen && (canGoBack || webView?.canGoBack() == true)) {
         try {
             val wv = activeWebView()
             if (wv?.canGoBack() == true) wv.goBack()
         } catch (_: Exception) {}
+    }
+    // Find bar closes before history-back (was: Back armed exit with the bar open).
+    // Declared after the go-back handler so it wins (LIFO); also hides the keyboard.
+    BackHandler(enabled = active && findOpen) {
+        findOpen = false
+        findQuery = ""
+        try { vm.clearFind() } catch (_: Exception) {}
+        try { activeWebView()?.findAllAsync(""); activeWebView()?.clearMatches() } catch (_: Exception) {}
+        focusManager.clearFocus()
+    }
+    // Nowhere left to go in-page → homepage (not exit): the double-back arm
+    // only fires when already home. Guards mirror the go-back handler plus a
+    // live canGoBack check so a stale state can't skip history.
+    val homePage = try { com.lightbrowser.data.Prefs.homePage.ifBlank { HOME_URL } } catch (_: Exception) { HOME_URL }
+    val onHome = ui.currentUrl == HOME_URL || ui.currentUrl == homePage
+    BackHandler(enabled = active && !ui.searchExpanded && !findOpen && !keyboardOpen && !canGoBack && webView?.canGoBack() != true && !onHome) {
+        try { vm.goHome() } catch (_: Exception) {}
     }
 
     // Pause all background WebViews when tab hidden; resume current when visible.
@@ -255,7 +272,15 @@ fun BrowserScreen(
                 webViews.values.forEach { try { it.stopLoading(); it.destroy() } catch (_: Exception) {} }
                 webViews.clear()
             } catch (_: Exception) {}
-            try { TabBus.openInNewTab = null } catch (_: Exception) {}
+            // Clear every lane (was: only openInNewTab — stale select/close/
+            // list/home survived dispose and could fire into a dead screen).
+            try {
+                TabBus.openInNewTab = null
+                TabBus.selectTab = null
+                TabBus.closeTabAt = null
+                TabBus.listTabs = null
+                TabBus.openHome = null
+            } catch (_: Exception) {}
         }
     }
     // Evict closed tabs' WebViews + cap pool at 6 alive (smoothness-first RAM budget).

@@ -9,9 +9,10 @@ alt-screen, resize) for full-screen TUIs like `opencode`.
 the very top (Termux style), then (in PTY) the opencode/shell target, then
 sessions + `+ New session` (max 8), Agent bridge, Follow output, text size,
 Rename/Paste/Copy/Clear/Kill, PTY keyboard. Open it with a **long-press on
-the left edge** (same edge strip that switches tabs — drag switches,
-long-press opens; taps pass through); tap the dimmed area to close.
-Drawer is slim (280dp) by design.
+the left edge** (taps/pass-through swipes are unaffected); tap the dimmed area
+to close. Edge-swipe TAB SWITCHING is a separate opt-in (Settings →
+Navigation, default OFF) on a slim middle band — it never fights the system
+back gesture or the key rows. Drawer is slim (280dp) by design and scrolls.
 
 **Keys:** two rows, **swipe sideways** for the full set (`ESC TAB / - HOME ↑
 END PGUP PGDN |` and `CTRL ALT ^C ^D ← ↓ → ~ : ;`). They hug the keyboard
@@ -206,7 +207,7 @@ Practical rules:
 | Prompt hidden / keys misplaced | Keys lift by max(decor IME, root IME, keys IME) minus the exact Scaffold outer pad — one signal can't bury them; zero when closed. Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
 | opencode `invalid e_shstrndx` | Truncated download — installer now verifies exact byte size + ELF sanity and deletes bad files with a retry message |
 | PTY prompt shows full path | Prompt is `sandbox $ ` everywhere (env + managed `~/.profile` block) |
-| Bottom tabs vanish while typing | No tab bar at all: drag horizontally from either screen edge to switch tabs (taps/vertical scrolls pass through). MiniPlayer stays |
+| Bottom tabs vanish while typing | No tab bar at all: switch via the app drawer, or enable edge-swipe (Settings → Navigation, opt-in middle band). MiniPlayer stays |
 | `b …` says open the Browser tab first | Tab state lives in the Browser tab — visit it once so `TabBus` wires up |
 | `Server is OFF` | `b serve on` or 🤖 → Start server; copy URL+token from the panel |
 | TUI garbage in EXEC | Expected — full-screen TUIs need PTY mode, not EXEC |

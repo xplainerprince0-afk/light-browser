@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.RepeatMode
@@ -95,6 +96,8 @@ import com.lightbrowser.ui.theme.PebbleShape
 @Composable
 fun MusicScreen(
     modifier: Modifier = Modifier,
+    active: Boolean = true,
+    onExitToBrowser: () -> Unit = {},
     vm: MusicViewModel
 ) {
     val ctx = LocalContext.current
@@ -108,6 +111,12 @@ fun MusicScreen(
     var showSleep by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.connect() }
+
+    // Hero collapses first (pick-folder/chapters/sleep are dialogs and
+    // auto-dismiss); library-level Back returns to Browser, exit arm last.
+    // showHero is only meaningful with a selected novel (matches morph gate).
+    BackHandler(enabled = active && showHero && pl.novelIndex != -1) { showHero = false }
+    BackHandler(enabled = active && !(showHero && pl.novelIndex != -1)) { onExitToBrowser() }
 
     // Notification permission for background playback (API 33+)
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}

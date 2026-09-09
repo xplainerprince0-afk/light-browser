@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.rememberCoroutineScope
 import com.lightbrowser.data.Backup
@@ -90,7 +91,12 @@ fun applyLang(ctx: android.content.Context, key: String) {
 }
 
 @Composable
-fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Unit = {}) {
+fun SettingsScreen(
+    modifier: Modifier = Modifier,
+    active: Boolean = true,
+    onExitToBrowser: () -> Unit = {},
+    onThemeChange: (String) -> Unit = {}
+) {
     val ctx = LocalContext.current
     val focusManager = LocalFocusManager.current
 
@@ -105,6 +111,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
     var trueBlack by remember { mutableStateOf(safeGet { Prefs.trueBlack } ?: false) }
     var uiScale by remember { mutableFloatStateOf(safeGet { Prefs.uiFontScale } ?: 1f) }
     var lang by remember { mutableStateOf(safeGet { Prefs.appLang } ?: "system") }
+    var edgeSwipe by remember { mutableStateOf(safeGet { Prefs.edgeSwipe } ?: false) }
     var termScale by remember { mutableFloatStateOf(safeGet { Prefs.terminalFontScale } ?: 1f) }
     var playerSpeed by remember { mutableFloatStateOf(safeGet { Prefs.playerSpeed } ?: 1f) }
     val backupScope = rememberCoroutineScope()
@@ -117,6 +124,9 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
     var siteHist by remember { mutableStateOf(true) }
     var siteCookies by remember { mutableStateOf(true) }
     var siteCache by remember { mutableStateOf(true) }
+
+    // Back on Settings returns to Browser first — the exit arm stays last.
+    BackHandler(enabled = active) { onExitToBrowser() }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) backupScope.launch(Dispatchers.IO) {
@@ -280,6 +290,26 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                         )
                     }
                 }
+            }
+        }
+
+        item {
+            SettingsCard(title = "Navigation") {
+                SwitchRow(label = "Edge swipe switches tabs", checked = edgeSwipe, onChange = {
+                    edgeSwipe = it
+                    safeSet { Prefs.edgeSwipe = it }
+                    try { com.lightbrowser.AppTabs.edgeSwipe = it } catch (_: Exception) {}
+                    Toast.makeText(
+                        ctx,
+                        if (it) "Edge swipe ON (may fight the system back gesture)" else "Edge swipe OFF — use the app drawer",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                })
+                Text(
+                    "Back unwinds each tab first (search → selection → folders → Browser home) and only then exits. Tabs also live in the top-left app drawer.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -501,6 +531,7 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                                             Prefs.trueBlack = false
                                             Prefs.uiFontScale = 1f
                                             Prefs.appLang = "system"
+                                            Prefs.edgeSwipe = false
                                             Prefs.terminalFontScale = 1f
                                             Prefs.playerShuffle = false
                                             Prefs.playerRepeat = 0
@@ -518,6 +549,8 @@ fun SettingsScreen(modifier: Modifier = Modifier, onThemeChange: (String) -> Uni
                                         uiScale = 1f
                                         lang = "system"
                                         applyLang(ctx, "system")
+                                        try { com.lightbrowser.AppTabs.edgeSwipe = false } catch (_: Exception) {}
+                                        edgeSwipe = false
                                         termScale = 1f
                                         playerSpeed = 1f
                                         onThemeChange("system")

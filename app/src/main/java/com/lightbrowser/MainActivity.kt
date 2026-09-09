@@ -73,7 +73,7 @@ import com.lightbrowser.ui.terminal.TerminalScreen
 import com.lightbrowser.ui.theme.LightBrowserTheme
 import kotlinx.coroutines.launch
 
-private enum class Tab(
+internal enum class Tab(
     val title: String,
     val icon: ImageVector,
     val inBar: Boolean
@@ -85,6 +85,19 @@ private enum class Tab(
     Scripts("Scripts", Icons.Filled.Description, false),
     Downloads("Downloads", Icons.Filled.Download, false),
     Settings("Settings", Icons.Filled.Settings, false)
+}
+
+/**
+ * Hoisted app-tab state (was AppShell-local remember: rotation reset + no
+ * external writer). Screens request Browser via goBrowser() so Back unwinds
+ * tab-internal state first and only then returns here — exit-arm is the
+ * LAST step, never the first. edgeSwipe mirrors Prefs.edgeSwipe for
+ * immediate recomposition when toggled in Settings.
+ */
+internal object AppTabs {
+    var current by mutableStateOf(Tab.Browser)
+    var edgeSwipe by mutableStateOf(false)
+    fun goBrowser() { current = Tab.Browser }
 }
 
 class MainActivity : ComponentActivity() {
@@ -104,6 +117,7 @@ class MainActivity : ComponentActivity() {
             androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         } catch (_: Exception) {}
         try { AppCtx.init(this) } catch (_: Exception) {}
+        try { AppTabs.edgeSwipe = Prefs.edgeSwipe } catch (_: Exception) {}
         try { com.lightbrowser.ui.settings.applyLang(this, try { Prefs.appLang } catch (_: Exception) { "system" }) } catch (_: Exception) {}
         val startUrl = intent?.data?.toString()?.takeIf { it.startsWith("http") }
 
@@ -243,10 +257,9 @@ private fun AppShell(
     keyboardOpen: Boolean,
     onThemeChange: (String) -> Unit
 ) {
-    // Plain remember (rotation resets to Browser — same as last working build).
-    // rememberSaveable with a custom Saver over the private Tab enum is an
-    // R8/startup risk; theme (String) stays saveable, it is natively supported.
-    var tab by remember { mutableStateOf(Tab.Browser) }
+    // Hoisted (AppTabs): survives rotation, writable from any screen's
+    // BackHandler so Back returns to Browser before the exit arm.
+    var tab by AppTabs::current
     var showAbout by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -347,36 +360,61 @@ private fun AppShell(
                                 onOpenSettings = { tab = Tab.Settings },
                                 vm = browserVm
                             )
-                            FilesScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Files))
-                            MusicScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Music), vm = musicVm)
+                            FilesScreen(
+                                modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Files),
+                                active = tab == Tab.Files,
+                                onExitToBrowser = { AppTabs.goBrowser() }
+                            )
+                            MusicScreen(
+                                modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Music),
+                                active = tab == Tab.Music,
+                                onExitToBrowser = { AppTabs.goBrowser() },
+                                vm = musicVm
+                            )
                             TerminalScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Terminal), active = tab == Tab.Terminal)
-                            ScriptsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Scripts))
-                            DownloadsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Downloads))
-                            SettingsScreen(modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings), onThemeChange = onThemeChange)
-                            // Edge-swipe tab switching, both sides: drag
-                            // horizontally starting at either screen edge to
-                            // move prev/next (Browser ⇄ Terminal ⇄ Sandbox ⇄
-                            // Player). 44dp wide so drags starting inside the
-                            // system-back zone still reach us on gesture-nav
-                            // devices. Taps and vertical scrolls pass through —
-                            // the detector only consumes after horizontal slop —
-                            // so WebView keeps everything except edge-origin
-                            // horizontal drags. Long-press on the LEFT edge
-                            // opens the terminal drawer (Terminal tab only).
-                            // Bottom 110dp excluded: the terminal key rows live
-                            // there — sideways scrolling the toolbar must not
-                            // switch tabs (was: edge drag won the gesture race
-                            // and buried PGUP/PGDN/| offscreen).
+                            ScriptsScreen(
+                                modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Scripts),
+                                active = tab == Tab.Scripts,
+                                onExitToBrowser = { AppTabs.goBrowser() }
+                            )
+                            DownloadsScreen(
+                                modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Downloads),
+                                active = tab == Tab.Downloads,
+                                onExitToBrowser = { AppTabs.goBrowser() }
+                            )
+                            SettingsScreen(
+                                modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Settings),
+                                active = tab == Tab.Settings,
+                                onExitToBrowser = { AppTabs.goBrowser() },
+                                onThemeChange = onThemeChange
+                            )
+                            // Edge-swipe tab switching is OPT-IN (Settings →
+                            // Navigation, default OFF): a full-height 44dp
+                            // edge-drag stole the SYSTEM back gesture and the
+                            // toolbar scroll. When on: a slim 20dp strip over
+                            // the MIDDLE band only (top = status/shade, bottom
+                            // = keys/keyboard stay clear) with a 120px
+                            // threshold. Long-press on the LEFT edge always
+                            // opens the terminal drawer (Terminal tab only) —
+                            // taps/long-press never conflict with system nav.
+                            val edgeOn = AppTabs.edgeSwipe
                             EdgeTabStrip(
                                 current = tab,
                                 onSelect = { tab = it },
                                 onLongPress = if (tab == Tab.Terminal) {
                                     { com.lightbrowser.ui.terminal.InsetDebug.drawerAsk++ }
                                 } else null,
+                                dragEnabled = edgeOn,
                                 modifier = Modifier.align(Alignment.CenterStart)
-                                    .padding(bottom = 110.dp)
+                                    .fillMaxHeight(0.55f)
                             )
-                            EdgeTabStrip(current = tab, onSelect = { tab = it }, modifier = Modifier.align(Alignment.CenterEnd).padding(bottom = 110.dp))
+                            EdgeTabStrip(
+                                current = tab,
+                                onSelect = { tab = it },
+                                dragEnabled = edgeOn,
+                                modifier = Modifier.align(Alignment.CenterEnd)
+                                    .fillMaxHeight(0.55f)
+                            )
                         }
                         // Bottom zone: MiniPlayer only. No tab bar of any kind —
                         // tabs switch via the left/right edge-swipe strips
@@ -408,43 +446,44 @@ private fun AppShell(
 }
 
 /**
- * Edge-swipe tab switching (both screen sides). A 44dp strip floats above
- * the content at each edge: drag horizontally to move between main tabs
- * (Browser ⇄ Terminal ⇄ Sandbox ⇄ Player). Drag left → next, drag right →
- * previous. Taps and vertical scrolls pass through untouched (the gesture
- * detector only consumes after horizontal touch slop), so pages, lists and
- * the terminal keep all their gestures except edge-origin horizontal drags.
- * Long-press (left edge only, via onLongPress) is the terminal drawer's
- * handle — it replaces the old corner strip the edge zones covered.
+ * Edge-swipe tab switching (both screen sides, OPT-IN via Settings).
+ * A slim 20dp strip floats over the MIDDLE band: drag horizontally far
+ * (>120px) to move between main tabs. Taps and vertical scrolls pass
+ * through untouched. Long-press (left edge only, via onLongPress) is the
+ * terminal drawer's handle. With dragEnabled=false only the long-press
+ * detector is active, so the system back gesture is never disturbed.
  */
 @Composable
 private fun EdgeTabStrip(
     current: Tab,
     onSelect: (Tab) -> Unit,
     modifier: Modifier = Modifier,
-    onLongPress: (() -> Unit)? = null
+    onLongPress: (() -> Unit)? = null,
+    dragEnabled: Boolean = true
 ) {
     val order = remember { Tab.entries.filter { it.inBar } }
     val idx = order.indexOf(current).coerceAtLeast(0)
     var drag by remember { mutableStateOf(0f) }
     Box(
-        modifier = modifier.fillMaxHeight().width(44.dp)
-            .pointerInput(idx) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        if (drag < -80) {
-                            val n = (idx + 1).coerceAtMost(order.lastIndex)
-                            if (n != idx) onSelect(order[n])
-                        } else if (drag > 80) {
-                            val n = (idx - 1).coerceAtLeast(0)
-                            if (n != idx) onSelect(order[n])
-                        }
-                        drag = 0f
-                    },
-                    onDragCancel = { drag = 0f },
-                    onHorizontalDrag = { _, dx -> drag += dx }
-                )
-            }
+        modifier = modifier.width(20.dp)
+            .then(if (dragEnabled) {
+                Modifier.pointerInput(idx) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (drag < -120) {
+                                val n = (idx + 1).coerceAtMost(order.lastIndex)
+                                if (n != idx) onSelect(order[n])
+                            } else if (drag > 120) {
+                                val n = (idx - 1).coerceAtLeast(0)
+                                if (n != idx) onSelect(order[n])
+                            }
+                            drag = 0f
+                        },
+                        onDragCancel = { drag = 0f },
+                        onHorizontalDrag = { _, dx -> drag += dx }
+                    )
+                }
+            } else Modifier)
             .pointerInput(onLongPress, idx) {
                 detectTapGestures(
                     onLongPress = { try { onLongPress?.invoke() } catch (_: Exception) {} }

@@ -1,6 +1,7 @@
 package com.lightbrowser.ui.files
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -88,6 +89,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -107,9 +109,12 @@ import android.content.Context
 @Composable
 fun FilesScreen(
     modifier: Modifier = Modifier,
+    active: Boolean = true,
+    onExitToBrowser: () -> Unit = {},
     vm: FilesViewModel = viewModel()
 ) {
     val ctx = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val ui by vm.ui.collectAsState()
     val scope = rememberCoroutineScope()
     val snacks = remember { SnackbarHostState() }
@@ -125,6 +130,25 @@ fun FilesScreen(
     var createIsFile by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.init() }
+
+    // Hierarchical Back: search → selection → dir-up → Browser tab.
+    // Dialogs/sheets/menus auto-dismiss via the framework first.
+    // Root = single "Sandbox" crumb (see FilesViewModel.refresh).
+    BackHandler(enabled = active && searching) {
+        searching = false
+        text = ""
+        vm.setQuery("")
+        focusManager.clearFocus()
+    }
+    BackHandler(enabled = active && !searching && ui.selected.isNotEmpty()) {
+        vm.clearSelection()
+    }
+    BackHandler(enabled = active && !searching && ui.selected.isEmpty() && ui.crumbs.size > 1) {
+        vm.navigateUp()
+    }
+    BackHandler(enabled = active && !searching && ui.selected.isEmpty() && ui.crumbs.size <= 1) {
+        onExitToBrowser()
+    }
 
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) vm.importUri(uri) { name ->

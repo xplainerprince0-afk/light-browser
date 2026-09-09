@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DrawerValue
@@ -181,6 +182,10 @@ fun TerminalScreen(
             try { kotlinx.coroutines.delay(150); ptyCtl.refocus?.invoke() } catch (_: Exception) {}
         }
     }
+    // Back disarms a stuck CTRL/ALT before anything else (drawer/sheets
+    // auto-dismiss via the framework first; exit arm is the activity's job).
+    BackHandler(enabled = active && sticky != null) { sticky = null }
+
     // Drawer opens on left-edge long-press (forwarded by MainActivity's
     // edge strip via drawerAsk — the old corner strip sat under the edge
     // zones and lost the gesture race).

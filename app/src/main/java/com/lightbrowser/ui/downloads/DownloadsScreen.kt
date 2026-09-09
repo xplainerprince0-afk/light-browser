@@ -58,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.BackHandler
 import androidx.core.content.FileProvider
 import com.lightbrowser.ui.files.FilesViewModel
 import java.io.File
@@ -72,7 +73,11 @@ private data class DownloadItem(val file: File)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DownloadsScreen(modifier: Modifier = Modifier) {
+fun DownloadsScreen(
+    modifier: Modifier = Modifier,
+    active: Boolean = true,
+    onExitToBrowser: () -> Unit = {}
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -103,6 +108,10 @@ fun DownloadsScreen(modifier: Modifier = Modifier) {
     }
 
     LaunchedEffect(Unit) { refresh() }
+
+    // Clear-all confirm is a dialog (auto-dismiss); Back otherwise returns
+    // to Browser first — the exit arm stays last.
+    BackHandler(enabled = active && !showClearAll) { onExitToBrowser() }
 
     fun openFile(file: File) {
         try {
