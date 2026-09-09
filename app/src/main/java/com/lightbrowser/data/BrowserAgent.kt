@@ -87,15 +87,20 @@ object BrowserAgent {
             "var anchor=null;" +
             (if (e0.isNotBlank()) "try{anchor=document.querySelector('$e0');}catch(x){}" else "") +
             "if(!anchor){var ae=document.activeElement;if(ae&&(ae.tagName==='INPUT'||ae.tagName==='TEXTAREA'||ae.isContentEditable))anchor=ae;}" +
-            "if(!anchor){var ins=document.querySelectorAll('input');for(var i=0;i<ins.length;i++){var t=(ins[i].type||'text').toLowerCase();if((t==='text'||t==='search'||t==='email'||t==='password'||t==='url'||t==='number')&&ins[i].value&&ins[i].offsetParent!==null){anchor=ins[i];break;}}}" +
-            "if(!anchor){var ss=document.querySelectorAll('input');for(var s2=0;s2<ss.length;s2++){var t2=(ss[s2].type||'text').toLowerCase();if((t2==='text'||t2==='search')&&ss[s2].offsetParent!==null){anchor=ss[s2];break;}}}" +
+            "if(!anchor){var ins=document.querySelectorAll('input');for(var i=0;i<ins.length;i++){var t=(ins[i].type||'text').toLowerCase();if((t==='text'||t==='search'||t==='email'||t==='password'||t==='url'||t==='number')&&ins[i].value&&vis(ins[i])){anchor=ins[i];break;}}}" +
+            "if(!anchor){var ss=document.querySelectorAll('input');for(var s2=0;s2<ss.length;s2++){var t2=(ss[s2].type||'text').toLowerCase();if((t2==='text'||t2==='search')&&vis(ss[s2])){anchor=ss[s2];break;}}}" +
             "if(!anchor)return 'ERR no-field (focus a field or pass a selector)';" +
-            "function vis(e){if(!e||e.offsetParent===null)return false;var r=e.getBoundingClientRect();return r.width>4&&r.height>4&&r.bottom>0&&r.top<window.innerHeight;}" +
+            // offsetParent is null for position:fixed (sticky SPA headers —
+            // the Bing miss), so visibility is checked via computed style.
+            "function vis(e){if(!e||!e.getBoundingClientRect)return false;try{var cs=getComputedStyle(e);if(cs.display==='none'||cs.visibility==='hidden'||cs.opacity==='0')return false;}catch(x){}var r=e.getBoundingClientRect();return r.width>4&&r.height>4&&r.bottom>0&&r.top<window.innerHeight;}" +
             "function isBtn(e){if(!e||!e.tagName)return false;var t=e.tagName;if(t==='BUTTON')return true;if(t==='INPUT'){var ty=(e.type||'').toLowerCase();return ty==='submit'||ty==='button'||ty==='image';}return e.getAttribute&&e.getAttribute('role')==='button';}" +
             "var ar=anchor.getBoundingClientRect(),ax=ar.left+ar.width/2,ay=ar.top+ar.height/2;" +
             "var best=null,f=anchor.form||(anchor.closest?anchor.closest('form'):null);" +
             "if(f){var bs=f.querySelectorAll('button,input[type=submit],input[type=image],input[type=button],[role=button]');for(var b=0;b<bs.length;b++){if(isBtn(bs[b])&&vis(bs[b])){best=bs[b];break;}}}" +
             "if(!best){var bd=1e18,all=document.querySelectorAll('button,input[type=submit],input[type=image],input[type=button],[role=button]');for(var k=0;k<all.length&&k<600;k++){var e=all[k];if(!isBtn(e)||!vis(e))continue;var r=e.getBoundingClientRect();var dx=r.left+r.width/2-ax,dy=r.top+r.height/2-ay;var d=dx*dx+dy*dy;if(d<bd){bd=d;best=e;}}}" +
+            // Round 2 (SPA/React handlers leave no DOM trace): links, onclick
+            // holders, keyboard-focusables. Only when no real button exists.
+            "if(!best){var bd2=1e18,all2=document.querySelectorAll('a[href],[onclick],[tabindex],summary');for(var m=0;m<all2.length&&m<600;m++){var e2=all2[m];if(!vis(e2))continue;var r2=e2.getBoundingClientRect();var dx2=r2.left+r2.width/2-ax,dy2=r2.top+r2.height/2-ay;var d2=dx2*dx2+dy2*dy2;if(d2<bd2){bd2=d2;best=e2;}}}" +
             "if(!best)return 'ERR no-button near field';" +
             "var rr=best.getBoundingClientRect();" +
             "return JSON.stringify({x:Math.round(rr.left+rr.width/2),y:Math.round(rr.top+rr.height/2),label:(best.innerText||best.value||(best.getAttribute&&best.getAttribute('aria-label'))||best.tagName||'').toString().trim().slice(0,40)});" +
@@ -279,12 +284,24 @@ object BrowserAgent {
         runOnPage { try { it.findNext(forward) } catch (_: Exception) {} }
     }
 
+    /** CSS px → view px for synthetic touches. Deprecated WebView.getScale()
+     *  returns zoom-only 1.0 on modern Chromium, which misplaced every tap
+     *  by the density factor ("tap missed - page unchanged"). Density is
+     *  exact at default zoom; z>=d implies an old density-included scale. */
+    private fun cssScale(wv: WebView): Float {
+        return try {
+            val d = wv.resources.displayMetrics.density.coerceAtLeast(1f)
+            val z = try { wv.scale } catch (_: Exception) { 1f }
+            if (z >= d) z.coerceIn(1f, 6f) else (d * z.coerceAtLeast(1f)).coerceIn(1f, 6f)
+        } catch (_: Exception) { 1f }
+    }
+
     /** Real tap at CSS-pixel coords (from `locate`): full touch pipeline, trusted by pages. */
     fun tapAt(xCss: Float, yCss: Float) {
         mainHandler.post {
             try {
                 val wv = webViewProvider?.invoke() ?: return@post
-                val s = try { wv.scale } catch (_: Exception) { 1f }
+                val s = cssScale(wv)
                 val x = xCss * s
                 val y = yCss * s
                 val now = android.os.SystemClock.uptimeMillis()
@@ -309,7 +326,7 @@ object BrowserAgent {
         mainHandler.post {
             try {
                 val wv = webViewProvider?.invoke() ?: return@post
-                val s = try { wv.scale } catch (_: Exception) { 1f }
+                val s = cssScale(wv)
                 val x1 = x1Css * s; val y1 = y1Css * s; val x2 = x2Css * s; val y2 = y2Css * s
                 val steps = 8
                 val t0 = android.os.SystemClock.uptimeMillis()
