@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -432,7 +433,7 @@ private fun EdgeTabStrip(
                 )
             }
             .pointerInput(onLongPress, idx) {
-                androidx.compose.foundation.gestures.detectTapGestures(
+                detectTapGestures(
                     onLongPress = { try { onLongPress?.invoke() } catch (_: Exception) {} }
                 )
             }
