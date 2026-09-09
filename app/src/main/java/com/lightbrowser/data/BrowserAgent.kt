@@ -861,7 +861,7 @@ object BrowserAgent {
             }
             "/tabs" -> awaitMain {
                 // Already on Main — TabBus reads ViewModel state directly.
-                val arr = org.json.JSONArray()                val arr = org.json.JSONArray()
+                val arr = org.json.JSONArray()
                 try {
                     com.lightbrowser.ui.browser.TabBus.listTabs?.invoke()?.forEach { t ->
                         arr.put(JSONObject().put("i", t.index).put("url", t.url)
