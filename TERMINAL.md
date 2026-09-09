@@ -203,7 +203,8 @@ Practical rules:
 | Output cut with `…truncated` | 8KB capture / 4KB echo cap — redirect to file instead |
 | `(busy — Ctrl+C to kill)` | A process is still running; Enter is ignored until it ends or you kill it |
 | No stdin / interactive prompts hang | EXEC closes stdin by design — pass flags/args instead (`--yes`, `< file`), or use PTY mode |
-| Prompt hidden / keys misplaced | Keys lift by max(decor IME inset, live Compose IME) minus the exact Scaffold outer pad; zero when closed. Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
+| Prompt hidden / keys misplaced | Keys lift by max(decor IME, root IME, keys IME) minus the exact Scaffold outer pad — one signal can't bury them; zero when closed. Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
+| opencode `invalid e_shstrndx` | Truncated download — installer now verifies exact byte size + ELF sanity and deletes bad files with a retry message |
 | PTY prompt shows full path | Prompt is `sandbox $ ` everywhere (env + managed `~/.profile` block) |
 | Bottom tabs vanish while typing | No tab bar at all: drag horizontally from either screen edge to switch tabs (taps/vertical scrolls pass through). MiniPlayer stays |
 | `b …` says open the Browser tab first | Tab state lives in the Browser tab — visit it once so `TabBus` wires up |
