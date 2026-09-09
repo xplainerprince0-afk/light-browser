@@ -49,12 +49,25 @@ Native keeps a `ref → selector` map per page load (cleared on navigation).
 ```
 b open <url>            # http(s) only — block file://, intent://, custom schemes
 b back | fwd | reload | stop
-b url | title
+b url | title | home
+b tabs | tab <n> | new <url> | close [n]
 b js <expr>             # raw eval, truncated (power-user hatch)
-b text [max] | b dom [css] | b snap     # AX-like snapshot + text
-b click <ref|css> | b fill <ref|css> <value> [--submit]
-b scroll [px] | b shot | b console | b help
+b text [max] | b read [max] | b dom [css] | b snap
+b click <ref|css|name> | b fill <ref|css|name> <value> [--submit] | b submit <form>
+b hover <ref|css|name> | b select <sel|name> <value-or-text>
+b store <name> <css> | stores | unstore <name>   # named selectors
+b pos <ref|css> | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]
+b scroll [px] | b scroll-to <x> <y> | b find <text> | next | prev
+b shot [--full] | b console [n] | b cookies [get [url] | set "k=v" [url] | clear]
+b history [n] | downloads | save <name.html|txt>
+b alias [name expansion] | unalias <name>   # EXEC one-liners
+b ext | mkext <name>    # your own SCRIPT commands (~/.b-ext/*.sh, both modes)
+b record start|stop|save <n>|list | b serve on|off
 ```
+PTY `b()` covers the same via HTTP routes (`/switch /submit /read /hover
+/select /store /history /downloads` added); `record/serve/alias` stay
+EXEC-only (stateful). `b mkext` scaffolds `~/.b-ext/<name>.sh` with
+`B_PORT/B_KEY` exported; unknown `b <cmd>` runs the matching script.
 
 Terminal prints page returns wrapped in markers so page text is never confused
 with tool output:
