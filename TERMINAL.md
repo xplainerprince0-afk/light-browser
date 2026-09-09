@@ -3,7 +3,17 @@
 Two terminals in one tab. **EXEC** = quick non-interactive shell (type, Enter,
 read output). **PTY** = real Linux terminal (Termux emulator, raw mode,
 alt-screen, resize) for full-screen TUIs like `opencode`. Toggle with the
-**EXEC/PTY** button in the session strip, or ⋮ → `PTY terminal`.
+slim-bar **PTY/EXEC** chip.
+
+**Top bar is one slim row:** `≡` menu (tap *or* long-press the corner, Termux
+style) + mode chip + context (status `●`, or PTY's `Shell/opencode` + `⌨`).
+Everything else lives in the **drawer**: sessions list + `+ New session`
+(max 8), Agent bridge, Follow output, text size, Rename, Paste, Copy all,
+Clear, Kill. The Agent 🤖 icon is gone from the top — it's in the drawer.
+
+**Keys:** two rows, **swipe sideways** for the full set (`ESC TAB / - HOME ↑
+END PGUP PGDN |` and `CTRL ALT ^C ^D ← ↓ → ~ : ;`). They hug the keyboard
+(ime height minus nav zone — no more floating gap).
 
 > Golden path on a fresh install:
 > `install-alpine` → `toolbox-install essentials` → `opencode-install` →
@@ -19,7 +29,7 @@ alt-screen, resize) for full-screen TUIs like `opencode`. Toggle with the
 | `install-alpine` | Downloads Alpine 3.19 minirootfs into `sandbox/alpine` (~3MB) |
 | `alpine-status` | Installed? Root path? |
 | `toolbox` / `tools` | Lists all downloadable dev tools + sizes |
-| `toolbox-install <name\|essentials\|agent\|all>` | Installs via `apk` (needs net). `essentials` ≈ 30MB (`git ssh curl bash jq nano`), `agent` adds `rg fd fzf node python` |
+| `toolbox-install <name\|essentials\|agent\|opencode\|all>` | Installs via `apk` (needs net). `essentials` ≈ 30MB (`git ssh curl bash jq nano`), `agent` adds `rg fd fzf node(+npm) python`, `opencode` adds `build(build-base) dns wget zip trace` — everything opencode's doctor checks (bun/deno have no Alpine builds: unavailable, not a bug) |
 | `toolbox-remove <apk>` | `apk del` a package |
 | `toolbox-update` | `apk update && apk upgrade` |
 | `opencode-install` | Downloads Hope2333 opencode-termux (~50MB, aarch64 only) to `sandbox/bin/opencode` |
@@ -76,18 +86,29 @@ reload | stop`, `b snap` (page refs+text), `b click <ref> | fill <ref> <val>
 
 **Make your own:** `b alias deploy 'b open https://example.com'` → `b deploy`
 works forever (stored on-device, `$1…$9` + `$@` supported). `b unalias deploy`
-removes it. The 🤖 Agent button shows all of these tappable, plus server
-start/stop and copy-URL/token.
+removes it. The Agent panel (drawer → Agent bridge) shows all of these
+tappable, plus server start/stop and copy-URL/token.
+
+**`b` inside PTY shells:** PTY is a raw shell, so a `b()` function is
+auto-installed into `~/.profile` (`b-setup` refreshes it). It talks to the
+same HTTP bridge — but the **server must be running** (start it from the
+Agent panel or EXEC `b serve on`) and you need `curl` (`toolbox-install
+curl`). Supported there: open/new/tabs/close/home/back/forward/reload/stop/
+find/snap/text/js/shot/console/cookies/click/fill/pos/tap/swipe/scroll/
+scrollto. `record/serve/alias` stay EXEC-only (stateful, no HTTP route).
 
 ### Sessions & keys
 
-- `+` = new session, tap name = switch, `×` = close. Sessions keep their own
-  dir, history (200), and transcript.
-- Keys: `ESC / - HOME ↑ END PGUP`, `CTRL ALT ^C ^D ← ↓ →`. Sticky: tap
-  `CTRL`, then a letter = real control byte; `^C` (or CTRL+Enter while busy)
-  kills the running process; `^D` clears; `ALT+x` = `ESC x`.
-- ⋮ menu: Follow output (auto-scroll), text bigger/smaller, rename, paste,
-  copy-all, clear, kill, Agent bridge.
+- Drawer → sessions list (tap = switch, `×` = close), `+ New session` (max 8).
+  Sessions keep their own dir, history (200), and transcript.
+- Keys: as above. Sticky: tap `CTRL`, then a letter = real control byte —
+  works with the soft keyboard too (also `ALT+x` = `ESC x`); `^C` (or
+  CTRL+Enter while busy) kills the running process; `^D` clears.
+- Drawer: Follow output (auto-scroll), text bigger/smaller, rename, paste
+  (works in PTY too), copy-all, clear, kill, Agent bridge.
+- PTY typing invisible? It was focus theft (Compose buttons stole the View's
+  focus) — fixed: keys/buttons hand focus back automatically; keyboard opens
+  on tap/`⌨`.
 
 ## PTY mode
 
@@ -147,7 +168,7 @@ Practical rules:
 
 | Symptom | Fix |
 |---|---|
-| `…/bin/opencode: Permission denied` | Android ≥10 SELinux blocks direct exec of app-data files even with `+x`. The app auto-launches via `/system/bin/linker64` (`run` does this for any ELF). If it still fails: `opencode-fix`, then `opencode-diag` and read `interp=`/`libs=` |
+| `…/bin/opencode: Permission denied` | Android ≥10 SELinux blocks direct exec of app-data files even with `+x`. The app auto-launches via `/system/bin/linker64` (`run` does this for any ELF). If it still fails: `opencode-fix`, then `opencode-diag` and read `interp=`/`libs=`. Flaky launches were the missing `.so` + missing `TMPDIR` — both fixed, but **re-run `opencode-install` once** to heal old copies |
 | `library "….so" not found` | Sidecar lib missing — new installs keep `usr/lib/opencode/*.so` into `lib/opencode/` automatically; old installs: re-run `opencode-install`. `LD_LIBRARY_PATH` already covers that dir |
 | `mkdir /data/local/tmp…: EACCES` | Fixed: `TMPDIR`/`TEMP`/`TMP`/`BUN_TMPDIR` now point at sandbox `tmp/` (auto-created) |
 | `interp=/lib/ld-linux…` (glibc) | That build needs Termux's glibc prefix/proot — standalone run can't work; next step is the proot runner |
