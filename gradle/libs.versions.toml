@@ -2,6 +2,7 @@
 agp = "9.3.2"
 kotlin = "2.3.0"
 androidxActivity = "1.9.3"
+androidxAnnotation = "1.9.0"
 androidxAppCompat = "1.7.0"
 androidxComposeBom = "2025.09.01"
 androidxCore = "1.15.0"
@@ -17,6 +18,9 @@ media3 = "1.11.0"
 [libraries]
 android-desugarJdkLibs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "androidxActivity" }
+# Pinned by upstream Termux terminal-emulator/terminal-view (Apache-2.0).
+# User-approved 2026-09-09 (not in workshop list).
+androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "androidxAppCompat" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom-alpha", version.ref = "androidxComposeBom" }
 androidx-compose-material-iconsExtended = { group = "androidx.compose.material", name = "material-icons-extended" }
@@ -34,6 +38,7 @@ media3-session = { group = "androidx.media3", name = "media3-session", version.r
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
 # No org.jetbrains.kotlin.android entry: AGP 9 forbids it (built-in Kotlin).
 # Only the Compose compiler plugin (version tracks Kotlin via version.ref).
 compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

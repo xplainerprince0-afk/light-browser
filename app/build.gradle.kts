@@ -79,6 +79,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+    // PTY terminal (vendored Termux terminal-view, Apache-2.0 — see DEPENDENCY_TREE.md)
+    implementation(project(":terminal-view"))
     // SAF file access (scoped-storage compliant file manager + music import)
     implementation("androidx.documentfile:documentfile:1.0.1")
     // Kept: manifest theme + file_paths depend on Material/AppCompat resources

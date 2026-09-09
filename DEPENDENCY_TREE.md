@@ -28,6 +28,15 @@ User explicitly approved ExoPlayer.
 
 Kept as literals (pre-existing, scoped-storage/SAF needs):
 └─ androidx.documentfile:documentfile:1.0.1
-```
+
+Vendored (Apache-2.0, verbatim from termux/termux-app tag v0.119.0):
+termux-app is GPLv3-only, BUT its LICENSE.md explicitly excepts these two
+dirs (jackpal Android-Terminal-Emulator lineage). Verified: zero imports of
+com.termux.shared anywhere in the vendored sources; empty manifests.
+├─ :terminal-emulator (com.termux.terminal: TerminalSession/Emulator + JNI
+│   termux.c → libtermux.so via ndkBuild, NDK 29.0.14206865 pinned in CI)
+│   └─ androidx.annotation:annotation:1.9.0 ★ user-approved (upstream-pinned)
+└─ :terminal-view (com.termux.view: TerminalView/Renderer, api → emulator)
+    └─ androidx.annotation:annotation:1.9.0 (same)
 
 Parents drive children: Kotlin → compose plugin → BOM → M3. AGP → Gradle wrapper → compileSdk. Never bump a child without checking its parent floor.

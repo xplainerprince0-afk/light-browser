@@ -26,6 +26,20 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Restore Android NDK (cached)
+        id: ndk-cache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/android/sdk/ndk/29.0.14206865
+          key: ndk-29.0.14206865
+
+      - name: Install Android NDK
+        if: steps.ndk-cache.outputs.cache-hit != 'true'
+        run: |
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "ndk;29.0.14206865"
+
       - name: Build release APK only (saves minutes)
         run: ./gradlew assembleRelease --stacktrace
         # release uses repo keystore (app/build.gradle.kts); debug skipped to save CI minutes
