@@ -202,7 +202,7 @@ Practical rules:
 | No stdin / interactive prompts hang | EXEC closes stdin by design — pass flags/args instead (`--yes`, `< file`), or use PTY mode |
 | Prompt hidden / keys misplaced | Keys lift by the MEASURED keyboard height (visible frame — suggestion strip included) minus the reserved nav inset; zero when closed. Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
 | PTY prompt shows full path | Prompt is `sandbox $ ` everywhere (env + managed `~/.profile` block) |
-| Bottom tabs vanish while typing | Replaced by a slim swipe strip (drag L/R, tap dots) — hidden while typing, returns after. No tall bar anymore |
+| Bottom tabs vanish while typing | No tab bar at all: drag horizontally from either screen edge to switch tabs (taps/vertical scrolls pass through). MiniPlayer stays |
 | `b …` says open the Browser tab first | Tab state lives in the Browser tab — visit it once so `TabBus` wires up |
 | `Server is OFF` | `b serve on` or 🤖 → Start server; copy URL+token from the panel |
 | TUI garbage in EXEC | Expected — full-screen TUIs need PTY mode, not EXEC |

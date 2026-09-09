@@ -20,7 +20,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Player: ExoPlayer + MediaSession background playback (music attrs, local wakelock, tap-to-open), novels/chapters, shuffle/repeat/speed (0.5..2)/sleep timer, queue, mini-player, error surface, atomic resume
 - [x] Scripts manager (name validation), Downloads (skip active, refresh on partial), Settings (homepage normalize+autosave, theme persist, speed clamp)
 - [x] Shell: singleTask deep-links, adjustPan keyboard, rememberSaveable tabs/theme, status-bar contrast, offscreen a11y/pointer block, allowBackup=false
-- [x] Shell: slim swipe strip replaces bottom bar (drag L/R, tap dots/chevrons; WebView-safe, hidden while typing), order Browser/Terminal/Sandbox/Player
+- [x] Shell: edge-swipe tab switching replaces all bottom bars (28dp strips both sides, taps/scroll pass through), order Browser/Terminal/Sandbox/Player
 - [ ] Screenshot/preview pass on foldable/tablet
 
 ## Tech stack
