@@ -25,6 +25,64 @@ object AlpineEnv {
             "alias ll='ls -la'\n" +
             "alias la='ls -a'\n"
 
+    private const val B_MARK = "# >>> LIGHTBROWSER-B (managed — do not edit) >>>"
+    private const val B_END = "# <<< LIGHTBROWSER-B <<<"
+
+    /** `b` for real shells (PTY): talks to the agent HTTP bridge. No exec needed. */
+    private const val B_FUNCTION =
+        "# >>> LIGHTBROWSER-B (managed — do not edit) >>>\n" +
+            "b() {\n" +
+            "  _b_tok=\"\$(cat \"\$HOME/.agent_token\" 2>/dev/null)\"\n" +
+            "  if [ -z \"\$_b_tok\" ]; then echo 'agent server is off — start it (drawer -> Agent bridge, or EXEC: b serve on)'; return 1; fi\n" +
+            "  _b_port=\"\${_b_tok%% *}\"; _b_key=\"\${_b_tok#* }\"\n" +
+            "  if [ -z \"\$_b_port\" ] || [ \"\$_b_port\" = \"\$_b_key\" ]; then echo 'stale token — restart the server'; return 1; fi\n" +
+            "  if ! command -v curl >/dev/null 2>&1; then echo 'need curl — run: toolbox-install curl'; return 1; fi\n" +
+            "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
+            "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
+            "  case \"\$_b_c\" in\n" +
+            "    ''|help) echo 'b open|new|tabs|close|home|back|forward|reload|stop|find|snap|text|js|shot|console|cookies|click|fill|pos|tap|swipe|scroll|scrollto (server must be on)';;\n" +
+            "    status|url|title) _b_get '/status';;\n" +
+            "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
+            "    tabs|home|back|forward|reload|stop|snap|text|console|cookies) _b_get \"/\$_b_c\";;\n" +
+            "    shot) _b_get '/shot';;\n" +
+            "    close) _b_get '/close' --data-urlencode \"i=\${1:--1}\";;\n" +
+            "    find) _b_get '/find' --data-urlencode \"q=\$*\";;\n" +
+            "    js) _b_get '/js' --data-urlencode \"expr=\$*\";;\n" +
+            "    click) _b_get '/click' --data-urlencode \"sel=\$1\";;\n" +
+            "    fill) _b_sel=\"\$1\"; shift; _b_get '/fill' --data-urlencode \"sel=\$_b_sel\" --data-urlencode \"value=\$*\";;\n" +
+            "    pos) _b_get '/pos' --data-urlencode \"sel=\$1\";;\n" +
+            "    tap) _b_get '/tap' --data-urlencode \"x=\$1\" --data-urlencode \"y=\$2\";;\n" +
+            "    swipe) _b_get '/swipe' --data-urlencode \"x1=\$1\" --data-urlencode \"y1=\$2\" --data-urlencode \"x2=\$3\" --data-urlencode \"y2=\$4\" --data-urlencode \"ms=\${5:-300}\";;\n" +
+            "    scroll) _b_get '/scroll' --data-urlencode \"y=\${1:-500}\";;\n" +
+            "    scrollto) _b_get '/scrollto' --data-urlencode \"x=\${1:-0}\" --data-urlencode \"y=\${2:-0}\";;\n" +
+            "    record|serve|alias|unalias) echo \"use EXEC-mode b \$_b_c (stateful, no HTTP route)\";;\n" +
+            "    *) echo \"unknown b subcommand: \$_b_c\"; return 1;;\n" +
+            "  esac\n" +
+            "}\n" +
+            "# <<< LIGHTBROWSER-B <<<"
+
+    /**
+     * Idempotent: (re)writes the managed `b()` block in ~/.profile,
+     * preserving user edits outside the markers.
+     */
+    fun ensureBFunction(sandbox: File): Boolean {
+        return try {
+            ensureRuntimeFiles(sandbox)
+            val profile = File(sandbox, ".profile")
+            val cur = try { profile.readText() } catch (_: Exception) { "" }
+            val lines = cur.lines()
+            val s = lines.indexOfFirst { it.startsWith("# >>> LIGHTBROWSER-B") }
+            val e = lines.indexOfFirst { it.startsWith("# <<< LIGHTBROWSER-B") }
+            val kept = when {
+                s >= 0 && e > s -> (lines.subList(0, s) + lines.subList(e + 1, lines.size)).joinToString("\n")
+                s >= 0 -> lines.subList(0, s).joinToString("\n")
+                else -> cur
+            }
+            profile.writeText(kept.trimEnd() + "\n\n" + B_FUNCTION + "\n")
+            true
+        } catch (_: Exception) { false }
+    }
+
     /**
      * Runtime dirs + files every shell needs: tmp (Bun/Rust honor $TMPDIR;
      * /data/local/tmp is EACCES for apps), lib dir for sidecar .so files,

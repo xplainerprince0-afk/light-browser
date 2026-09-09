@@ -688,6 +688,11 @@ object BrowserAgent {
                 val raw = evalBlockingJs("(function(){try{window.scrollTo($x,$y);return 'OK '+window.scrollX+','+window.scrollY;}catch(e){return 'ERR '+e;}})()", 12)
                 JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
             }
+            "/scroll" -> {
+                val y = q["y"]?.toIntOrNull() ?: 500
+                val raw = evalBlockingJs("(function(){try{window.scrollBy(0,$y);return 'OK '+window.scrollX+','+window.scrollY;}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
+            }
             "/reload" -> {
                 runOnPage { try { it.reload() } catch (_: Exception) {} }
                 """{"ok":true}"""
@@ -765,7 +770,7 @@ object BrowserAgent {
                 }
                 """{"ok":true}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /close /home /text /snap /js /click /fill /pos /tap /swipe /scrollto /back /forward /reload /stop /find /console /cookies /shot"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /close /home /text /snap /js /click /fill /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot"}"""
         }
     }
 }

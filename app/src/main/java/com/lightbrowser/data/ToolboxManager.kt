@@ -29,8 +29,13 @@ object ToolboxManager {
         Tool("fd", listOf("fd"), "fast file finder", 4),
         Tool("fzf", listOf("fzf"), "fuzzy finder", 4),
         Tool("tmux", listOf("tmux"), "persistent sessions", 2),
-        Tool("node", listOf("nodejs"), "JS tooling + MCP servers", 67),
+        Tool("node", listOf("nodejs", "npm"), "JS tooling + MCP servers (npm/npx incl.)", 75),
         Tool("python", listOf("python3", "py3-pip"), "ad-hoc scripts", 50),
+        Tool("build", listOf("build-base"), "C toolchain (make/gcc/cc)", 170),
+        Tool("dns", listOf("bind-tools"), "nslookup/dig/getent", 3),
+        Tool("wget", listOf("wget"), "downloader", 2),
+        Tool("zip", listOf("zip", "unzip"), "archives", 2),
+        Tool("trace", listOf("traceroute"), "route tracing", 1),
         Tool("nvim", listOf("neovim"), "full editor", 15),
         Tool("gh", listOf("github-cli"), "releases + PRs", 12)
     )
@@ -38,9 +43,12 @@ object ToolboxManager {
     val ESSENTIALS: List<String> = listOf("git", "ssh", "curl", "bash", "jq", "nano")
     val AGENT: List<String> = ESSENTIALS + listOf("rg", "fd", "fzf", "node", "python")
 
+    /** Everything opencode's doctor looks for (bun/deno have no Alpine builds). */
+    val OPENCODE: List<String> = AGENT + listOf("build", "dns", "wget", "zip", "trace")
+
     fun byName(name: String): Tool? = TOOLS.firstOrNull { it.name == name.lowercase() }
 
-    /** Expand `essentials|agent|all|<name> …` to apk package names. Empty = unknown. */
+    /** Expand `essentials|agent|opencode|all|<name> …` to apk package names. Empty = unknown. */
     fun resolve(arg: String): List<String> {
         val wants = arg.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
         if (wants.isEmpty()) return emptyList()
@@ -48,6 +56,7 @@ object ToolboxManager {
             wants == listOf("all") -> TOOLS.map { it.name }
             wants == listOf("essentials") -> ESSENTIALS
             wants == listOf("agent") -> AGENT
+            wants == listOf("opencode") -> OPENCODE
             else -> wants
         }
         val pkgs = mutableListOf<String>()
@@ -62,7 +71,9 @@ object ToolboxManager {
         val sb = StringBuilder("Tools (runtime download, apk):\n")
         for (t in TOOLS) sb.append("• ${t.name} (~${t.approxMb}MB) — ${t.desc}\n")
         sb.append("Sets: essentials (~30MB: ${ESSENTIALS.joinToString(" ")})\n")
-        sb.append("      agent (~180MB: essentials + rg fd fzf node python)")
+        sb.append("      agent (~200MB: essentials + rg fd fzf node python)\n")
+        sb.append("      opencode (agent + build dns wget zip trace — silences its doctor;\n")
+        sb.append("        note: bun/deno have no Alpine builds and can't be installed)")
         return sb.toString()
     }
 

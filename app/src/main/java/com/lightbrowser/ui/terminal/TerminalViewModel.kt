@@ -100,6 +100,7 @@ class TerminalViewModel : ViewModel() {
             val sd = File(app.filesDir, "sandbox").apply { if (!exists()) mkdirs() }
             sandboxDir = sd
             try { AlpineEnv.ensureRuntimeFiles(sd) } catch (_: Exception) {}
+            try { AlpineEnv.ensureBFunction(sd) } catch (_: Exception) {}
             alpineInstalled = AlpineEnv.isInstalled(sd)
             val s = Sess(name = "main", dir = sd)
             store.add(s)
@@ -650,7 +651,7 @@ class TerminalViewModel : ViewModel() {
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> {
-                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-fix | opencode-diag | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent> (dev tools via apk)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-fix | opencode-diag | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent|opencode> (dev tools via apk)  b-setup (b for PTY)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
                     afterCommand()
                 }
                 "clear" -> clear()
@@ -804,7 +805,7 @@ class TerminalViewModel : ViewModel() {
                     } else runShell("apk $arg")
                 }
                 "toolbox", "tools" -> {
-                    print(com.lightbrowser.data.ToolboxManager.listText() + "\ntoolbox-install <name|essentials|agent>  toolbox-remove <apk>  toolbox-update\n", TermDim)
+                    print(com.lightbrowser.data.ToolboxManager.listText() + "\ntoolbox-install <name|essentials|agent|opencode>  toolbox-remove <apk>  toolbox-update\n", TermDim)
                     afterCommand()
                 }
                 "toolbox-install", "tool-install" -> {
@@ -834,6 +835,14 @@ class TerminalViewModel : ViewModel() {
                         print("Install Alpine first: install-alpine\n", TermRed); afterCommand(); return
                     }
                     runShell("apk update && apk upgrade", timeoutSec = 180)
+                }
+                "b-setup" -> {
+                    val sd = sandboxDir
+                    if (sd == null) { print("No sandbox\n", TermRed); afterCommand(); return }
+                    val ok = try { AlpineEnv.ensureBFunction(sd) } catch (_: Exception) { false }
+                    print(if (ok) "`b` ready for PTY shells (~/.profile) — start the server first (Agent panel or EXEC `b serve on`)\n"
+                    else "Could not write ~/.profile\n", if (ok) TermGreen else TermRed)
+                    afterCommand()
                 }
                 "sh", "shell", "exec" -> {
                     if (arg.isBlank()) {
