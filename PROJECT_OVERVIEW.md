@@ -9,6 +9,9 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Browser: TRUE multi-WebView tabs (pool 4, per-tab history), history, bookmarks, userscript engine (GM_* polyfill), adblock (host+path), desktop UA (per-site), blob downloads (escaped bridge), share, reader retry/copy/share, find debounce, agent bridge (token on all endpoints, no Main deadlock)
 - [x] Files: sandbox browser (canonical guard + name sanitize), search/sort/grid, breadcrumb, import/export (SAF, to current dir, unique names), new folder/rename/delete/details, storage meter, zip-bomb guard, preview selectable+copy
 - [x] Terminal: Alpine bootstrap (HTTP check, arch fix, busybox exec, sh link), sandboxed shell (quote-safe, concurrent stderr drain, busy guard, re-entrancy guard), history, sticky CTRL/ALT (ALT consumed), ESC \u001B, font size, selectable output
+- [x] Terminal: Agent bridge panel (server start/stop, recorder, tappable `b` cmds, alias how-to), `b serve on|off`, bottom tabs pinned below keyboard (IME excluded from outer insets)
+- [x] Terminal: downloadable toolbox (`toolbox`, `toolbox-install essentials|agent|all`, remove/update via apk; repos+DNS auto-seed; zero APK cost)
+- [ ] Terminal: true PTY (Termux terminal-emulator+view, Apache-2.0) for opencode TUI — needs minSdk/NDK decision
 - [x] Player: ExoPlayer + MediaSession background playback (music attrs, local wakelock, tap-to-open), novels/chapters, shuffle/repeat/speed (0.5..2)/sleep timer, queue, mini-player, error surface, atomic resume
 - [x] Scripts manager (name validation), Downloads (skip active, refresh on partial), Settings (homepage normalize+autosave, theme persist, speed clamp)
 - [x] Shell: singleTask deep-links, adjustPan keyboard, rememberSaveable tabs/theme, status-bar contrast, offscreen a11y/pointer block, allowBackup=false
