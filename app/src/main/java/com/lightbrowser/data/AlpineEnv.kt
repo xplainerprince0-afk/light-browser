@@ -40,11 +40,19 @@ object AlpineEnv {
             "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
             "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
             "  case \"\$_b_c\" in\n" +
-            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|find|snap|text|read|js|shot|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|mkext|ext|pos|tap|swipe|scroll|scrollto (server must be on)';;\n" +
+            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|url|title|find|next|prev|snap|text|read|dom|js|shot|save|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|pos|tap|swipe|scroll|scrollto|serve|record (server must be on; record/serve/alias also in EXEC)';;\n" +
             "    status|url|title) _b_get '/status';;\n" +
             "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
             "    tabs|home|back|forward|reload|stop|snap|text|console|downloads) _b_get \"/\$_b_c\";;\n" +
             "    read) _b_get '/read' --data-urlencode \"max=\${1:-6000}\";;\n" +
+            "    dom) _b_get '/dom' --data-urlencode \"sel=\${1:-body}\";;\n" +
+            "    next|prev) _b_get \"/\$_b_c\";;\n" +
+            "    save) [ -z \"\$1\" ] && { echo 'usage: b save <name.html|txt>'; return 1; }; _b_get '/save' --data-urlencode \"name=\$1\";;\n" +
+            "    stores) _b_get '/stores';;\n" +
+            "    unstore) _b_get '/unstore' --data-urlencode \"name=\$1\";;\n" +
+            "    serve) _b_get '/serve' --data-urlencode \"op=\${1:-status}\";;\n" +
+            "    alias) case \"\$1\" in '') _b_get '/alias';; remove|unalias) _b_get '/alias' --data-urlencode 'op=remove' --data-urlencode \"name=\$2\";; *) _b_get '/alias' --data-urlencode 'op=set' --data-urlencode \"name=\$1\" --data-urlencode \"expansion=\$2\";; esac;;\n" +
+            "    record) _b_sub=\"\$1\"; case \"\$_b_sub\" in start|stop|list) _b_get '/record' --data-urlencode \"op=\$_b_sub\";; save) _b_get '/record' --data-urlencode 'op=save' --data-urlencode \"name=\${2:-rec}\";; *) _b_get '/record';; esac;;\n" +
             "    shot) if [ \"\$1\" = \"--full\" ]; then _b_get '/shot' --data-urlencode \"full=1\"; else _b_get '/shot'; fi;;\n" +
             "    hover) _b_get '/hover' --data-urlencode \"sel=\$1\";;\n" +
             "    select) _b_sel=\"\$1\"; shift; _b_get '/select' --data-urlencode \"sel=\$_b_sel\" --data-urlencode \"value=\$*\";;\n" +
@@ -64,7 +72,7 @@ object AlpineEnv {
             "    swipe) _b_get '/swipe' --data-urlencode \"x1=\$1\" --data-urlencode \"y1=\$2\" --data-urlencode \"x2=\$3\" --data-urlencode \"y2=\$4\" --data-urlencode \"ms=\${5:-300}\";;\n" +
             "    scroll) _b_get '/scroll' --data-urlencode \"y=\${1:-500}\";;\n" +
             "    scrollto) _b_get '/scrollto' --data-urlencode \"x=\${1:-0}\" --data-urlencode \"y=\${2:-0}\";;\n" +
-            "    record|serve|alias|unalias) echo \"use EXEC-mode b \$_b_c (stateful, no HTTP route)\";;\n" +
+            "    unalias) echo 'use EXEC-mode b unalias (or PTY: b alias remove <name>)';;\n" +
             "    ext) ls -1 \"\$HOME/.b-ext\" 2>/dev/null || echo '(no extensions — b mkext <name>)';;\n" +
             "    mkext) _b_n=\"\$1\"; case \"\$_b_n\" in ''|*[!a-z0-9_-]*) echo 'usage: b mkext <name>  ([a-z0-9_-])'; return 1;; esac; mkdir -p \"\$HOME/.b-ext\"; _b_f=\"\$HOME/.b-ext/\$_b_n.sh\"; [ -f \"\$_b_f\" ] && { echo \"exists: \$_b_f\"; return 1; }; printf '%s\\n' '#!/bin/sh' '# custom b command — args in \$1..' '# agent server: \$B_PORT / \$B_KEY (server must be on)' '# example: list tabs' 'curl -s --get \"http://127.0.0.1:\$B_PORT/tabs\" --data-urlencode \"token=\$B_KEY\"; echo' > \"\$_b_f\"; chmod +x \"\$_b_f\"; echo \"created \$_b_f — edit it, then run: b \$_b_n\";;\n" +
             "    *) if [ -x \"\$HOME/.b-ext/\$_b_c.sh\" ]; then B_PORT=\"\$_b_port\" B_KEY=\"\$_b_key\" sh \"\$HOME/.b-ext/\$_b_c.sh\" \"\$@\"; else echo \"unknown b subcommand: \$_b_c\"; return 1; fi;;\n" +

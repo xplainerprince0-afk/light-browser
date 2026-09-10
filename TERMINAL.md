@@ -104,8 +104,10 @@ auto-installed into `~/.profile` (`b-setup` refreshes it). It talks to the
 same HTTP bridge — but the **server must be running** (start it from the
 Agent panel or EXEC `b serve on`) and you need `curl` (`toolbox-install
 curl`). Supported there: open/new/tabs/close/home/back/forward/reload/stop/
-find/snap/text/js/shot/console/cookies/click/fill/pos/tap/swipe/scroll/
-scrollto. `record/serve/alias` stay EXEC-only (stateful, no HTTP route).
+url/title/find/next/prev/snap/text/read/dom/js/shot/save/console/cookies/history/
+downloads/click/fill/submit/key/hover/select/store/stores/unstore/alias/mkext/ext/
+pos/tap/swipe/scroll/scrollto/serve/record. Only `b unalias` stays EXEC-only
+(in PTY: `b alias remove <name>`).
 
 ### Sessions & keys
 
@@ -144,7 +146,9 @@ PTY is a raw kernel pty: your keystrokes go straight to `mksh`, our app never
 sees the line, so we *cannot* intercept `b …` the way EXEC does (EXEC owns its
 text field). Hence `b()` is a shell function in `~/.profile` that calls the
 same HTTP bridge (`b-setup` refreshes it; needs server on + `curl`). Same
-commands, same results — different road.
+commands, same results — different road (PTY now covers save/dom/url/title/
+next/prev/stores/serve/alias/record too; only `b unalias` stays EXEC-only —
+in PTY use `b alias remove <name>`).
 
 ## Environment, PATH & linking things (`export`)
 

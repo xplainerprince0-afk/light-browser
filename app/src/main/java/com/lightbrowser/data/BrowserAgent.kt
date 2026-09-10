@@ -297,6 +297,11 @@ object BrowserAgent {
     }
 
     /** Real tap at CSS-pixel coords (from `locate`): full touch pipeline, trusted by pages. */
+    /** Last synthetic tap audit trail (for `b metrics` accuracy tests). */
+    @Volatile
+    var lastTap: String? = null
+        private set
+
     fun tapAt(xCss: Float, yCss: Float) {
         mainHandler.post {
             try {
@@ -304,6 +309,12 @@ object BrowserAgent {
                 val s = cssScale(wv)
                 val x = xCss * s
                 val y = yCss * s
+                try {
+                    lastTap = JSONObject().put("cssX", xCss).put("cssY", yCss)
+                        .put("devX", x).put("devY", y).put("scale", s)
+                        .put("viewW", wv.width).put("viewH", wv.height)
+                        .put("ts", System.currentTimeMillis()).toString()
+                } catch (_: Exception) {}
                 val now = android.os.SystemClock.uptimeMillis()
                 val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
                 try { wv.dispatchTouchEvent(down) } catch (_: Exception) {} finally {
@@ -1048,7 +1059,140 @@ object BrowserAgent {
                 }
                 """{"ok":true}"""
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /text /read /snap /js /click /fill /submit /key /hover /select /store /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /console /cookies /shot /history /downloads"}"""
+            // ── Parity routes (PTY `b()` matches EXEC `b`) ──
+            "/dom" -> {
+                val sel = com.lightbrowser.ui.terminal.BStore.resolve(q["sel"] ?: "body")
+                val esc = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val raw = evalBlocking("(function(){try{var e=document.querySelector('$esc');return e?e.outerHTML.slice(0,20000):'ERR no-node';}catch(e){return 'ERR '+e;}})()", 12)
+                JSONObject().put("ok", !raw.startsWith("ERR")).put("html", raw).toString()
+            }
+            "/url" -> awaitMain {
+                JSONObject().put("ok", true)
+                    .put("url", webViewProvider?.invoke()?.url ?: JSONObject.NULL).toString()
+            }
+            "/title" -> {
+                val raw = evalBlockingJs("(function(){return document.title;})()", 12)
+                JSONObject().put("ok", true).put("title", raw).toString()
+            }
+            "/next" -> {
+                try { findNext(true) } catch (_: Exception) {}
+                """{"ok":true}"""
+            }
+            "/prev" -> {
+                try { findNext(false) } catch (_: Exception) {}
+                """{"ok":true}"""
+            }
+            "/stores" -> {
+                val o = JSONObject()
+                com.lightbrowser.ui.terminal.BStore.all().forEach { (k, v) -> o.put(k, v) }
+                JSONObject().put("ok", true).put("stores", o).toString()
+            }
+            "/unstore" -> {
+                com.lightbrowser.ui.terminal.BStore.remove(q["name"] ?: "")
+                """{"ok":true}"""
+            }
+            "/serve" -> {
+                when (q["op"] ?: "status") {
+                    "start", "on" -> {
+                        try { startServer() } catch (e: Exception) {
+                            return """{"ok":false,"err":"start failed: ${e.message}"}"""
+                        }
+                        JSONObject().put("ok", true).put("label", serverLabel.value).toString()
+                    }
+                    "stop", "off" -> {
+                        try { stopServer() } catch (_: Exception) {}
+                        """{"ok":true}"""
+                    }
+                    else -> JSONObject().put("ok", true)
+                        .put("running", serverRunning.value)
+                        .put("label", serverLabel.value).toString()
+                }
+            }
+            "/alias" -> {
+                val A = com.lightbrowser.ui.terminal.BrowserAliases
+                when (q["op"] ?: "list") {
+                    "set" -> {
+                        val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""
+                        val expansion = q["expansion"] ?: ""
+                        if (!name.matches(Regex("[a-z0-9_-]+"))) return """{"ok":false,"err":"bad name"}"""
+                        if (expansion.isBlank()) return """{"ok":false,"err":"missing expansion"}"""
+                        A.set(name, expansion)
+                        """{"ok":true}"""
+                    }
+                    "remove" -> {
+                        A.remove(q["name"] ?: "")
+                        """{"ok":true}"""
+                    }
+                    else -> {
+                        val o = JSONObject()
+                        A.all().forEach { (k, v) -> o.put(k, v) }
+                        JSONObject().put("ok", true).put("aliases", o).toString()
+                    }
+                }
+            }
+            "/record" -> {
+                when (q["op"] ?: "status") {
+                    "start" -> {
+                        try { startRecording() } catch (e: Exception) {
+                            return """{"ok":false,"err":"${e.message}"}"""
+                        }
+                        """{"ok":true}"""
+                    }
+                    "stop" -> {
+                        try { stopRecording() } catch (_: Exception) {}
+                        JSONObject().put("ok", true).put("count", recCount()).toString()
+                    }
+                    "save" -> {
+                        val path = try {
+                            saveRecording((q["name"] ?: "rec").ifBlank { "rec" })
+                        } catch (_: Exception) { null }
+                        if (path != null) JSONObject().put("ok", true).put("path", path).toString()
+                        else """{"ok":false,"err":"nothing to save"}"""
+                    }
+                    "list" -> {
+                        val arr = org.json.JSONArray()
+                        try {
+                            listRecordings().take(10).forEach { (f, n) ->
+                                arr.put(JSONObject().put("file", f).put("actions", n))
+                            }
+                        } catch (_: Exception) {}
+                        JSONObject().put("ok", true).put("recordings", arr).toString()
+                    }
+                    else -> JSONObject().put("ok", true).put("recording", recording.value)
+                        .put("count", recCount()).toString()
+                }
+            }
+            "/save" -> {
+                val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""
+                val ctx = webViewProvider?.invoke()?.context
+                    ?: return """{"ok":false,"err":"no webview"}"""
+                val asHtml = name.lowercase().endsWith(".html")
+                val expr = if (asHtml) {
+                    "(function(){try{return document.documentElement.outerHTML.slice(0,400000);}catch(e){return 'ERR '+e;}})()"
+                } else {
+                    "(function(){try{return document.body?document.body.innerText.slice(0,200000):'ERR no-body';}catch(e){return 'ERR '+e;}})()"
+                }
+                var r = evalBlockingJs(expr, 15).take(420_000)
+                try {
+                    var s = r.trim()
+                    repeat(2) {
+                        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                            s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                        }
+                    }
+                    r = s
+                } catch (_: Exception) {}
+                if (r.startsWith("ERR")) return """{"ok":false,"err":"${r.take(200)}"}"""
+                return try {
+                    val dir = java.io.File(ctx.filesDir, "sandbox/Downloads").apply { mkdirs() }
+                    val safe = name.replace("/", "_").take(80).ifBlank { "page.txt" }
+                    val outFile = java.io.File(dir, safe)
+                    outFile.writeText(r, Charsets.UTF_8)
+                    JSONObject().put("ok", true).put("path", outFile.absolutePath)
+                        .put("bytes", r.length).toString()
+                } catch (e: Exception) { """{"ok":false,"err":"save failed: ${e.message}"}""" }
+            }
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /next /prev /console /cookies /shot /history /downloads /save /serve /record /alias"}"""
         }
     }
 }

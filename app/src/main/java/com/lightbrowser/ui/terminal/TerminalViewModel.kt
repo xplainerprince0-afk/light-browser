@@ -1229,10 +1229,28 @@ class TerminalViewModel : ViewModel() {
         // Agent ops stream output without freezing typing.
         lockBefore = -1
         viewModelScope.launch(Dispatchers.IO) {
+            // Output modifiers parsed first: trailing `> file` / `>> file`
+            // (jailed to sandbox) buffers everything instead of printing;
+            // trailing --json unwraps page markers for machine parsing.
+            var jsonMode = false
+            var redir: java.io.File? = null
+            var redirAppend = false
+            // ext scripts print straight to the transcript (runShell), so
+            // they bypass the redirect buffer — flagged to skip the flush.
+            var extRan = false
+            val fileBuf = StringBuilder()
             fun out(t: String, c: Color = TermWhite) {
+                if (redir != null) {
+                    fileBuf.append(t)
+                    return
+                }
                 viewModelScope.launch(Dispatchers.Main) { print(t, c) }
             }
             fun wrapped(origin: String, body: String) {
+                if (jsonMode) {
+                    out(body.take(12_000) + "\n", TermWhite)
+                    return
+                }
                 out("--- PAGE CONTENT origin=$origin ---\n", TermDim)
                 out(body.take(12_000) + "\n", TermWhite)
                 out("--- END PAGE CONTENT ---\n", TermDim)
@@ -1242,9 +1260,30 @@ class TerminalViewModel : ViewModel() {
                 java.io.File(sd, ".b-ext")
             } catch (_: Exception) { null }
             try {
+                var cmd = line
+                // Trailing `> file` / `>> file`: buffer output into a jailed
+                // sandbox file (parsed before aliases so expansions can't
+                // smuggle a redirect target).
+                Regex("""^(.*)\s+(>>?)\s*([A-Za-z0-9._-]{1,80})\s*$""")
+                    .matchEntire(cmd)?.let { m ->
+                        val target = m.groupValues[3]
+                        val resolved = try { resolve(target) } catch (_: Exception) { null }
+                        if (resolved == null) {
+                            out("Access denied: $target (stays inside sandbox)\n", TermRed)
+                            withContext(Dispatchers.Main) { afterCommand() }
+                            return@launch
+                        }
+                        redir = resolved
+                        redirAppend = m.groupValues[2] == ">>"
+                        cmd = m.groupValues[1].trimEnd()
+                    }
+                // Trailing --json / -j: machine-readable output.
+                Regex("""^(.*)\s+(--json|-j)\s*$""").matchEntire(cmd)?.let { m ->
+                    jsonMode = true
+                    cmd = m.groupValues[1].trimEnd()
+                }
                 // User-alias expansion (max 3 hops, builtins always win) so new
                 // `b` commands can be added inside the terminal, no app update.
-                var cmd = line
                 var hops = 0
                 while (hops < 3) {
                     val head = cmd.substringBefore(" ").trim()
@@ -1252,7 +1291,11 @@ class TerminalViewModel : ViewModel() {
                     val exp = BrowserAliases.expand(cmd) ?: break
                     cmd = exp; hops++
                 }
-                if (hops > 0) out("→ $cmd\n", TermDim)
+                if (hops > 0 && redir == null) out("→ $cmd\n", TermDim)
+                // `scrollto` (PTY-canonical spelling) also works here.
+                if (cmd == "scrollto" || cmd.startsWith("scrollto ")) {
+                    cmd = "scroll-to" + cmd.removePrefix("scrollto")
+                }
                 val parts = cmd.split(" ", limit = 3)
                 when (parts.getOrNull(0) ?: "") {
                     "", "help" -> out(
@@ -1263,12 +1306,13 @@ class TerminalViewModel : ViewModel() {
                             "b hover <ref|css> — reveal menus | b select <sel> <val> — dropdowns\n" +
                             "b store <name> <css> | stores | unstore <name> — named selectors\n" +
                             "b pos <ref|css> → coords | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]\n" +
-                            "b find <text> | next | prev | b scroll-to <x> <y> | b scroll [px]\n" +
+                            "b find <text> | next | prev | b scroll-to (scrollto) <x> <y> | b scroll [px]\n" +
                             "b shot [--full] | console [n] | cookies [get [url] | set \"k=v\" [url] | clear]\n" +
-                            "b history [n] | downloads | save <name>\n" +
+                            "b history [n] | downloads | save <name> | metrics (auto-logged)\n" +
                             "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
                             "b ext | mkext <name> — your own SCRIPT commands (~/.b-ext/, both modes)\n" +
-                            "b record start|stop|save <n>|list | serve\n", TermDim
+                            "b record start|stop|save <n>|list | serve [on|off]\n" +
+                            "Modifiers: append --json (raw output) or `> file` / `>> file` (sandboxed)\n", TermDim
                     )
                     "open" -> {
                         val url = parts.getOrNull(1) ?: ""
@@ -1291,7 +1335,14 @@ class TerminalViewModel : ViewModel() {
                     "tabs" -> {
                         val list = try { com.lightbrowser.ui.browser.TabBus.listTabs?.invoke() } catch (_: Exception) { null }
                         if (list.isNullOrEmpty()) out("(no tabs? open the Browser tab first)\n", TermDim)
-                        else list.forEach { t ->
+                        else if (jsonMode) {
+                            val arr = org.json.JSONArray()
+                            list.forEach { t ->
+                                arr.put(org.json.JSONObject().put("i", t.index)
+                                    .put("url", t.url).put("title", t.title).put("current", t.current))
+                            }
+                            out(org.json.JSONObject().put("tabs", arr).toString() + "\n", TermWhite)
+                        } else list.forEach { t ->
                             out("[${t.index}]${if (t.current) "●" else " "} ${(t.title.ifBlank { t.url }).take(60)} — ${t.url.take(80)}\n", TermWhite)
                         }
                     }
@@ -1360,6 +1411,7 @@ class TerminalViewModel : ViewModel() {
                                     val o = org.json.JSONObject(s)
                                     val x = o.optInt("x", -1); val y = o.optInt("y", -1)
                                     if (x < 0 || y < 0) out("$raw\n", TermRed)
+                                    else if (jsonMode) out(o.toString() + "\n", TermGreen)
                                     else out("x=$x y=$y w=${o.optInt("w")} h=${o.optInt("h")}  →  b tap $x $y\n", TermGreen)
                                 } catch (_: Exception) { out("$raw\n", TermWhite) }
                             }
@@ -1562,7 +1614,11 @@ class TerminalViewModel : ViewModel() {
                         val n = parts.getOrNull(1)?.toIntOrNull() ?: 30
                         val lines = com.lightbrowser.data.BrowserAgent.consoleTail(n)
                         if (lines.isEmpty()) out("(console empty — JS logs appear here)\n", TermDim)
-                        else {
+                        else if (jsonMode) {
+                            val arr = org.json.JSONArray()
+                            lines.forEach { arr.put(it.take(500)) }
+                            out(org.json.JSONObject().put("console", arr).toString() + "\n", TermWhite)
+                        } else {
                             out("--- CONSOLE (last ${lines.size}) ---\n", TermDim)
                             lines.forEach { out(it.take(500) + "\n", TermWhite) }
                             out("--- END CONSOLE ---\n", TermDim)
@@ -1586,6 +1642,7 @@ class TerminalViewModel : ViewModel() {
                                     val url = rest.ifBlank { com.lightbrowser.data.BrowserAgent.currentUrl() ?: "" }
                                     val ck = try { cm.getCookie(url) } catch (_: Exception) { null }
                                     if (ck.isNullOrBlank()) out("No cookies for ${url.ifBlank { "(no page)" }}\n", TermDim)
+                                    else if (jsonMode) out(org.json.JSONObject().put("url", url).put("cookies", ck).toString() + "\n", TermWhite)
                                     else wrapped(url, ck)
                                 }
                                 "set" -> {
@@ -1617,7 +1674,13 @@ class TerminalViewModel : ViewModel() {
                         try {
                             val list = com.lightbrowser.data.HistoryStorage.all(AppCtx.ctx).takeLast(n).reversed()
                             if (list.isEmpty()) out("(history empty)\n", TermDim)
-                            else list.forEach { h ->
+                            else if (jsonMode) {
+                                val arr = org.json.JSONArray()
+                                list.forEach { h ->
+                                    arr.put(org.json.JSONObject().put("url", h.url).put("title", h.title))
+                                }
+                                out(org.json.JSONObject().put("history", arr).toString() + "\n", TermWhite)
+                            } else list.forEach { h ->
                                 out("${h.title.ifBlank { h.url }.take(60)} — ${h.url.take(80)}\n", TermWhite)
                             }
                         } catch (e: Exception) { out("history error: ${e.message}\n", TermRed) }
@@ -1627,7 +1690,13 @@ class TerminalViewModel : ViewModel() {
                             val dir = java.io.File(AppCtx.ctx.filesDir, "sandbox/Downloads")
                             val files = dir.listFiles()?.sortedByDescending { it.lastModified() }?.take(30)
                             if (files.isNullOrEmpty()) out("(no downloads — sandbox/Downloads)\n", TermDim)
-                            else files.forEach { f -> out("• ${f.name} (${f.length() / 1024} KB)\n", TermWhite) }
+                            else if (jsonMode) {
+                                val arr = org.json.JSONArray()
+                                files.forEach { f ->
+                                    arr.put(org.json.JSONObject().put("name", f.name).put("size", f.length()))
+                                }
+                                out(org.json.JSONObject().put("downloads", arr).toString() + "\n", TermWhite)
+                            } else files.forEach { f -> out("• ${f.name} (${f.length() / 1024} KB)\n", TermWhite) }
                         } catch (e: Exception) { out("downloads error: ${e.message}\n", TermRed) }
                     }
                     "submit" -> {
@@ -1704,7 +1773,11 @@ class TerminalViewModel : ViewModel() {
                     "stores" -> {
                         val all = BStore.all()
                         if (all.isEmpty()) out("(no stored selectors — b store <name> <css>)\n", TermDim)
-                        else all.forEach { (k, v) -> out("$k  →  $v\n", TermWhite) }
+                        else if (jsonMode) {
+                            val o = org.json.JSONObject()
+                            all.forEach { (k, v) -> o.put(k, v) }
+                            out(org.json.JSONObject().put("stores", o).toString() + "\n", TermWhite)
+                        } else all.forEach { (k, v) -> out("$k  →  $v\n", TermWhite) }
                     }
                     "unstore" -> {
                         val name = parts.getOrNull(1) ?: ""
@@ -1748,6 +1821,75 @@ class TerminalViewModel : ViewModel() {
                             }
                         }
                     }
+                    "metrics" -> {
+                        // Geometry audit for tap-accuracy tests: screen px vs
+                        // page CSS px + the last tap's mapping. Every run is
+                        // APPENDED to sandbox/agent_metrics/metrics.log so the
+                        // test trail survives the transcript (cap 300 entries).
+                        try {
+                            val dm = try { AppCtx.ctx.resources.displayMetrics } catch (_: Exception) { null }
+                            val url = com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?"
+                            val raw = com.lightbrowser.data.BrowserAgent.eval(
+                                "(function(){try{var d=document.documentElement;return JSON.stringify({vw:window.innerWidth,vh:window.innerHeight,dpr:window.devicePixelRatio||1,sx:window.scrollX,sy:window.scrollY,cw:Math.max(d?d.scrollWidth:0,document.body?document.body.scrollWidth:0),ch:Math.max(d?d.scrollHeight:0,document.body?document.body.scrollHeight:0)});}catch(e){return 'ERR '+e;}})()"
+                            )
+                            var s = raw.trim()
+                            repeat(2) {
+                                if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                                    s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                                }
+                            }
+                            val page = try { org.json.JSONObject(s) } catch (_: Exception) { org.json.JSONObject() }
+                            val tap = try {
+                                com.lightbrowser.data.BrowserAgent.lastTap?.let { org.json.JSONObject(it) }
+                            } catch (_: Exception) { null }
+                            val rep = org.json.JSONObject()
+                                .put("ts", System.currentTimeMillis())
+                                .put("screen", org.json.JSONObject()
+                                    .put("w", dm?.widthPixels ?: -1)
+                                    .put("h", dm?.heightPixels ?: -1)
+                                    .put("density", (dm?.density ?: -1f).toDouble())
+                                    .put("dpi", dm?.densityDpi ?: -1))
+                                .put("page", org.json.JSONObject()
+                                    .put("url", url)
+                                    .put("vw", page.optInt("vw", -1))
+                                    .put("vh", page.optInt("vh", -1))
+                                    .put("dpr", page.optDouble("dpr", -1.0))
+                                    .put("sx", page.optInt("sx", 0))
+                                    .put("sy", page.optInt("sy", 0))
+                                    .put("cw", page.optInt("cw", -1))
+                                    .put("ch", page.optInt("ch", -1)))
+                            if (tap != null) rep.put("lastTap", tap)
+                            // Persist the trail (already on IO).
+                            var logInfo = ""
+                            try {
+                                val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
+                                val dir = java.io.File(sd, "agent_metrics").apply { mkdirs() }
+                                val log = java.io.File(dir, "metrics.log")
+                                log.appendText(rep.toString() + "\n", Charsets.UTF_8)
+                                val lines = try { log.readLines(Charsets.UTF_8) } catch (_: Exception) { emptyList() }
+                                if (lines.size > 400) {
+                                    try { log.writeText(lines.takeLast(300).joinToString("\n") + "\n", Charsets.UTF_8) } catch (_: Exception) {}
+                                }
+                                logInfo = "logged → agent_metrics/metrics.log"
+                            } catch (e: Exception) { logInfo = "log failed: ${e.message}" }
+                            if (jsonMode) {
+                                out(rep.toString() + "\n", TermWhite)
+                            } else {
+                                val d = dm
+                                out("screen ${d?.widthPixels ?: "?"}x${d?.heightPixels ?: "?"} px" +
+                                    " @${d?.density ?: "?"} (dpi ${d?.densityDpi ?: "?"})\n", TermWhite)
+                                out("page $url\n  viewport ${page.optInt("vw", -1)}x${page.optInt("vh", -1)} css" +
+                                    " dpr ${page.optDouble("dpr", -1.0)} scroll ${page.optInt("sx", 0)},${page.optInt("sy", 0)}" +
+                                    " content ${page.optInt("cw", -1)}x${page.optInt("ch", -1)}\n", TermWhite)
+                                if (tap != null) {
+                                    out("last tap css ${tap.optDouble("cssX")},${tap.optDouble("cssY")}" +
+                                        " → view ${tap.optDouble("devX")},${tap.optDouble("devY")}" +
+                                        " (scale ${tap.optDouble("scale")})\n", TermGreen)
+                                } else out("last tap: none yet (b tap something first)\n", TermDim)
+                                out("$logInfo\n", TermDim)
+                            }
+                        } catch (e: Exception) { out("metrics error: ${e.message}\n", TermRed) }
+                    }
                     else -> {
                         // b extensions: ~/.b-ext/<cmd>.sh (create: b mkext <name>).
                         // Runs in both modes — the PTY `b()` fn dispatches the same dir.
@@ -1760,9 +1902,37 @@ class TerminalViewModel : ViewModel() {
                             val args = cmd.removePrefix(head).trim()
                                 .split(Regex("\\s+")).filter { it.isNotEmpty() }
                                 .joinToString(" ") { "'" + it.replace("'", "'\\''") + "'" }
-                            out("→ ext $head\n", TermDim)
+                            if (redir == null) out("→ ext $head\n", TermDim)
+                            extRan = true
                             runShell("sh " + extFile.absolutePath + (if (args.isNotBlank()) " $args" else ""), 30)
-                        } else out("Unknown b command. Try: b help (or define your own: b alias name expansion)\n", TermRed)
+                        } else {
+                            val cands = BuiltinB + BrowserAliases.all().keys + try {
+                                extDir()?.listFiles { f -> f.isFile && f.name.endsWith(".sh") }
+                                    ?.map { it.name.removeSuffix(".sh") } ?: emptyList()
+                            } catch (_: Exception) { emptyList() }
+                            val s = suggestB(head, cands)
+                            out(
+                                if (s != null) "Unknown b command '$head'. Did you mean 'b $s'?\n"
+                                else "Unknown b command. Try: b help (or define your own: b alias name expansion)\n",
+                                TermRed
+                            )
+                        }
+                    }
+                }
+                // Buffered `> file` / `>> file`: flush on IO, announce on Main.
+                // ext scripts bypass the buffer (see above) — don't write empties.
+                val rf = redir
+                if (rf != null && !extRan) {
+                    try {
+                        rf.parentFile?.mkdirs()
+                        val body = fileBuf.toString()
+                        if (redirAppend) rf.appendText(body, Charsets.UTF_8)
+                        else rf.writeText(body, Charsets.UTF_8)
+                        withContext(Dispatchers.Main) {
+                            print("Saved ${body.length} chars to ${rf.name}\n", TermGreen)
+                        }
+                    } catch (e: Exception) {
+                        withContext(Dispatchers.Main) { print("save failed: ${e.message}\n", TermRed) }
                     }
                 }
             } catch (e: Exception) {
@@ -1796,10 +1966,42 @@ private val BuiltinB = setOf(
     "help", "open", "new", "tabs", "tab", "close", "home", "back", "fwd", "forward",
     "reload", "stop", "url", "title", "js", "text", "read", "dom", "snap", "click",
     "fill", "submit", "key", "hover", "select", "store", "stores", "unstore",
-    "pos", "tap", "swipe", "scroll", "scroll-to", "find", "next",
+    "pos", "tap", "swipe", "scroll", "scroll-to", "scrollto", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
-    "alias", "unalias", "ext", "mkext"
+    "alias", "unalias", "ext", "mkext", "metrics"
 )
+
+/** Levenshtein distance for `b` did-you-mean suggestions. */
+private fun levDist(a: String, b: String): Int {
+    if (a == b) return 0
+    if (a.isEmpty()) return b.length
+    if (b.isEmpty()) return a.length
+    var prev = IntArray(b.length + 1) { it }
+    var cur = IntArray(b.length + 1)
+    for (i in 1..a.length) {
+        cur[0] = i
+        for (j in 1..b.length) {
+            cur[j] = minOf(
+                prev[j] + 1,
+                cur[j - 1] + 1,
+                prev[j - 1] + if (a[i - 1] == b[j - 1]) 0 else 1
+            )
+        }
+        val t = prev; prev = cur; cur = t
+    }
+    return prev[b.length]
+}
+
+/** Closest candidate within distance 2 (min length 3), or null. */
+private fun suggestB(head: String, cands: Collection<String>): String? {
+    val h = head.trim().lowercase()
+    if (h.length < 2) return null
+    return cands.mapNotNull { c ->
+        val cl = c.lowercase()
+        val d = levDist(h, cl)
+        if (d in 1..2 && cl.length >= 3) cl to d else null
+    }.minByOrNull { it.second }?.first
+}
 
 /**
  * User-defined `b` aliases, stored in SharedPreferences so new terminal

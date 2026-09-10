@@ -66,8 +66,9 @@ b ext | mkext <name>    # your own SCRIPT commands (~/.b-ext/*.sh, both modes)
 b record start|stop|save <n>|list | b serve on|off
 ```
 PTY `b()` covers the same via HTTP routes (`/switch /submit /read /hover
-/select /store /history /downloads` added); `record/serve/alias` stay
-EXEC-only (stateful). `b mkext` scaffolds `~/.b-ext/<name>.sh` with
+/select /store /stores /history /downloads /dom /save /serve /alias /record`
+added); only `b unalias` stays EXEC-only (use `b alias remove <name>`).
+`b mkext` scaffolds `~/.b-ext/<name>.sh` with
 `B_PORT/B_KEY` exported; unknown `b <cmd>` runs the matching script.
 
 Terminal prints page returns wrapped in markers so page text is never confused
