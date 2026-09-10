@@ -19,9 +19,9 @@ object AlpineEnv {
 
     fun alpineDir(sandbox: File): File = File(sandbox, "alpine")
 
-    /** Default interactive profile: short `sandbox $` prompt (not the full path). */
+    /** Default interactive profile: home-style `~ $` prompt (never the full path). */
     private const val DEFAULT_PROFILE =
-        "PS1='sandbox \$ '\n" +
+        "PS1='~ \$ '\n" +
             "alias ll='ls -la'\n" +
             "alias la='ls -a'\n"
 
@@ -89,7 +89,7 @@ object AlpineEnv {
             "  \"\$_o_ld\" \"\$_o_bin\" \"\$@\"\n" +
             "}\n" +
             "# Short prompt (overrides any earlier PS1 — full paths eat the line).\n" +
-            "PS1='sandbox \$ '\n" +
+            "PS1='~ \$ '\n" +
             "# <<< LIGHTBROWSER-B <<<"
 
     /**
@@ -383,9 +383,9 @@ object AlpineEnv {
             "XDG_CONFIG_HOME=$sb/.config",
             "XDG_DATA_HOME=$sb/.local/share",
             "XDG_STATE_HOME=$sb/.local/state",
-            // Short `sandbox $` prompt for interactive shells (mksh sources $ENV);
+            // Home-style `~ $` prompt for interactive shells (mksh sources $ENV);
             // EXEC sh -c runs ignore both.
-            "PS1=sandbox \$ ",
+            "PS1=~ \$ ",
             "ENV=$sb/.profile",
             "TERM=xterm-256color",
             "HOSTNAME=alpine",

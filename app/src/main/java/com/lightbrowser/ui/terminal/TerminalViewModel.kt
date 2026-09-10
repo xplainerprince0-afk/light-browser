@@ -708,7 +708,8 @@ class TerminalViewModel : ViewModel() {
                     afterCommand()
                 }
                 "pwd" -> {
-                    print(((try { active().dir } catch (_: Exception) { null })?.absolutePath ?: "unknown") + "\n", TermWhite)
+                    val abs = try { active().dir?.absolutePath } catch (_: Exception) { null }
+                    print(homeify(abs ?: "unknown") + "\n", TermWhite)
                     afterCommand()
                 }
                 "cat" -> {
@@ -816,7 +817,7 @@ class TerminalViewModel : ViewModel() {
                     val sd = sandboxDir
                     if (sd == null) print("No sandbox\n", TermRed)
                     else {
-                        print("Alpine installed: $alpineInstalled\nRoot: ${AlpineEnv.alpineDir(sd).absolutePath}\n", TermDim)
+                        print("Alpine installed: $alpineInstalled\nRoot: ~\n", TermDim)
                     }
                     afterCommand()
                 }
@@ -1121,6 +1122,23 @@ class TerminalViewModel : ViewModel() {
 
     /** Single-quote shell escaping (filenames with " $ ` are crafted via import/zip). */
     private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /**
+     * Home-style display: sandbox-absolute paths print as ~/… so transcripts
+     * (and agents reading them) see home, never the app-private absolute path.
+     */
+    private fun homeify(path: String): String {
+        return try {
+            val sd = sandboxDir ?: return path
+            val root = sd.canonicalFile.absolutePath.trimEnd('/')
+            // Fast reject: relative names and outside paths never mention root.
+            if (!path.contains(root)) return path
+            val p = try { java.io.File(path).canonicalFile.absolutePath } catch (_: Exception) { return path }
+            if (p == root) "~"
+            else if (p.startsWith("$root/")) "~/" + p.removePrefix("$root/")
+            else path
+        } catch (_: Exception) { path }
+    }
 
     /** True when an `apk info` line means [pkg] is installed (name-version lines). */
     private fun verPkgInstalled(line: String, pkg: String): Boolean {
@@ -1602,7 +1620,7 @@ class TerminalViewModel : ViewModel() {
                                 val dir = extDir() ?: throw IllegalStateException("no sandbox")
                                 dir.mkdirs()
                                 val f = java.io.File(dir, "$name.sh")
-                                if (f.exists()) out("Exists: ${f.absolutePath}\n", TermRed)
+                                if (f.exists()) out("Exists: ${homeify(f.absolutePath)}\n", TermRed)
                                 else {
                                     f.writeText(
                                         "#!/bin/sh\n" +
@@ -1612,10 +1630,10 @@ class TerminalViewModel : ViewModel() {
                                             "# example — list tabs:\n" +
                                             "#   curl -s --get \"http://127.0.0.1:\$B_PORT/tabs\" --data-urlencode \"token=\$B_KEY\"; echo\n" +
                                             "\n" +
-                                            "echo \"TODO: edit ${f.absolutePath}\"\n"
+                                            "echo \"TODO: edit \$HOME/.b-ext/$name.sh\"\n"
                                     )
                                     try { f.setExecutable(true) } catch (_: Exception) {}
-                                    out("Created ${f.absolutePath}\nEdit it (Files → Sandbox → .b-ext) then run: b $name\n", TermGreen)
+                                    out("Created ${homeify(f.absolutePath)}\nEdit it (Files → Sandbox → .b-ext) then run: b $name\n", TermGreen)
                                 }
                             } catch (e: Exception) { out("mkext failed: ${e.message}\n", TermRed) }
                         }
@@ -1717,7 +1735,7 @@ class TerminalViewModel : ViewModel() {
                             "save" -> {
                                 val name = parts.getOrNull(2) ?: ""
                                 val path = com.lightbrowser.data.BrowserAgent.saveRecording(name.ifBlank { "rec" })
-                                if (path != null) out("Saved $path\n", TermGreen)
+                                if (path != null) out("Saved ${homeify(path)}\n", TermGreen)
                                 else out("Nothing to save (record first).\n", TermRed)
                             }
                             "list" -> {
@@ -1747,7 +1765,7 @@ class TerminalViewModel : ViewModel() {
                         out(if (full) "Capturing full page…\n" else "Capturing…\n", TermDim)
                         val path = if (full) com.lightbrowser.data.BrowserAgent.captureFullShot()
                         else com.lightbrowser.data.BrowserAgent.captureShot()
-                        if (path != null) out("Saved $path\nOpen it in Files → Sandbox → shots.\n", TermGreen)
+                        if (path != null) out("Saved ${homeify(path)}\nOpen it in Files → Sandbox → shots.\n", TermGreen)
                         else out("Shot failed (open the Browser tab first).\n", TermRed)
                     }
                     "cookies" -> {
@@ -1977,6 +1995,12 @@ class TerminalViewModel : ViewModel() {
                                     .put("cw", page.optInt("cw", -1))
                                     .put("ch", page.optInt("ch", -1)))
                             if (tap != null) rep.put("lastTap", tap)
+                            // On-screen WebView box: devY is WebView-relative.
+                            try {
+                                val box = com.lightbrowser.data.BrowserAgent.webViewBoxBlocking(8)
+                                try { rep.put("view", org.json.JSONObject(box)) }
+                                catch (_: Exception) { rep.put("viewErr", box.take(80)) }
+                            } catch (_: Exception) {}
                             // Persist the trail (already on IO).
                             var logInfo = ""
                             try {
@@ -1988,7 +2012,7 @@ class TerminalViewModel : ViewModel() {
                                 if (lines.size > 400) {
                                     try { log.writeText(lines.takeLast(300).joinToString("\n") + "\n", Charsets.UTF_8) } catch (_: Exception) {}
                                 }
-                                logInfo = "logged → agent_metrics/metrics.log"
+                                logInfo = "logged → ~/agent_metrics/metrics.log (${minOf(lines.size, 400)} kept)"
                             } catch (e: Exception) { logInfo = "log failed: ${e.message}" }
                             if (jsonMode) {
                                 out(rep.toString() + "\n", TermWhite)
@@ -1999,6 +2023,13 @@ class TerminalViewModel : ViewModel() {
                                 out("page $url\n  viewport ${page.optInt("vw", -1)}x${page.optInt("vh", -1)} css" +
                                     " dpr ${page.optDouble("dpr", -1.0)} scroll ${page.optInt("sx", 0)},${page.optInt("sy", 0)}" +
                                     " content ${page.optInt("cw", -1)}x${page.optInt("ch", -1)}\n", TermWhite)
+                                try {
+                                    val vb = rep.optJSONObject("view")
+                                    if (vb != null) {
+                                        out("view @${vb.optInt("x")},${vb.optInt("y")} ${vb.optInt("w")}x${vb.optInt("h")}" +
+                                            " on ${vb.optInt("scrW")}x${vb.optInt("scrH")} (devY = WebView-top relative)\n", TermWhite)
+                                    }
+                                } catch (_: Exception) {}
                                 if (tap != null) {
                                     out("last tap css ${tap.optDouble("cssX")},${tap.optDouble("cssY")}" +
                                         " → view ${tap.optDouble("devX")},${tap.optDouble("devY")}" +

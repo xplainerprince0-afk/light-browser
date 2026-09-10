@@ -62,11 +62,14 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -113,6 +116,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lightbrowser.data.DownloadHelper
@@ -196,6 +201,17 @@ fun BrowserScreen(
     val findCount by vm.findCount.collectAsState()
     val reader by vm.reader.collectAsState()
     val recording by com.lightbrowser.data.BrowserAgent.recording.collectAsState()
+    val recPaused by com.lightbrowser.data.BrowserAgent.recPaused.collectAsState()
+    val shotHidden by com.lightbrowser.data.BrowserAgent.shotHideOverlay.collectAsState()
+    var recN by remember { mutableStateOf(0) }
+    // Live action count for the pill (recCount has no flow of its own).
+    LaunchedEffect(recording) {
+        if (!recording) { recN = 0; return@LaunchedEffect }
+        while (true) {
+            try { recN = com.lightbrowser.data.BrowserAgent.recCount() } catch (_: Exception) {}
+            kotlinx.coroutines.delay(500)
+        }
+    }
     // Retry load if WebView not yet created (factory race): keep pending until applied.
     // Tagged with the target tab id so a quick tab switch can't load it into the wrong tab.
     var pendingLoad by remember { mutableStateOf<Triple<String, Long, String?>?>(null) }
@@ -475,6 +491,20 @@ fun BrowserScreen(
                         ChromeRow(Icons.Filled.Article, "Reader") { dismissMenuAnd { vm.loadReader(); showReader = true } }
                         ChromeRow(Icons.Filled.Tune, "Site settings") { dismissMenuAnd { showSite = true } }
                         ChromeRow(Icons.Filled.BugReport, "Script log") { dismissMenuAnd { showScriptLog = true } }
+                        ChromeRow(
+                            Icons.Filled.FiberManualRecord,
+                            if (recording) "Stop recording (${recN})" else "Record taps"
+                        ) {
+                            dismissMenuAnd {
+                                try {
+                                    if (recording) {
+                                        com.lightbrowser.data.BrowserAgent.stopRecording()
+                                        val n = try { com.lightbrowser.data.BrowserAgent.recCount() } catch (_: Exception) { 0 }
+                                        android.widget.Toast.makeText(ctx, "Stopped — $n actions (save: b record save <name>)", android.widget.Toast.LENGTH_LONG).show()
+                                    } else com.lightbrowser.data.BrowserAgent.startRecording()
+                                } catch (_: Exception) {}
+                            }
+                        }
                         ChromeRow(Icons.Filled.Code, "Scripts") { dismissMenuAnd { onOpenScripts() } }
                         ChromeRow(Icons.Filled.Settings, "Settings") { dismissMenuAnd { onOpenSettings() } }
                         }
@@ -662,6 +692,29 @@ fun BrowserScreen(
                     } // end else (WebView available)
                 } // end key(tab.id)
             } // end forEach tab
+            // Recording pill: floats over the page corner (native taps never
+            // reach the page shim, so it records nothing itself) and hides
+            // during shot PixelCopy so captures stay clean.
+            if (recording && active && !shotHidden) {
+                RecPill(
+                    count = recN,
+                    paused = recPaused,
+                    onPauseResume = {
+                        try {
+                            if (recPaused) com.lightbrowser.data.BrowserAgent.resumeRecording()
+                            else com.lightbrowser.data.BrowserAgent.pauseRecording()
+                        } catch (_: Exception) {}
+                    },
+                    onStop = {
+                        try {
+                            com.lightbrowser.data.BrowserAgent.stopRecording()
+                            val n = try { com.lightbrowser.data.BrowserAgent.recCount() } catch (_: Exception) { 0 }
+                            android.widget.Toast.makeText(ctx, "Stopped — $n actions (save: b record save <name>)", android.widget.Toast.LENGTH_LONG).show()
+                        } catch (_: Exception) {}
+                    },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
+                )
+            }
             // Keep currentWebView ref in sync when switching tabs.
             // Captures the outgoing tab's thumbnail first (Chrome-style grid previews).
             var prevThumbTab by remember { mutableStateOf<String?>(null) }
@@ -1291,6 +1344,56 @@ private fun ChromeRow(icon: ImageVector, label: String, onClick: () -> Unit) {
         leadingIcon = { Icon(icon, null) },
         onClick = onClick
     )
+}
+
+/**
+ * Floating recording controls: live count, pause/resume, stop. Native
+ * Compose (never a page event) + hidden during shot capture.
+ */
+@Composable
+private fun RecPill(
+    count: Int,
+    paused: Boolean,
+    onPauseResume: () -> Unit,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = androidx.compose.ui.graphics.Color(0xCC111111),
+        tonalElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "● $count",
+                color = if (paused) androidx.compose.ui.graphics.Color(0xFFFFB74D)
+                else androidx.compose.ui.graphics.Color(0xFFFF5252),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 6.dp)
+            )
+            IconButton(onClick = onPauseResume, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                    if (paused) "Resume recording" else "Pause recording",
+                    tint = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            IconButton(onClick = onStop, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Filled.Stop,
+                    "Stop recording",
+                    tint = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
 }
 
 private fun shareUrl(ctx: Context, url: String) {

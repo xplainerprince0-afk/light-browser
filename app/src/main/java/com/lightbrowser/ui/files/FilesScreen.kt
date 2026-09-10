@@ -127,6 +127,11 @@ fun FilesScreen(
     var overflow by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
+    // Hidden dotfiles stay out of sight (shell keeps seeing them — the AI
+    // needs .profile/.b-ext). Persisted; refresh() enforces it.
+    var showHidden by remember {
+        mutableStateOf(try { com.lightbrowser.data.Prefs.showHidden } catch (_: Exception) { false })
+    }
     var createIsFile by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.init() }
@@ -287,6 +292,15 @@ fun FilesScreen(
                                     text = { Text(if (ui.grid) "List view" else "Grid view") },
                                     leadingIcon = { Icon(if (ui.grid) Icons.Filled.ViewList else Icons.Filled.GridView, null) },
                                     onClick = { overflow = false; vm.toggleGrid() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (showHidden) "✓ Hidden files" else "Hidden files") },
+                                    onClick = {
+                                        overflow = false
+                                        showHidden = !showHidden
+                                        try { com.lightbrowser.data.Prefs.showHidden = showHidden } catch (_: Exception) {}
+                                        vm.refresh()
+                                    }
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Sandbox home") },

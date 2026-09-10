@@ -105,6 +105,11 @@ object Prefs {
         get() = p(AppCtx.ctx).getBoolean("edge_swipe", false)
         set(v) { p(AppCtx.ctx).edit().putBoolean("edge_swipe", v).apply() }
 
+    /** Show hidden dotfiles in the Sandbox browser (shell always sees them). */
+    var showHidden: Boolean
+        get() = p(AppCtx.ctx).getBoolean("files_hidden", false)
+        set(v) { p(AppCtx.ctx).edit().putBoolean("files_hidden", v).apply() }
+
     /** Build search URL for the given query using the configured search engine */
     fun buildSearchUrl(query: String): String {
         val encoded = android.net.Uri.encode(query)

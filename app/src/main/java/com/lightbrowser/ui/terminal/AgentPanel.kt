@@ -290,9 +290,9 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                             if (f.exists()) err = "Exists already"
                             else {
                                 f.writeText(
-                                    "#!/bin/sh\n# custom b command: b $n <args> (EXEC and PTY)\n" +
-                                        "# args arrive in \$1..\n# PTY only: \$B_PORT/\$B_KEY reach the agent server (server must be on).\n\n" +
-                                        "echo \"TODO: edit ${f.absolutePath}\"\n",
+                                    "#!/bin/sh\n# custom b command — args in \$1..\n" +
+                                        "# agent server: \$B_PORT / \$B_KEY (server must be on).\n\n" +
+                                        "echo \"TODO: edit \$HOME/.b-ext/$n.sh\"\n",
                                     Charsets.UTF_8
                                 )
                                 try { f.setExecutable(true) } catch (_: Exception) {}

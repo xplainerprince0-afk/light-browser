@@ -148,15 +148,30 @@ object BrowserAgent {
             val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + wv.width, loc[1] + wv.height)
             val bmp = android.graphics.Bitmap.createBitmap(wv.width, wv.height, android.graphics.Bitmap.Config.ARGB_8888)
             val f = CompletableFuture<Boolean>()
+            // PixelCopy grabs the WINDOW (Compose overlays included) — hide the
+            // recording pill first, wait a frame, restore in the callback.
+            // draw()/capturePicture fallbacks render the WebView only: unaffected.
+            fun restoreOverlay() { try { _shotHideOverlay.value = false } catch (_: Exception) {} }
+            try { _shotHideOverlay.value = true } catch (_: Exception) {}
             try {
-                android.view.PixelCopy.request(win, rect, bmp, { res ->
-                    try { f.complete(res == android.view.PixelCopy.SUCCESS) } catch (_: Exception) {}
-                }, mainHandler)
+                mainHandler.postDelayed({
+                    try {
+                        android.view.PixelCopy.request(win, rect, bmp, { res ->
+                            try { f.complete(res == android.view.PixelCopy.SUCCESS) } catch (_: Exception) {}
+                            restoreOverlay()
+                        }, mainHandler)
+                    } catch (_: Exception) {
+                        try { f.complete(false) } catch (_: Exception) {}
+                        restoreOverlay()
+                    }
+                }, 120)
             } catch (_: Exception) {
                 try { bmp.recycle() } catch (_: Exception) {}
+                restoreOverlay()
                 return captureShotOnMain()
             }
             val ok = try { f.get(10, TimeUnit.SECONDS) } catch (_: Exception) { false }
+            if (!ok) restoreOverlay()
             if (!ok) {
                 try { bmp.recycle() } catch (_: Exception) {}
                 return captureShotOnMain()
@@ -379,6 +394,40 @@ object BrowserAgent {
         return evalBlockingJs("(function(){try{return JSON.stringify(window.LightAgent?window.LightAgent.locate('$esc'):'ERR no-shim');}catch(e){return 'ERR '+e;}})()", timeoutS)
     }
 
+    /**
+     * WebView on-screen box for tap-accuracy math (devY is WebView-relative,
+     * NOT physical-screen-relative — the metrics gotcha). Worker threads ONLY
+     * (posts to Main and waits; calling on Main deadlocks).
+     */
+    fun webViewBoxBlocking(timeoutS: Long = 8): String {
+        if (Looper.myLooper() == Looper.getMainLooper()) return "ERR main-thread"
+        val f = CompletableFuture<String>()
+        mainHandler.post {
+            try {
+                val wv = webViewProvider?.invoke()
+                if (wv == null || wv.width <= 0 || wv.height <= 0) {
+                    f.complete("ERR no-webview")
+                    return@post
+                }
+                val loc = IntArray(2)
+                try { wv.getLocationOnScreen(loc) } catch (_: Exception) {
+                    f.complete("ERR no-loc")
+                    return@post
+                }
+                val dm = try { wv.resources.displayMetrics } catch (_: Exception) { null }
+                f.complete(
+                    JSONObject().put("x", loc[0]).put("y", loc[1])
+                        .put("w", wv.width).put("h", wv.height)
+                        .put("scrW", dm?.widthPixels ?: -1).put("scrH", dm?.heightPixels ?: -1)
+                        .put("density", ((dm?.density ?: -1f).toDouble())).toString()
+                )
+            } catch (e: Exception) {
+                try { f.complete("ERR ${e.message}") } catch (_: Exception) {}
+            }
+        }
+        return try { f.get(timeoutS, TimeUnit.SECONDS) } catch (_: Exception) { "ERR timeout" }
+    }
+
     fun currentUrl(): String? = try {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             webViewProvider?.invoke()?.url
@@ -503,6 +552,9 @@ object BrowserAgent {
                     var d=window.LightAgent.describe(ev.target);
                     d.op=(ev.type==='input')?'fill':'click';
                     if(ev.type==='input'){d.value=(ev.target.value||'').slice(0,200);}
+                    d.x=Math.round(ev.clientX||0);d.y=Math.round(ev.clientY||0);
+                    d.sx=Math.round(window.scrollX);d.sy=Math.round(window.scrollY);
+                    d.vw=window.innerWidth;d.vh=window.innerHeight;
                     console.log('__LB_REC__:'+JSON.stringify(d));
                   }catch(err){}
                 };
@@ -526,14 +578,23 @@ object BrowserAgent {
     // ── Click recorder (human automation data) ──
     private val _recording = MutableStateFlow(false)
     val recording: StateFlow<Boolean> = _recording.asStateFlow()
+    private val _recPaused = MutableStateFlow(false)
+    val recPaused: StateFlow<Boolean> = _recPaused.asStateFlow()
+    /** True while a `b shot` PixelCopy is in flight — Compose overlays hide. */
+    private val _shotHideOverlay = MutableStateFlow(false)
+    val shotHideOverlay: StateFlow<Boolean> = _shotHideOverlay.asStateFlow()
     private val recEvents = mutableListOf<JSONObject>()
     private var recStartUrl = ""
     private var recStartMs = 0L
+    @Volatile
+    private var recCoverPath: String? = null
 
     fun isRecording(): Boolean = _recording.value
 
     fun startRecording() {
         recEvents.clear()
+        recCoverPath = null
+        _recPaused.value = false
         // currentUrl() hops to Main itself (direct .url here = StrictMode violation from Terminal thread).
         recStartUrl = try { currentUrl() ?: "" } catch (_: Exception) { "" }
         recStartMs = System.currentTimeMillis()
@@ -550,12 +611,18 @@ object BrowserAgent {
                         )
                     } catch (_: Exception) {}
                 }, 300)
+                // Cover shot: page context for the rec file. Worker thread —
+                // captureShot() blocks its caller on a latch, never Main.
+                Thread {
+                    try { recCoverPath = captureShot() } catch (_: Exception) {}
+                }.also { it.isDaemon = true }.start()
             } catch (_: Exception) {}
         }
     }
 
     fun stopRecording() {
         _recording.value = false
+        _recPaused.value = false
         mainHandler.post {
             try {
                 webViewProvider?.invoke()?.evaluateJavascript(
@@ -564,6 +631,11 @@ object BrowserAgent {
             } catch (_: Exception) {}
         }
     }
+
+    /** Pause capture (events dropped, shim stays armed); resume reopens the stream. */
+    fun pauseRecording() { _recPaused.value = true }
+
+    fun resumeRecording() { _recPaused.value = false }
 
     /** Called from the shim's capture listener (re-armed after every navigation). */
     fun rearmRecorder(wv: WebView) {
@@ -577,7 +649,7 @@ object BrowserAgent {
 
     @Synchronized
     fun recordEvent(json: String) {
-        if (!_recording.value) return
+        if (!_recording.value || _recPaused.value) return
         // Shape/rate guard: page could forge __LB_REC__ console lines.
         if (json.length > 4_000) return
         try {
@@ -609,9 +681,10 @@ object BrowserAgent {
             val out = java.io.File(dir, "${safe}_${System.currentTimeMillis()}.json")
             val root = JSONObject()
             root.put("app", "lightbrowser-rec")
-            root.put("v", 1)
+            root.put("v", 2)
             root.put("startUrl", recStartUrl)
             root.put("startedAt", recStartMs)
+            try { recCoverPath?.let { root.put("cover", it) } } catch (_: Exception) {}
             val arr = org.json.JSONArray()
             recEvents.forEach { arr.put(it) }
             root.put("actions", arr)
@@ -1195,6 +1268,31 @@ object BrowserAgent {
                 try {
                     lastTap?.let { rep.put("lastTap", org.json.JSONObject(it)) }
                 } catch (_: Exception) {}
+                // On-screen WebView box: devY is WebView-relative, not screen-relative.
+                try {
+                    val box = webViewBoxBlocking(8)
+                    try { rep.put("view", org.json.JSONObject(box)) }
+                    catch (_: Exception) { rep.put("viewErr", box.take(80)) }
+                } catch (_: Exception) {}
+                // Same trail EXEC `b metrics` keeps: append, cap 300. PTY can
+                // no longer wonder where the log went — it lands here too.
+                try {
+                    val appCtx = ctx
+                    if (appCtx != null) {
+                        val dir = java.io.File(appCtx.filesDir, "sandbox/agent_metrics").apply { mkdirs() }
+                        val log = java.io.File(dir, "metrics.log")
+                        log.appendText(rep.toString() + "\n", Charsets.UTF_8)
+                        val n = try { log.readLines(Charsets.UTF_8).size } catch (_: Exception) { 0 }
+                        if (n > 400) {
+                            try {
+                                log.writeText(log.readLines(Charsets.UTF_8).takeLast(300).joinToString("\n") + "\n", Charsets.UTF_8)
+                            } catch (_: Exception) {}
+                        }
+                        rep.put("logged", true)
+                    } else rep.put("logged", false)
+                } catch (_: Exception) {
+                    try { rep.put("logged", false) } catch (_: Exception) {}
+                }
                 rep.toString()
             }
             "/save" -> {                val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""

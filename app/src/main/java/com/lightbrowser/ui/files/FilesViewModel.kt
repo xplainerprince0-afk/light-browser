@@ -204,7 +204,10 @@ class FilesViewModel : ViewModel() {
         val dir = currentDir ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val all = dir.listFiles()?.toList() ?: emptyList()
+                // Hidden dotfiles out of sight unless enabled (the shell and
+                // the agent bridge keep seeing them — only the UI filters).
+                val showHidden = try { com.lightbrowser.data.Prefs.showHidden } catch (_: Exception) { false }
+                val all = dir.listFiles()?.toList()?.filter { showHidden || !it.name.startsWith(".") } ?: emptyList()
                 val q = _ui.value.query
                 val filtered = if (q.isBlank()) all
                 else all.filter { it.name.contains(q, ignoreCase = true) }

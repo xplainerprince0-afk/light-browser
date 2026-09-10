@@ -92,7 +92,8 @@ submit <form> | key [sel]` (nearest-button tap),
 `b js <expr> | text | dom | shot [--full] | console`,
 `b cookies [get [url] | set "k=v" [url] | clear] | history [n] | downloads |
 save <name>`, `b serve [on|off]` (start/stop the agent HTTP server),
-`b record start|stop|save <n>|list` (tap recorder),
+`b record start|stop|save <n>|list` (tap recorder — also in the browser ⋮
+menu, with a floating ●/⏸/⏹ pill that hides itself from screenshots),
 `b ext | mkext <name>` (your own script commands).
 
 **Make your own:** `b alias deploy 'b open https://example.com'` → `b deploy`
@@ -109,11 +110,12 @@ printing (PTY shells already pipe natively: `b snap > page.txt`).
 
 1. `b pos <ref>` (or `b snap` for a ref) → note `x y`.
 2. `b tap <x> <y>` → watch where the page reacts.
-3. `b metrics` → prints screen px vs page CSS geometry + the last tap's
-   `css → view` mapping, and **appends the JSON report to
-   `sandbox/agent_metrics/metrics.log`** (300 entries kept) so runs stay
-   comparable. `b metrics --json` prints the raw report.
-4. In PTY: `b metrics` returns the same JSON (log it yourself: `>> m.log`).
+3. `b metrics` → prints screen px vs page CSS geometry, the WebView's
+   on-screen box (devY is WebView-top relative — that was the gotcha), and
+   the last tap's `css → view` mapping, and **appends the JSON report to
+   `~/agent_metrics/metrics.log`** (300 entries kept, both EXEC and PTY log)
+   so runs stay comparable. `b metrics --json` prints the raw report.
+4. In PTY: `b metrics` returns the same JSON and logs it too.
 
 Mapping rule under test: `view px = css px × scale`, where scale is screen
 density at default zoom (`b metrics` shows both). If taps land off by a
