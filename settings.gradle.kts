@@ -12,7 +12,7 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "LightBrowser"
+rootProject.name = "Webloom"
 include(":app")
 include(":terminal-emulator")
 include(":terminal-view")

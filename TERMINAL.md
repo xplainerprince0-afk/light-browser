@@ -82,15 +82,17 @@ app launch: the keyboard only opens when the Terminal tab is frontmost.
 ### `b` — drive the Browser tab from here
 
 `b help` prints the list. Highlights: `b open <url>` (localhost + bare
-domains OK), `b tabs | tab <n> | new <url> | close [n] | home | back |
-forward | reload | stop`, `b snap` (page refs+text), `b read [max]`
+domains OK), `b tabs | tab <n> | new <url> | close [n] | tabdup | home | back |
+forward | reload | reload-hard | stop`, `b ua [mobile|desktop|<string>|get] |
+viewport | zoom [in|out|reset]`, `b snap` (page refs+text), `b read [max]`
 (article text), `b click <ref|name> | fill <ref|name> <val> [--submit] |
 submit <form> | key [sel]` (nearest-button tap),
 `b hover | select <sel> <val>`, `b store <name> <css> | stores | unstore`,
-`b pos | tap <x> <y> | swipe <x1> <y1> <x2> <y2> [ms]`,
-`b find <text> | next | prev`, `b scroll [px] | scroll-to <x> <y>`,
-`b js <expr> | text | dom | shot [--full] | console`,
-`b cookies [get [url] | set "k=v" [url] | clear] | history [n] | downloads |
+`b pos | tap <x> <y> | swipe <x1> <y1> <x2> <y2> [ms] | shot-el <ref|css>`,
+`b find <text> | find-clear | next | prev`, `b scroll [px] | scroll-to <x> <y> |
+scroll-top | scroll-bottom`,
+`b js <expr> | text | dom | shot [--full] | console | netlog [n]`,
+`b cookies [get [url] | set "k=v" [url] | clear] | clear-data [cookies|cache|history|storage|all] | history [n] | downloads |
 save <name>`, `b serve [on|off]` (start/stop the agent HTTP server),
 `b record start|stop|pause|resume|save <n>|list` (tap+touch recorder — also
 in the browser ⋮ menu, with a floating ●/⏸/⏹ pill that hides itself from
@@ -111,7 +113,9 @@ panel manages all three kinds (plus the blocklist below) without typing.
 
 ### Blocked sites (AI no-go)
 
-`b block <domain-or-url>` blocks a host **and its subdomains** everywhere:
+`b block <domain-or-url>` blocks a host **and its subdomains** everywhere
+(EXEC-only: PTY `b block/unblock` prints an EXEC-only notice; PTY `b blocks`
+still lists):
 `b open/new`, link taps, JS navigations, popups, and your own address bar —
 every refusal prints `⛔ Blocked by you: <host>`, which is also the popup
 the AI sees. `b blocks` lists, `b unblock <domain>` removes. Example: block
@@ -159,10 +163,11 @@ constant factor, that scale is the suspect — bring the log.
 auto-installed into `~/.profile` (`b-setup` refreshes it). It talks to the
 same HTTP bridge — but the **server must be running** (start it from the
 Agent panel or EXEC `b serve on`) and you need `curl` (`toolbox-install
-curl`). Supported there: open/new/tabs/close/home/back/forward/reload/stop/
-url/title/find/next/prev/snap/text/read/dom/js/shot/save/console/cookies/history/
-downloads/click/fill/submit/key/hover/select/store/stores/unstore/alias/mkext/ext/
-pos/tap/swipe/scroll/scrollto/serve/record. Only `b unalias` stays EXEC-only
+curl`). Supported there: open/new/tabs/close/tabdup/home/back/forward/reload/reload-hard/stop/
+url/title/ua/viewport/zoom/find/next/prev/snap/shot-el/text/read/dom/js/netlog/shot/save/metrics/console/cookies/clear-data/history/
+downloads/click/fill/submit/key/hover/select/store/stores/unstore/blocks/alias/mkext/ext/
+pos/tap/swipe/scroll/scrollto/scroll-top/scroll-bottom/serve/record. EXEC-only:
+`b unblock`, `b block` (mutating), `b do/run/replay/queue`, `b unalias`
 (in PTY: `b alias remove <name>`).
 
 ### Sessions & keys

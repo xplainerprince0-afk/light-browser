@@ -64,7 +64,7 @@ jobs:
       - name: Upload APK artifact (signed release)
         uses: actions/upload-artifact@v4
         with:
-          name: LightBrowser-release-apk
+          name: Webloom-release-apk
           path: app/build/outputs/apk/release/*.apk
           retention-days: 14
 

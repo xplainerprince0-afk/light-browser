@@ -1,6 +1,7 @@
-# LightBrowser — Project Overview
+# Webloom — Project Overview
 
-> Minimal browser + sandbox + Alpine terminal + audiobook player, now **100% Jetpack Compose + Material 3 Expressive** (v3.0). Single-activity, no Fragments.
+> Minimal browser + sandbox + Alpine terminal + audiobook player, now **100% Jetpack Compose + Material 3 Expressive** (v4.0). Single-activity, no Fragments.
+> Package: `com.rg.webloom` (rebranded from com.lightbrowser).
 
 ## App purpose
 Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux terminal, and an audiobook/music player with background playback. Scoped-storage compliant (SAF), no heavy backend.
@@ -13,7 +14,11 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Terminal: `b` tab/cookies-set-clear/history/downloads/submit/read/shot-full/hover/select/key/store-named/mkext-script (EXEC+PTY HTTP routes, hoisted-IME toolbar lift, opencode size+ELF verified install)
 - [x] Terminal: `b` console upgrades — PTY parity (/dom/save/url/title/next/prev/stores/serve/alias/record), `--json`, jailed `> file`, did-you-mean, in-app command studio, toolbox installed-state + space guard, `b metrics` tap-accuracy audit auto-logged to ~/agent_metrics/metrics.log (EXEC+PTY, with WebView on-screen box)
 - [x] Terminal: `b` automation — quoted selectors, `wait/links/forms/survey` senses (+routes), `do/run/replay/queue` macro engine with fail-fast + `!` soft steps, recording v3 replayable (tap/swipe/click/fill, auto-URL hops)
-- [x] Terminal: `b mkcmd/cmds` macro folder (`~/.b-cmd/`, plain b-lines, both modes + panel studio); `b block/unblock/blocks` AI no-go sites enforced at client + entries with ⛔ popup
+- [x] Terminal: `b` page tools — `reload-hard`, `ua [mobile|desktop|<string>|get]`, `viewport`, `zoom [in|out|reset]`, `scroll-top|scroll-bottom`, `find-clear`, `shot-el`, `netlog`, `clear-data`, `tabdup` (EXEC + PTY routes + help + Agent panel)
+- [x] Terminal: `b block/unblock/blocks` AI no-go sites enforced at client + entries with ⛔ popup (EXEC-only mutation; PTY `blocks` lists)
+- [x] Terminal: PTY copy/paste — long-press selection copies via ClipboardManager, paste reads clipboard into emulator (bracketed-paste aware), drawer Copy works in PTY; keyboard no longer auto-dismisses (focus kept, EXEC editor only grabs focus in EXEC mode)
+- [x] Browser: calibrated tap pipeline — visualViewport scale + DPR cross-check, computed-style visibility (fixed elements included), batched MOVE strokes, touch-slop tap fallback, unified getLocationInWindow box
+- [x] App: Webloom rebrand (com.rg.webloom, v4.0), compressed photo launcher icon (1.1MB → ~7KB webp), new webloom.jks signing key, R8 minify+shrinkResources release
 - [x] Shell: home-style paths everywhere (`~` prompt, `pwd`/`b save`/`b shot`/recordings print `~/…`, never the app-private absolute); Files hides dotfiles by default (⋮ → Hidden files; shell keeps seeing them)
 - [x] Browser: ⋮ → Record taps with floating ● count / ⏸ / ⏹ pill (hidden from screenshots); recorder v3 — clicks/fills/taps/swipes with touch point, scroll, viewport, per-action URL, cover shot, auto-save on stop, reusable JSON
 - [x] Terminal: downloadable toolbox (`toolbox`, `toolbox-install essentials|agent|all`, remove/update via apk; repos+DNS auto-seed; zero APK cost)

@@ -1,0 +1,7 @@
+Webloom signing key (new, 2026-09-11)
+Keystore: app/webloom.jks (committed for CI release builds)
+Alias: webloom
+Validity: 2026-09-11 → 2051-09-05 (9125 days)
+SHA256: 04:C0:50:69:43:08:52:2A:60:3B:32:30:70:B5:6F:8C:18:B0:55:6E:DA:64:2E:C8:D1:98:35:A4:0F:A2:AB:71
+Passwords: see storePassword/keyPassword in app/build.gradle.kts (signingConfigs.webloom)
+Old key app/lightbrowser.jks kept for reference (old com.lightbrowser app id).

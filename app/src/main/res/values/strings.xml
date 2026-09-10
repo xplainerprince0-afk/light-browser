@@ -1,14 +1,10 @@
 <resources>
-    <string name="app_name">LightBrowser</string>
+    <string name="app_name">Webloom</string>
     <string name="tab_browser">Browser</string>
     <string name="tab_scripts">Scripts</string>
     <string name="tab_downloads">Downloads</string>
     <string name="tab_settings">Settings</string>
     <string name="hint_url">Search or enter URL</string>
-    <string name="desc_placeholder_title">Coming soon</string>
-    <string name="desc_placeholder_scripts">Userscript manager — placeholder</string>
-    <string name="desc_placeholder_downloads">Downloads — placeholder</string>
-    <string name="desc_placeholder_settings">Settings — placeholder</string>
     <string name="action_go">Go</string>
     <string name="action_back">←</string>
     <string name="action_forward">→</string>
@@ -19,5 +15,5 @@
     <string name="close_drawer">Close navigation drawer</string>
 
     <!-- Terminal welcome message -->
-    <string name="terminal_welcome">LightBrowser Terminal (Alpine sandbox)\nType \'help\' for commands · ▲▼ for history\nSandbox: files/sandbox</string>
+    <string name="terminal_welcome">Webloom Terminal (Alpine sandbox)\nType \'help\' for commands · ▲▼ for history\nSandbox: files/sandbox</string>
 </resources>

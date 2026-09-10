@@ -13,6 +13,7 @@ captures/
 .keystore
 *.jks
 !app/lightbrowser.jks
+!app/webloom.jks
 .idea/
 *.log
 .DS_Store

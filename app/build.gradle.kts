@@ -6,25 +6,25 @@ plugins {
 }
 
 android {
-    namespace = "com.lightbrowser"
+    namespace = "com.rg.webloom"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.lightbrowser"
+        applicationId = "com.rg.webloom"
         minSdk = 23
         targetSdk = 37
-        versionCode = 22
-        versionName = "3.1"
+        versionCode = 23
+        versionName = "4.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
     signingConfigs {
-        create("lightbrowser") {
-            storeFile = file("lightbrowser.jks")
-            storePassword = "lightbrowser123"
-            keyAlias = "lightbrowser"
-            keyPassword = "lightbrowser123"
-            // keep same key for upgrades – do not regenerate. For Play Store use your own upload key.
+        create("webloom") {
+            storeFile = file("webloom.jks")
+            storePassword = "aXKs3ir0i3ZHuuEwySIAiTXG"
+            keyAlias = "webloom"
+            keyPassword = "aXKs3ir0i3ZHuuEwySIAiTXG"
+            // New Webloom key (2026-09) — keep for all future updates of com.rg.webloom.
         }
     }
 
@@ -32,7 +32,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("lightbrowser")
+            signingConfig = signingConfigs.getByName("webloom")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -40,7 +40,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("lightbrowser")
+            signingConfig = signingConfigs.getByName("webloom")
         }
     }
     compileOptions {
@@ -85,5 +85,4 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     // Kept: manifest theme + file_paths depend on Material/AppCompat resources
     implementation("com.google.android.material:material:1.11.0")
-    implementation(libs.androidx.appcompat)
 }

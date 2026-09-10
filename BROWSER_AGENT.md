@@ -48,31 +48,34 @@ Native keeps a `ref → selector` map per page load (cleared on navigation).
 
 ```
 b open <url>            # http(s) only — block file://, intent://, custom schemes
-b back | fwd | reload | stop
+b back | fwd | reload | reload-hard | stop
+b ua [mobile|desktop|<string>|get] | viewport | zoom [in|out|reset]
 b url | title | home
-b tabs | tab <n> | new <url> | close [n]
+b tabs | tab <n> | new <url> | close [n] | tabdup
 b js <expr>             # raw eval, truncated (power-user hatch)
 b text [max] | b read [max] | b dom [css] | b snap
 b click <ref|css|name> | b fill <ref|css|name> <value> [--submit] | b submit <form>
 b key [sel|name]      # nearest visible button to the field (typed/focused) + tap it
 b hover <ref|css|name> | b select <sel|name> <value-or-text>
 b store <name> <css> | stores | unstore <name>   # named selectors
-b pos <ref|css> | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]
-b scroll [px] | b scroll-to <x> <y> | b find <text> | next | prev
-b shot [--full] | b console [n] | b cookies [get [url] | set "k=v" [url] | clear]
- b history [n] | downloads | save <name.html|txt>
+b pos <ref|css> | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms] | b shot-el <ref|css>
+b scroll [px] | b scroll-to <x> <y> | b scroll-top | b scroll-bottom | b find <text> | find-clear | next | prev
+b shot [--full] | b console [n] | b netlog [n] | b cookies [get [url] | set "k=v" [url] | clear]
+ b clear-data [cookies|cache|history|storage|all] | b history [n] | downloads | save <name.html|txt>
  b wait <text|css:sel> [ms] | links [n] | forms | survey   # senses
  b do "c1; c2" | run <file> | replay <rec> | queue         # macros (EXEC-only)
  b alias [name expansion] | unalias <name>   # EXEC one-liners
  b mkcmd <name> ["c1; c2"] | cmds             # macro files (~/.b-cmd/), both modes
- b block <domain> | unblock | blocks          # AI no-go sites (host+subdomains)
+ b block <domain> | unblock | blocks          # AI no-go sites, EXEC-only (PTY: blocks lists only)
 b ext | mkext <name>    # your own SCRIPT commands (~/.b-ext/*.sh, both modes)
  b record start|stop|pause|resume|save <n>|list | b serve on|off
  b metrics [--json]   # screen+page geometry + tap audit (auto-logged)
 ```
 PTY `b()` covers the same via HTTP routes (`/switch /submit /read /hover
-/select /store /stores /history /downloads /dom /save /serve /alias /record`
-added); only `b unalias` stays EXEC-only (use `b alias remove <name>`).
+/select /store /stores /history /downloads /dom /save /serve /alias /record
+/reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el`
+added); `b unalias` and mutating `b block/unblock` stay EXEC-only
+(PTY `b blocks` lists; use `b alias remove <name>`).
 `b mkext` scaffolds `~/.b-ext/<name>.sh` with
 `B_PORT/B_KEY` exported; unknown `b <cmd>` runs the matching script.
 
