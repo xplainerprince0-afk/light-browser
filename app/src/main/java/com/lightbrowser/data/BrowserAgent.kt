@@ -1162,8 +1162,42 @@ object BrowserAgent {
                         .put("count", recCount()).toString()
                 }
             }
-            "/save" -> {
-                val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""
+            "/metrics" -> {
+                // Geometry audit for tap-accuracy tests (mirrors EXEC
+                // `b metrics`, which additionally appends to metrics.log).
+                val ctx = webViewProvider?.invoke()?.context
+                val dm = try { ctx?.resources?.displayMetrics } catch (_: Exception) { null }
+                val url = try { currentUrl() } catch (_: Exception) { "?" }
+                var s = evalBlockingJs("(function(){try{var d=document.documentElement;return JSON.stringify({vw:window.innerWidth,vh:window.innerHeight,dpr:window.devicePixelRatio||1,sx:window.scrollX,sy:window.scrollY,cw:Math.max(d?d.scrollWidth:0,document.body?document.body.scrollWidth:0),ch:Math.max(d?d.scrollHeight:0,document.body?document.body.scrollHeight:0)});}catch(e){return 'ERR '+e;}})()", 12).trim()
+                repeat(2) {
+                    if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                        s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                    }
+                }
+                val page = try { org.json.JSONObject(s) } catch (_: Exception) { org.json.JSONObject() }
+                val rep = JSONObject()
+                    .put("ok", true)
+                    .put("ts", System.currentTimeMillis())
+                    .put("screen", JSONObject()
+                        .put("w", dm?.widthPixels ?: -1)
+                        .put("h", dm?.heightPixels ?: -1)
+                        .put("density", ((dm?.density ?: -1f).toDouble()))
+                        .put("dpi", dm?.densityDpi ?: -1))
+                    .put("page", JSONObject()
+                        .put("url", url ?: "?")
+                        .put("vw", page.optInt("vw", -1))
+                        .put("vh", page.optInt("vh", -1))
+                        .put("dpr", page.optDouble("dpr", -1.0))
+                        .put("sx", page.optInt("sx", 0))
+                        .put("sy", page.optInt("sy", 0))
+                        .put("cw", page.optInt("cw", -1))
+                        .put("ch", page.optInt("ch", -1)))
+                try {
+                    lastTap?.let { rep.put("lastTap", org.json.JSONObject(it)) }
+                } catch (_: Exception) {}
+                rep.toString()
+            }
+            "/save" -> {                val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""
                 val ctx = webViewProvider?.invoke()?.context
                     ?: return """{"ok":false,"err":"no webview"}"""
                 val asHtml = name.lowercase().endsWith(".html")
@@ -1192,7 +1226,7 @@ object BrowserAgent {
                         .put("bytes", r.length).toString()
                 } catch (e: Exception) { """{"ok":false,"err":"save failed: ${e.message}"}""" }
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /next /prev /console /cookies /shot /history /downloads /save /serve /record /alias"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias"}"""
         }
     }
 }

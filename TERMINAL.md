@@ -34,7 +34,8 @@ app launch: the keyboard only opens when the Terminal tab is frontmost.
 | `install-alpine` | Downloads Alpine 3.19 minirootfs into `sandbox/alpine` (~3MB) |
 | `alpine-status` | Installed? Root path? |
 | `toolbox` / `tools` | Lists all downloadable dev tools + sizes |
-| `toolbox-install <name\|essentials\|agent\|opencode\|all>` | Installs via `apk` (needs net). `essentials` ≈ 30MB (`git ssh curl bash jq nano`), `agent` adds `rg fd fzf node(+npm) python`, `opencode` adds `build(build-base) dns wget zip trace` — everything opencode's doctor checks (bun/deno have no Alpine builds: unavailable, not a bug) |
+| `toolbox-install <name\|essentials\|agent\|opencode\|all>` | Installs via `apk` (needs net). `essentials` ≈ 30MB (`git ssh curl bash jq nano`), `agent` adds `rg fd fzf node(+npm) python`, `opencode` adds `build(build-base) dns wget zip trace` — everything opencode's doctor checks (bun/deno have no Alpine builds: unavailable, not a bug). Unknown names get a did-you-mean; big pulls are space-checked first |
+| `toolbox-info <name>` | Description + apk packages + installed ✓/○ per package |
 | `toolbox-remove <apk>` | `apk del` a package |
 | `toolbox-update` | `apk update && apk upgrade` |
 | `opencode-install` | Downloads Hope2333 opencode-termux (~50MB, aarch64 only) to `sandbox/bin/opencode` |
@@ -95,9 +96,28 @@ save <name>`, `b serve [on|off]` (start/stop the agent HTTP server),
 `b ext | mkext <name>` (your own script commands).
 
 **Make your own:** `b alias deploy 'b open https://example.com'` → `b deploy`
-works forever (stored on-device, `$1…$9` + `$@` supported). `b unalias deploy`
+works forever (stored on-device, `$1…$9` + `$@` supported; manage them in the
+Agent panel too — drawer → Agent bridge → Your commands). `b unalias deploy`
 removes it. The Agent panel (drawer → Agent bridge) shows all of these
 tappable, plus server start/stop and copy-URL/token.
+
+**Output modifiers:** append `--json` for raw machine output (no PAGE
+markers), or `> file` / `>> file` to save into the sandbox instead of
+printing (PTY shells already pipe natively: `b snap > page.txt`).
+
+### Tap-accuracy test (`b metrics`)
+
+1. `b pos <ref>` (or `b snap` for a ref) → note `x y`.
+2. `b tap <x> <y>` → watch where the page reacts.
+3. `b metrics` → prints screen px vs page CSS geometry + the last tap's
+   `css → view` mapping, and **appends the JSON report to
+   `sandbox/agent_metrics/metrics.log`** (300 entries kept) so runs stay
+   comparable. `b metrics --json` prints the raw report.
+4. In PTY: `b metrics` returns the same JSON (log it yourself: `>> m.log`).
+
+Mapping rule under test: `view px = css px × scale`, where scale is screen
+density at default zoom (`b metrics` shows both). If taps land off by a
+constant factor, that scale is the suspect — bring the log.
 
 **`b` inside PTY shells:** PTY is a raw shell, so a `b()` function is
 auto-installed into `~/.profile` (`b-setup` refreshes it). It talks to the

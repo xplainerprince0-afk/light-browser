@@ -70,11 +70,30 @@ object ToolboxManager {
     fun listText(): String {
         val sb = StringBuilder("Tools (runtime download, apk):\n")
         for (t in TOOLS) sb.append("• ${t.name} (~${t.approxMb}MB) — ${t.desc}\n")
-        sb.append("Sets: essentials (~30MB: ${ESSENTIALS.joinToString(" ")})\n")
-        sb.append("      agent (~200MB: essentials + rg fd fzf node python)\n")
-        sb.append("      opencode (agent + build dns wget zip trace — silences its doctor;\n")
-        sb.append("        note: bun/deno have no Alpine builds and can't be installed)")
+        sb.append(setsText())
         return sb.toString()
+    }
+
+    fun setsText(): String {
+        return "Sets: essentials (~30MB: ${ESSENTIALS.joinToString(" ")})\n" +
+            "      agent (~200MB: essentials + rg fd fzf node python)\n" +
+            "      opencode (agent + build dns wget zip trace — silences its doctor;\n" +
+            "        note: bun/deno have no Alpine builds and can't be installed)\n" +
+            "Singles (not in any set — install by name): tmux nvim gh"
+    }
+
+    /** Rough download MB for an install arg (sets expanded, dupes merged). */
+    fun estMb(arg: String): Int {
+        val wants = arg.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (wants.isEmpty()) return 0
+        val names = when {
+            wants == listOf("all") -> TOOLS.map { it.name }
+            wants == listOf("essentials") -> ESSENTIALS
+            wants == listOf("agent") -> AGENT
+            wants == listOf("opencode") -> OPENCODE
+            else -> wants
+        }.distinct()
+        return names.sumOf { byName(it)?.approxMb ?: 0 }
     }
 
     /**

@@ -40,7 +40,7 @@ object AlpineEnv {
             "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
             "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
             "  case \"\$_b_c\" in\n" +
-            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|url|title|find|next|prev|snap|text|read|dom|js|shot|save|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|pos|tap|swipe|scroll|scrollto|serve|record (server must be on; record/serve/alias also in EXEC)';;\n" +
+            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|url|title|find|next|prev|snap|text|read|dom|js|shot|save|metrics|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|pos|tap|swipe|scroll|scrollto|serve|record (server must be on; record/serve/alias also in EXEC)';;\n" +
             "    status|url|title) _b_get '/status';;\n" +
             "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
             "    tabs|home|back|forward|reload|stop|snap|text|console|downloads) _b_get \"/\$_b_c\";;\n" +
@@ -48,6 +48,7 @@ object AlpineEnv {
             "    dom) _b_get '/dom' --data-urlencode \"sel=\${1:-body}\";;\n" +
             "    next|prev) _b_get \"/\$_b_c\";;\n" +
             "    save) [ -z \"\$1\" ] && { echo 'usage: b save <name.html|txt>'; return 1; }; _b_get '/save' --data-urlencode \"name=\$1\";;\n" +
+            "    metrics) _b_get '/metrics';;\n" +
             "    stores) _b_get '/stores';;\n" +
             "    unstore) _b_get '/unstore' --data-urlencode \"name=\$1\";;\n" +
             "    serve) _b_get '/serve' --data-urlencode \"op=\${1:-status}\";;\n" +

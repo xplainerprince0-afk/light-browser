@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -177,25 +178,143 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             )
         }
         Spacer(Modifier.height(8.dp))
-        Text("Create your own", style = MaterialTheme.typography.titleSmall)
+        Text("Your commands (same store as the terminal)", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(4.dp))
-        Text(
-            "• b alias <name> <expansion> — new command (\$1…\$9, \$@); tap to try:",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        var aliases by remember { mutableStateOf(BrowserAliases.all()) }
+        var exts by remember { mutableStateOf<List<String>>(emptyList()) }
+        fun refreshLocal() {
+            scope.launch(Dispatchers.IO) {
+                val a = try { BrowserAliases.all() } catch (_: Exception) { emptyMap() }
+                val e = try {
+                    val sd = com.lightbrowser.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-ext") }
+                    sd.listFiles { f -> f.isFile && f.name.endsWith(".sh") }
+                        ?.map { it.name.removeSuffix(".sh") }?.sorted() ?: emptyList()
+                } catch (_: Exception) { emptyList() }
+                withContext(Dispatchers.Main) { aliases = a; exts = e }
+            }
+        }
+        LaunchedEffect(Unit) { refreshLocal() }
+        if (aliases.isEmpty() && exts.isEmpty()) {
+            Text(
+                "None yet — add an alias below or run b mkext <name> in the terminal.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        aliases.forEach { (name, exp) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "• b $name  →  ${exp.take(60)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f).clickable { onInsert("b $name") }
+                )
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        try { BrowserAliases.remove(name) } catch (_: Exception) {}
+                        withContext(Dispatchers.Main) { refreshLocal() }
+                    }
+                }) { Text("Delete") }
+            }
+        }
+        exts.forEach { name ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "• b $name  (script)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f).clickable { onInsert("b $name") }
+                )
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val sd = com.lightbrowser.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-ext") }
+                            java.io.File(sd, "$name.sh").delete()
+                        } catch (_: Exception) {}
+                        withContext(Dispatchers.Main) { refreshLocal() }
+                    }
+                }) { Text("Delete") }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        var newName by remember { mutableStateOf("") }
+        var newExp by remember { mutableStateOf("") }
+        var newKindScript by remember { mutableStateOf(false) }
+        var formErr by remember { mutableStateOf("") }
+        Text("New alias or script", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        OutlinedTextField(
+            value = newName,
+            onValueChange = { newName = it.trim().lowercase(); formErr = "" },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Name (a-z 0-9 _ -)") },
+            singleLine = true
         )
-        Text(
-            "• b alias deploy 'b open https://example.com'",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.fillMaxWidth().clickable { onInsert("b alias deploy 'b open https://example.com'") }.padding(vertical = 2.dp)
-        )
-        Text(
-            "• b unalias <name> — delete it",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.fillMaxWidth().clickable { onInsert("b unalias ") }.padding(vertical = 2.dp)
-        )
+        Spacer(Modifier.height(4.dp))
+        if (newKindScript) {
+            Text(
+                "Scripts run as shell with B_PORT/B_KEY exported — edit code in Files → Sandbox → .b-ext.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            OutlinedTextField(
+                value = newExp,
+                onValueChange = { newExp = it; formErr = "" },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Expansion ($1…$9, $@)") },
+                singleLine = false,
+                minLines = 1
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { newKindScript = false; formErr = "" }) {
+                Text(if (!newKindScript) "✓ Alias" else "Alias")
+            }
+            TextButton(onClick = { newKindScript = true; formErr = "" }) {
+                Text(if (newKindScript) "✓ Script" else "Script")
+            }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = {
+                val n = newName.trim()
+                if (!n.matches(Regex("[a-z0-9_-]+"))) { formErr = "Name must be [a-z0-9_-]"; return@TextButton }
+                if (isBBlocked(n)) { formErr = "'$n' is built-in — pick another name"; return@TextButton }
+                scope.launch(Dispatchers.IO) {
+                    var err = ""
+                    try {
+                        if (newKindScript) {
+                            val sd = com.lightbrowser.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-ext") }
+                            sd.mkdirs()
+                            val f = java.io.File(sd, "$n.sh")
+                            if (f.exists()) err = "Exists already"
+                            else {
+                                f.writeText(
+                                    "#!/bin/sh\n# custom b command: b $n <args> (EXEC and PTY)\n" +
+                                        "# args arrive in \$1..\n# PTY only: \$B_PORT/\$B_KEY reach the agent server (server must be on).\n\n" +
+                                        "echo \"TODO: edit ${f.absolutePath}\"\n",
+                                    Charsets.UTF_8
+                                )
+                                try { f.setExecutable(true) } catch (_: Exception) {}
+                            }
+                        } else {
+                            if (newExp.isBlank()) err = "Expansion is empty"
+                            else BrowserAliases.set(n, newExp.trim().take(500))
+                        }
+                    } catch (e: Exception) { err = e.message ?: "failed" }
+                    val msg = err
+                    withContext(Dispatchers.Main) {
+                        if (msg.isEmpty()) {
+                            newName = ""; newExp = ""; formErr = ""
+                            refreshLocal()
+                        } else formErr = msg
+                    }
+                }
+            }) { Text("Save") }
+        }
+        if (formErr.isNotEmpty()) {
+            Text(formErr, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
         Spacer(Modifier.height(24.dp))
     }
 }

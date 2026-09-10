@@ -826,8 +826,62 @@ class TerminalViewModel : ViewModel() {
                     } else runShell("apk $arg")
                 }
                 "toolbox", "tools" -> {
-                    print(com.lightbrowser.data.ToolboxManager.listText() + "\ntoolbox-install <name|essentials|agent|opencode>  toolbox-remove <apk>  toolbox-update\n", TermDim)
-                    afterCommand()
+                    // Annotated with installed state (apk query on IO).
+                    lockBefore = -1
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val inst = apkInstalled()
+                        val alp = try {
+                            sandboxDir?.let { AlpineEnv.isInstalled(it) } ?: false
+                        } catch (_: Exception) { false }
+                        withContext(Dispatchers.Main) {
+                            if (!alp) {
+                                print("Alpine not installed — run `install-alpine` first\n", TermRed)
+                            } else {
+                                val sb = StringBuilder("Tools (runtime download, apk — ✓ installed, ○ missing):\n")
+                                for (t in com.lightbrowser.data.ToolboxManager.TOOLS) {
+                                    val got = t.pkgs.count { p -> inst.any { verPkgInstalled(it, p) } }
+                                    val mark = when {
+                                        got >= t.pkgs.size -> "✓"
+                                        got > 0 -> "◐"
+                                        else -> "○"
+                                    }
+                                    sb.append("$mark ${t.name} (~${t.approxMb}MB) — ${t.desc}\n")
+                                }
+                                sb.append(com.lightbrowser.data.ToolboxManager.setsText())
+                                sb.append("\ntoolbox-install <name|essentials|agent|opencode>  toolbox-info <name>  toolbox-remove <apk>  toolbox-update")
+                                print(sb.toString() + "\n", TermDim)
+                            }
+                            afterCommand()
+                        }
+                    }
+                }
+                "toolbox-info", "tool-info" -> {
+                    val t = com.lightbrowser.data.ToolboxManager.byName(arg)
+                    if (t == null) {
+                        val s = suggestB(
+                            arg.lowercase().split(Regex("\\s+")).firstOrNull() ?: "",
+                            com.lightbrowser.data.ToolboxManager.TOOLS.map { it.name }
+                        )
+                        print(
+                            if (s != null) "Unknown tool: $arg — did you mean '$s'?\n"
+                            else "Unknown tool: $arg — try `toolbox`\n",
+                            TermRed
+                        )
+                        afterCommand()
+                        return
+                    }
+                    lockBefore = -1
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val inst = apkInstalled()
+                        withContext(Dispatchers.Main) {
+                            print("${t.name} (~${t.approxMb}MB) — ${t.desc}\napk: ${t.pkgs.joinToString(" ")}\n", TermWhite)
+                            t.pkgs.forEach { p ->
+                                val ok = inst.any { verPkgInstalled(it, p) }
+                                print("${if (ok) "✓" else "○"} $p ${if (ok) "installed" else "missing"}\n", if (ok) TermGreen else TermDim)
+                            }
+                            afterCommand()
+                        }
+                    }
                 }
                 "toolbox-install", "tool-install" -> {
                     if (!alpineInstalled) {
@@ -836,7 +890,28 @@ class TerminalViewModel : ViewModel() {
                     val sd = sandboxDir
                     if (sd == null) { print("No sandbox\n", TermRed); afterCommand(); return }
                     val pkgs = com.lightbrowser.data.ToolboxManager.resolve(arg)
-                    if (pkgs.isEmpty()) { print("Unknown tool: $arg — try `toolbox`\n", TermRed); afterCommand(); return }
+                    if (pkgs.isEmpty()) {
+                        val s = suggestB(
+                            arg.lowercase().split(Regex("\\s+")).firstOrNull() ?: "",
+                            com.lightbrowser.data.ToolboxManager.TOOLS.map { it.name } +
+                                listOf("essentials", "agent", "opencode", "all")
+                        )
+                        print(
+                            if (s != null) "Unknown tool: $arg — did you mean '$s'?\n"
+                            else "Unknown tool: $arg — try `toolbox`\n",
+                            TermRed
+                        )
+                        afterCommand(); return
+                    }
+                    // Disk-space guard before big pulls (build-base alone ≈170MB).
+                    try {
+                        val needMb = com.lightbrowser.data.ToolboxManager.estMb(arg)
+                        val freeMb = (sd.usableSpace / (1024 * 1024)).toInt()
+                        if (needMb > 0 && freeMb < (needMb * 1.5 + 50).toInt()) {
+                            print("Not enough space: need ~${needMb}MB (+cache), have ${freeMb}MB free\n", TermRed)
+                            afterCommand(); return
+                        }
+                    } catch (_: Exception) {}
                     if (!com.lightbrowser.data.ToolboxManager.ensureNetFiles(sd)) {
                         print("Could not seed apk config\n", TermRed); afterCommand(); return
                     }
@@ -1046,6 +1121,49 @@ class TerminalViewModel : ViewModel() {
 
     /** Single-quote shell escaping (filenames with " $ ` are crafted via import/zip). */
     private fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /** True when an `apk info` line means [pkg] is installed (name-version lines). */
+    private fun verPkgInstalled(line: String, pkg: String): Boolean {
+        val t = line.trim()
+        if (t.isEmpty()) return false
+        if (t == pkg) return true
+        if (!t.startsWith("$pkg-")) return false
+        // Version part starts with a digit (avoids git-perl matching git).
+        return t.removePrefix("$pkg-").firstOrNull()?.isDigit() == true
+    }
+
+    /**
+     * Installed apk package lines, queried synchronously (call on IO).
+     * Empty when Alpine is missing or the query fails — callers degrade
+     * to the unannotated list instead of erroring.
+     */
+    private fun apkInstalled(): Set<String> {
+        var proc: Process? = null
+        return try {
+            val sd = sandboxDir ?: return emptySet()
+            if (!AlpineEnv.isInstalled(sd)) return emptySet()
+            val saved = try { TermEnv.all() } catch (_: Exception) { emptyMap() }
+            val prefix = try {
+                val p = saved["PATH"]
+                if (!p.isNullOrBlank()) "export PATH=$p; " else AlpineEnv.shellPrefix(sd)
+            } catch (_: Exception) { AlpineEnv.shellPrefix(sd) }
+            val env = AlpineEnv.buildEnvironment(sd, sd) +
+                saved.filterKeys { it != "PATH" }.map { (k, v) -> "$k=$v" }.toTypedArray()
+            proc = Runtime.getRuntime().exec(arrayOf("sh", "-c", prefix + "apk info"), env, sd)
+            try { proc.outputStream.close() } catch (_: Exception) {}
+            val ok = try {
+                proc.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (_: Exception) { false }
+            if (!ok) {
+                try { proc.destroyForcibly() } catch (_: Exception) {}
+                return emptySet()
+            }
+            try {
+                proc.inputStream.bufferedReader().readLines().toSet()
+            } catch (_: Exception) { emptySet() }
+        } catch (_: Exception) { emptySet() }
+        finally { try { proc?.destroy() } catch (_: Exception) {} }
+    }
 
     /** Bare names resolve to sandbox/bin first, paths via the jail. */
     private fun resolveBin(name: String): File? {
@@ -1991,7 +2109,6 @@ private fun levDist(a: String, b: String): Int {
     }
     return prev[b.length]
 }
-
 /** Closest candidate within distance 2 (min length 3), or null. */
 private fun suggestB(head: String, cands: Collection<String>): String? {
     val h = head.trim().lowercase()
@@ -2002,6 +2119,10 @@ private fun suggestB(head: String, cands: Collection<String>): String? {
         if (d in 1..2 && cl.length >= 3) cl to d else null
     }.minByOrNull { it.second }?.first
 }
+
+/** True when [name] is a built-in `b` head — the Agent panel reuses this guard. */
+internal fun isBBlocked(name: String): Boolean =
+    BuiltinB.contains(name.trim().lowercase())
 
 /**
  * User-defined `b` aliases, stored in SharedPreferences so new terminal
