@@ -1114,7 +1114,7 @@ object BrowserAgent {
                         """{"ok":true}"""
                     }
                     "remove" -> {
-                        B.remove(q["host"] ?: q["name"] ?: "")
+                        S.remove(q["name"] ?: "")
                         """{"ok":true}"""
                     }
                     else -> {

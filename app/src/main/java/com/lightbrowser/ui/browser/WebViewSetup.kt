@@ -241,7 +241,6 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                                 try { view?.context?.let { c -> android.content.Intent(android.content.Intent.ACTION_VIEW, req?.url).let { c.startActivity(it) } } catch (_: Exception) {}
                             }
                         }
-                        }
                         try { tmp.destroy() } catch (_: Exception) {}
                         return true
                     }
