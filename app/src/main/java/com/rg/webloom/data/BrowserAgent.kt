@@ -402,7 +402,7 @@ object BrowserAgent {
             val down = android.view.MotionEvent.obtain(t0, t0, android.view.MotionEvent.ACTION_DOWN, first.first, first.second, 0)
             // Batch MOVE history so fling/scroll handlers see velocity.
             for (i in 1 until pts.size) {
-                try { down.addBatch(t0 + stepMs * i, pts[i].first, pts[i].second, 0) } catch (_: Exception) { break }
+                try { down.addBatch(t0 + stepMs * i, pts[i].first, pts[i].second, 1f, 1f, 0) } catch (_: Exception) { break }
             }
             try { wv.dispatchTouchEvent(down) } catch (_: Exception) {} finally {
                 try { down.recycle() } catch (_: Exception) {}
