@@ -1447,7 +1447,7 @@ class TerminalViewModel : ViewModel() {
                             "b history [n] | downloads | save <name> | metrics (auto-logged)\n" +
                             "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
                             "b ext | mkext <name> — your own SCRIPT commands (~/.b-ext/, both modes)\n" +
-                            "b record start|stop|save <n>|list | serve [on|off]\n" +
+                            "b record start|stop|pause|resume|save <n>|list | serve [on|off]\n" +
                             "Modifiers: append --json (raw output) or `> file` / `>> file` (sandboxed)\n", TermDim
                     )
                     "open" -> {
@@ -1725,12 +1725,26 @@ class TerminalViewModel : ViewModel() {
                         when (sub) {
                             "start" -> {
                                 com.lightbrowser.data.BrowserAgent.startRecording()
-                                out("● Recording — switch to the Browser tab and tap/type. b record stop when done.\n", TermGreen)
+                                out("● Recording taps + touches — switch to the Browser tab. Pause: b record pause. Stop auto-saves.\n", TermGreen)
                             }
                             "stop" -> {
-                                com.lightbrowser.data.BrowserAgent.stopRecording()
                                 val n = com.lightbrowser.data.BrowserAgent.recCount()
-                                out("Stopped. Captured $n action(s). b record save <name> to keep.\n", TermGreen)
+                                val saved = try {
+                                    com.lightbrowser.data.BrowserAgent.stopRecording()
+                                } catch (_: Exception) { null }
+                                out(
+                                    if (saved != null) "Stopped. Saved $n action(s) → ${homeify(saved)}\n"
+                                    else "Stopped. No actions captured.\n",
+                                    if (saved != null) TermGreen else TermDim
+                                )
+                            }
+                            "pause" -> {
+                                try { com.lightbrowser.data.BrowserAgent.pauseRecording() } catch (_: Exception) {}
+                                out("Paused — touches dropped until resume (events kept).\n", TermDim)
+                            }
+                            "resume" -> {
+                                try { com.lightbrowser.data.BrowserAgent.resumeRecording() } catch (_: Exception) {}
+                                out("Resumed.\n", TermGreen)
                             }
                             "save" -> {
                                 val name = parts.getOrNull(2) ?: ""

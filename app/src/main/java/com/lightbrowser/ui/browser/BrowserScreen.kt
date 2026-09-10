@@ -498,11 +498,21 @@ fun BrowserScreen(
                             dismissMenuAnd {
                                 try {
                                     if (recording) {
-                                        com.lightbrowser.data.BrowserAgent.stopRecording()
                                         val n = try { com.lightbrowser.data.BrowserAgent.recCount() } catch (_: Exception) { 0 }
-                                        android.widget.Toast.makeText(ctx, "Stopped — $n actions (save: b record save <name>)", android.widget.Toast.LENGTH_LONG).show()
-                                    } else com.lightbrowser.data.BrowserAgent.startRecording()
-                                } catch (_: Exception) {}
+                                        val saved = try { com.lightbrowser.data.BrowserAgent.stopRecording() } catch (_: Exception) { null }
+                                        val where = saved?.substringAfterLast('/') ?: "agent_recs"
+                                        android.widget.Toast.makeText(
+                                            ctx,
+                                            if (saved != null) "Saved $n actions → $where" else "Stopped — no actions",
+                                            android.widget.Toast.LENGTH_LONG
+                                        ).show()
+                                    } else {
+                                        com.lightbrowser.data.BrowserAgent.startRecording()
+                                        android.widget.Toast.makeText(ctx, "● Recording taps + touches", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                } catch (e: Exception) {
+                                    android.widget.Toast.makeText(ctx, "Record failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                         ChromeRow(Icons.Filled.Code, "Scripts") { dismissMenuAnd { onOpenScripts() } }
@@ -707,10 +717,17 @@ fun BrowserScreen(
                     },
                     onStop = {
                         try {
-                            com.lightbrowser.data.BrowserAgent.stopRecording()
                             val n = try { com.lightbrowser.data.BrowserAgent.recCount() } catch (_: Exception) { 0 }
-                            android.widget.Toast.makeText(ctx, "Stopped — $n actions (save: b record save <name>)", android.widget.Toast.LENGTH_LONG).show()
-                        } catch (_: Exception) {}
+                            val saved = try { com.lightbrowser.data.BrowserAgent.stopRecording() } catch (_: Exception) { null }
+                            val where = saved?.substringAfterLast('/') ?: "agent_recs"
+                            android.widget.Toast.makeText(
+                                ctx,
+                                if (saved != null) "Saved $n actions → $where" else "Stopped — no actions",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(ctx, "Stop failed: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                        }
                     },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
                 )

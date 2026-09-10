@@ -544,11 +544,16 @@ object BrowserAgent {
                 if(window.__lb_recHandler&&window.__lb_recTarget){
                   window.__lb_recTarget.removeEventListener('click',window.__lb_recHandler,true);
                   window.__lb_recTarget.removeEventListener('input',window.__lb_recHandler,true);
+                  window.__lb_recTarget.removeEventListener('touchstart',window.__lb_recTouch,true);
+                  window.__lb_recTarget.removeEventListener('touchend',window.__lb_recTouchEnd,true);
                   window.__lb_recHandler=null;
                 }
                 if(!on) return 'OK';
                 var h=function(ev){
                   try{
+                    // Touch taps already arrive as op=tap below — skip the
+                    // duplicate click or replay would double-fire.
+                    if(ev.type==='click'&&window.__lb_touchTs&&(Date.now()-window.__lb_touchTs)<600)return;
                     var d=window.LightAgent.describe(ev.target);
                     d.op=(ev.type==='input')?'fill':'click';
                     if(ev.type==='input'){d.value=(ev.target.value||'').slice(0,200);}
@@ -558,10 +563,37 @@ object BrowserAgent {
                     console.log('__LB_REC__:'+JSON.stringify(d));
                   }catch(err){}
                 };
+                var tsx=0,tsy=0,tst=0;
+                var ts=function(ev){
+                  try{var t=ev.changedTouches[0];tsx=t.clientX;tsy=t.clientY;tst=Date.now();}catch(x){}
+                };
+                var te=function(ev){
+                  try{
+                    var t=ev.changedTouches[0];
+                    var dx=t.clientX-tsx,dy=t.clientY-tsy,dt=Date.now()-tst;
+                    var dist=Math.sqrt(dx*dx+dy*dy);
+                    window.__lb_touchTs=Date.now();
+                    var el=null;
+                    try{el=document.elementFromPoint(t.clientX,t.clientY);}catch(x){}
+                    var d=window.LightAgent.describe(el||ev.target);
+                    d.x=Math.round(t.clientX);d.y=Math.round(t.clientY);
+                    d.sx=Math.round(window.scrollX);d.sy=Math.round(window.scrollY);
+                    d.vw=window.innerWidth;d.vh=window.innerHeight;
+                    if(dist<12){d.op='tap';}
+                    else{d.op='swipe';d.x1=Math.round(tsx);d.y1=Math.round(tsy);
+                      d.x2=Math.round(t.clientX);d.y2=Math.round(t.clientY);
+                      d.ms=Math.min(Math.max(dt,50),3000);}
+                    console.log('__LB_REC__:'+JSON.stringify(d));
+                  }catch(x){}
+                };
                 window.__lb_recHandler=h;
+                window.__lb_recTouch=ts;
+                window.__lb_recTouchEnd=te;
                 window.__lb_recTarget=document;
                 document.addEventListener('click',h,true);
                 document.addEventListener('input',h,true);
+                document.addEventListener('touchstart',ts,true);
+                document.addEventListener('touchend',te,true);
                 return 'OK';
               }catch(err){return 'ERR '+err;}
             }
@@ -620,7 +652,7 @@ object BrowserAgent {
         }
     }
 
-    fun stopRecording() {
+    fun stopRecording(): String? {
         _recording.value = false
         _recPaused.value = false
         mainHandler.post {
@@ -630,6 +662,12 @@ object BrowserAgent {
                 )
             } catch (_: Exception) {}
         }
+        // Auto-save so Stop always leaves a file (asked). Synchronous: a few
+        // hundred small events write in ms. Clears on success for a clean slate.
+        return try {
+            if (recEvents.isEmpty()) null
+            else saveRecording("rec")?.also { recEvents.clear() }
+        } catch (_: Exception) { null }
     }
 
     /** Pause capture (events dropped, shim stays armed); resume reopens the stream. */
@@ -654,8 +692,9 @@ object BrowserAgent {
         if (json.length > 4_000) return
         try {
             val o = JSONObject(json)
+            // click/fill (mouse+keyboard) + tap/swipe (touch) — the replay set.
             val op = o.optString("op", "")
-            if (op != "click" && op != "fill") return
+            if (op != "click" && op != "fill" && op != "tap" && op != "swipe") return
             val sel = o.optString("selector", "")
             if (sel.isBlank() || sel.length > 500) return
             o.put("t", System.currentTimeMillis() - recStartMs)
@@ -681,10 +720,12 @@ object BrowserAgent {
             val out = java.io.File(dir, "${safe}_${System.currentTimeMillis()}.json")
             val root = JSONObject()
             root.put("app", "lightbrowser-rec")
-            root.put("v", 2)
+            root.put("v", 3)
             root.put("startUrl", recStartUrl)
             root.put("startedAt", recStartMs)
             try { recCoverPath?.let { root.put("cover", it) } } catch (_: Exception) {}
+            // Touch replay set: tap (x,y) + swipe (x1,y1→x2,y2,ms), each with
+            // selector/tag/text/rect + scroll/viewport context.
             val arr = org.json.JSONArray()
             recEvents.forEach { arr.put(it) }
             root.put("actions", arr)
@@ -1212,8 +1253,19 @@ object BrowserAgent {
                         """{"ok":true}"""
                     }
                     "stop" -> {
-                        try { stopRecording() } catch (_: Exception) {}
-                        JSONObject().put("ok", true).put("count", recCount()).toString()
+                        val n = recCount()
+                        val saved = try { stopRecording() } catch (_: Exception) { null }
+                        val o = JSONObject().put("ok", true).put("count", n)
+                        try { if (saved != null) o.put("saved", saved) } catch (_: Exception) {}
+                        o.toString()
+                    }
+                    "pause" -> {
+                        try { pauseRecording() } catch (_: Exception) {}
+                        """{"ok":true}"""
+                    }
+                    "resume" -> {
+                        try { resumeRecording() } catch (_: Exception) {}
+                        """{"ok":true}"""
                     }
                     "save" -> {
                         val path = try {

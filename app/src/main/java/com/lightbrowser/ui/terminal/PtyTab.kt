@@ -75,7 +75,14 @@ fun PtyTab(
     var session by remember { mutableStateOf<TerminalSession?>(null) }
     var termView by remember { mutableStateOf<TerminalView?>(null) }
 
-    val sd = remember(app) { File(app.filesDir, "sandbox").apply { mkdirs() } }
+    val sd = remember(app) {
+        File(app.filesDir, "sandbox").apply { mkdirs() }.also { d ->
+            // Profile must exist before the first session dot-sources it
+            // (VM init does this too — belt and suspenders, same helpers).
+            try { AlpineEnv.ensureRuntimeFiles(d) } catch (_: Exception) {}
+            try { AlpineEnv.ensureBFunction(d) } catch (_: Exception) {}
+        }
+    }
     val ocBin = remember(sd) { File(sd, "bin/opencode") }
     // Single target, no toggle button: opencode when present, else shell.
     // (Don't gate on canExecute(): SELinux can report +x yet refuse direct
@@ -89,10 +96,15 @@ fun PtyTab(
         opencodeOk -> ocBin.absolutePath
         else -> "/system/bin/sh"
     }
+    // Shell sessions force-load ~/.profile (aliases, b(), opencode(), ~ prompt):
+    // an explicit dot-source + -i, so a shell that ignores $ENV still lands
+    // configured. `;` (not &&) guarantees the interactive shell even when the
+    // profile is missing; exec keeps the pid so exit/signals behave.
+    val profileDot = ". '${sd.absolutePath}/.profile' 2>/dev/null; exec sh -i"
     val shellArgs = when {
         opencodeOk && sysLinker != null -> arrayOf(sysLinker, ocBin.absolutePath)
         opencodeOk -> arrayOf(ocBin.absolutePath)
-        else -> arrayOf("sh")
+        else -> arrayOf("sh", "-c", profileDot)
     }
     val env = remember(sd, gen) {
         // Saved `export`s apply to new PTY sessions too (plus ~/.profile via $ENV).

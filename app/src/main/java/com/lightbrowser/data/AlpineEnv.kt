@@ -53,7 +53,7 @@ object AlpineEnv {
             "    unstore) _b_get '/unstore' --data-urlencode \"name=\$1\";;\n" +
             "    serve) _b_get '/serve' --data-urlencode \"op=\${1:-status}\";;\n" +
             "    alias) case \"\$1\" in '') _b_get '/alias';; remove|unalias) _b_get '/alias' --data-urlencode 'op=remove' --data-urlencode \"name=\$2\";; *) _b_get '/alias' --data-urlencode 'op=set' --data-urlencode \"name=\$1\" --data-urlencode \"expansion=\$2\";; esac;;\n" +
-            "    record) _b_sub=\"\$1\"; case \"\$_b_sub\" in start|stop|list) _b_get '/record' --data-urlencode \"op=\$_b_sub\";; save) _b_get '/record' --data-urlencode 'op=save' --data-urlencode \"name=\${2:-rec}\";; *) _b_get '/record';; esac;;\n" +
+            "    record) _b_sub=\"\$1\"; case \"\$_b_sub\" in start|stop|pause|resume|list) _b_get '/record' --data-urlencode \"op=\$_b_sub\";; save) _b_get '/record' --data-urlencode 'op=save' --data-urlencode \"name=\${2:-rec}\";; *) _b_get '/record';; esac;;\n" +
             "    shot) if [ \"\$1\" = \"--full\" ]; then _b_get '/shot' --data-urlencode \"full=1\"; else _b_get '/shot'; fi;;\n" +
             "    hover) _b_get '/hover' --data-urlencode \"sel=\$1\";;\n" +
             "    select) _b_sel=\"\$1\"; shift; _b_get '/select' --data-urlencode \"sel=\$_b_sel\" --data-urlencode \"value=\$*\";;\n" +

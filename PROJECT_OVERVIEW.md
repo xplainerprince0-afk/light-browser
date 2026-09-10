@@ -13,7 +13,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Terminal: `b` tab/cookies-set-clear/history/downloads/submit/read/shot-full/hover/select/key/store-named/mkext-script (EXEC+PTY HTTP routes, hoisted-IME toolbar lift, opencode size+ELF verified install)
 - [x] Terminal: `b` console upgrades — PTY parity (/dom/save/url/title/next/prev/stores/serve/alias/record), `--json`, jailed `> file`, did-you-mean, in-app command studio, toolbox installed-state + space guard, `b metrics` tap-accuracy audit auto-logged to ~/agent_metrics/metrics.log (EXEC+PTY, with WebView on-screen box)
 - [x] Shell: home-style paths everywhere (`~` prompt, `pwd`/`b save`/`b shot`/recordings print `~/…`, never the app-private absolute); Files hides dotfiles by default (⋮ → Hidden files; shell keeps seeing them)
-- [x] Browser: ⋮ → Record taps with floating ● count / ⏸ / ⏹ pill (hidden from screenshots); recorder v2 — touch point, scroll, viewport, per-action URL, cover shot, reusable JSON
+- [x] Browser: ⋮ → Record taps with floating ● count / ⏸ / ⏹ pill (hidden from screenshots); recorder v3 — clicks/fills/taps/swipes with touch point, scroll, viewport, per-action URL, cover shot, auto-save on stop, reusable JSON
 - [x] Terminal: downloadable toolbox (`toolbox`, `toolbox-install essentials|agent|all`, remove/update via apk; repos+DNS auto-seed; zero APK cost)
 - [x] Terminal: true PTY foundation (vendored Termux terminal-emulator+view Apache-2.0, libtermux.so via NDK 29 in CI, builds green)
 - [x] Terminal: PTY tab (TerminalSession→TerminalView, shell or opencode TUI, restart on exit, keys hug keyboard, density-correct font)

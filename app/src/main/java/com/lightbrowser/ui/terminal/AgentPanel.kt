@@ -111,9 +111,22 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f)
             )
+            if (recordingNow) {
+                val paused by BrowserAgent.recPaused.collectAsState()
+                TextButton(onClick = {
+                    try {
+                        if (paused) BrowserAgent.resumeRecording() else BrowserAgent.pauseRecording()
+                    } catch (_: Exception) {}
+                }) { Text(if (paused) "Resume" else "Pause") }
+            }
             TextButton(onClick = {
-                if (recordingNow) BrowserAgent.stopRecording()
-                else BrowserAgent.startRecording()
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        if (recordingNow) BrowserAgent.stopRecording()
+                        else BrowserAgent.startRecording()
+                    } catch (_: Exception) {}
+                    withContext(Dispatchers.Main) { recVersion++ }
+                }
             }) { Text(if (recordingNow) "Stop" else "Start") }
         }
         var recVersion by remember { mutableStateOf(0) }
@@ -168,7 +181,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             "b js <expr> — run JS" to "b js ",
             "b shot — save screenshot" to "b shot",
             "b console — JS logs" to "b console",
-            "b record start|stop|save <name>|list — capture taps" to "b record "
+            "b record start|stop|pause|save <name>|list — capture taps+swipes" to "b record "
         ).forEach { (label, insert) ->
             Text(
                 "• $label",

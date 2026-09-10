@@ -92,8 +92,10 @@ submit <form> | key [sel]` (nearest-button tap),
 `b js <expr> | text | dom | shot [--full] | console`,
 `b cookies [get [url] | set "k=v" [url] | clear] | history [n] | downloads |
 save <name>`, `b serve [on|off]` (start/stop the agent HTTP server),
-`b record start|stop|save <n>|list` (tap recorder — also in the browser ⋮
-menu, with a floating ●/⏸/⏹ pill that hides itself from screenshots),
+`b record start|stop|pause|resume|save <n>|list` (tap+touch recorder — also
+in the browser ⋮ menu, with a floating ●/⏸/⏹ pill that hides itself from
+screenshots; Stop auto-saves to `~/agent_recs/`. Captures clicks, fills,
+taps and swipes with element, coords, scroll and viewport — replay data),
 `b ext | mkext <name>` (your own script commands).
 
 **Make your own:** `b alias deploy 'b open https://example.com'` → `b deploy`
