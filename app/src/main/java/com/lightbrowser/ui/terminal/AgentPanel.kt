@@ -195,6 +195,8 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
         Spacer(Modifier.height(4.dp))
         var aliases by remember { mutableStateOf(BrowserAliases.all()) }
         var exts by remember { mutableStateOf<List<String>>(emptyList()) }
+        var macros by remember { mutableStateOf<List<String>>(emptyList()) }
+        var blocked by remember { mutableStateOf<List<String>>(emptyList()) }
         fun refreshLocal() {
             scope.launch(Dispatchers.IO) {
                 val a = try { BrowserAliases.all() } catch (_: Exception) { emptyMap() }
@@ -203,13 +205,19 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                     sd.listFiles { f -> f.isFile && f.name.endsWith(".sh") }
                         ?.map { it.name.removeSuffix(".sh") }?.sorted() ?: emptyList()
                 } catch (_: Exception) { emptyList() }
-                withContext(Dispatchers.Main) { aliases = a; exts = e }
+                val m = try {
+                    val sd = com.lightbrowser.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-cmd") }
+                    sd.listFiles { f -> f.isFile && f.name.endsWith(".b") }
+                        ?.map { it.name.removeSuffix(".b") }?.sorted() ?: emptyList()
+                } catch (_: Exception) { emptyList() }
+                val b = try { BBlock.all().sorted() } catch (_: Exception) { emptyList() }
+                withContext(Dispatchers.Main) { aliases = a; exts = e; macros = m; blocked = b }
             }
         }
         LaunchedEffect(Unit) { refreshLocal() }
-        if (aliases.isEmpty() && exts.isEmpty()) {
+        if (aliases.isEmpty() && exts.isEmpty() && macros.isEmpty()) {
             Text(
-                "None yet — add an alias below or run b mkext <name> in the terminal.",
+                "None yet — add one below, or run b mkcmd / b mkext <name> in the terminal.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -249,12 +257,31 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                 }) { Text("Delete") }
             }
         }
+        macros.forEach { name ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "• b $name  (macro)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f).clickable { onInsert("b $name") }
+                )
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val sd = com.lightbrowser.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-cmd") }
+                            java.io.File(sd, "$name.b").delete()
+                        } catch (_: Exception) {}
+                        withContext(Dispatchers.Main) { refreshLocal() }
+                    }
+                }) { Text("Delete") }
+            }
+        }
         Spacer(Modifier.height(8.dp))
         var newName by remember { mutableStateOf("") }
         var newExp by remember { mutableStateOf("") }
-        var newKindScript by remember { mutableStateOf(false) }
+        var newKind by remember { mutableStateOf(0) } // 0 alias, 1 script, 2 macro
         var formErr by remember { mutableStateOf("") }
-        Text("New alias or script", style = MaterialTheme.typography.titleSmall)
+        Text("New alias, script or macro", style = MaterialTheme.typography.titleSmall)
         Spacer(Modifier.height(4.dp))
         OutlinedTextField(
             value = newName,
@@ -264,11 +291,20 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             singleLine = true
         )
         Spacer(Modifier.height(4.dp))
-        if (newKindScript) {
+        if (newKind == 1) {
             Text(
                 "Scripts run as shell with B_PORT/B_KEY exported — edit code in Files → Sandbox → .b-ext.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else if (newKind == 2) {
+            OutlinedTextField(
+                value = newExp,
+                onValueChange = { newExp = it; formErr = "" },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("b-commands, one per line (# comments)") },
+                singleLine = false,
+                minLines = 3
             )
         } else {
             OutlinedTextField(
@@ -282,11 +318,14 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
         }
         Spacer(Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { newKindScript = false; formErr = "" }) {
-                Text(if (!newKindScript) "✓ Alias" else "Alias")
+            TextButton(onClick = { newKind = 0; formErr = "" }) {
+                Text(if (newKind == 0) "✓ Alias" else "Alias")
             }
-            TextButton(onClick = { newKindScript = true; formErr = "" }) {
-                Text(if (newKindScript) "✓ Script" else "Script")
+            TextButton(onClick = { newKind = 1; formErr = "" }) {
+                Text(if (newKind == 1) "✓ Script" else "Script")
+            }
+            TextButton(onClick = { newKind = 2; formErr = "" }) {
+                Text(if (newKind == 2) "✓ Macro" else "Macro")
             }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = {
@@ -296,7 +335,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                 scope.launch(Dispatchers.IO) {
                     var err = ""
                     try {
-                        if (newKindScript) {
+                        if (newKind == 1) {
                             val sd = com.lightbrowser.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-ext") }
                             sd.mkdirs()
                             val f = java.io.File(sd, "$n.sh")
@@ -309,6 +348,22 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                                     Charsets.UTF_8
                                 )
                                 try { f.setExecutable(true) } catch (_: Exception) {}
+                            }
+                        } else if (newKind == 2) {
+                            val lines = newExp.lines().map { it.trim() }
+                                .filter { it.isNotEmpty() && !it.startsWith("#") }
+                            if (lines.isEmpty()) err = "Macro is empty"
+                            else {
+                                val sd = com.lightbrowser.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-cmd") }
+                                sd.mkdirs()
+                                val f = java.io.File(sd, "$n.b")
+                                if (f.exists()) err = "Exists already"
+                                else {
+                                    f.writeText(
+                                        "# macro: b $n\n" + lines.joinToString("\n") + "\n",
+                                        Charsets.UTF_8
+                                    )
+                                }
                             }
                         } else {
                             if (newExp.isBlank()) err = "Expansion is empty"
@@ -327,6 +382,58 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
         }
         if (formErr.isNotEmpty()) {
             Text(formErr, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text("Blocked sites (AI no-go)", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        if (blocked.isEmpty()) {
+            Text(
+                "None — b block <domain> keeps agents off settings, billing, …",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        blocked.forEach { host ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "⛔ $host",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        try { BBlock.remove(host) } catch (_: Exception) {}
+                        withContext(Dispatchers.Main) { refreshLocal() }
+                    }
+                }) { Text("Unblock") }
+            }
+        }
+        var blockField by remember { mutableStateOf("") }
+        var blockErr by remember { mutableStateOf("") }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = blockField,
+                onValueChange = { blockField = it; blockErr = "" },
+                modifier = Modifier.weight(1f),
+                label = { Text("Domain to block") },
+                singleLine = true
+            )
+            TextButton(onClick = {
+                scope.launch(Dispatchers.IO) {
+                    var err = ""
+                    try {
+                        if (!BBlock.add(blockField)) err = "Need a domain like example.com"
+                    } catch (_: Exception) { err = "failed" }
+                    withContext(Dispatchers.Main) {
+                        if (err.isEmpty()) { blockField = ""; blockErr = ""; refreshLocal() }
+                        else blockErr = err
+                    }
+                }
+            }) { Text("Block") }
+        }
+        if (blockErr.isNotEmpty()) {
+            Text(blockErr, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
         Spacer(Modifier.height(24.dp))
     }

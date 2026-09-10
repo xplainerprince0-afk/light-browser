@@ -337,6 +337,16 @@ fun BrowserScreen(
                 return
             }
         } catch (_: Exception) {}
+        // User blocklist (b block): human-typed URLs die here with a popup.
+        try {
+            if (com.lightbrowser.ui.terminal.BBlock.blocksUrl(url)) {
+                val h = com.lightbrowser.ui.terminal.BBlock.normalize(url)
+                android.widget.Toast.makeText(ctx, "⛔ $h blocked by you (b unblock $h)", android.widget.Toast.LENGTH_LONG).show()
+                vm.setSearch(false)
+                focusManager.clearFocus()
+                return
+            }
+        } catch (_: Exception) {}
         vm.onPageStarted(url)
         if (url.startsWith("lb://")) return // native screen, nothing to load
         try { webView?.loadUrl(url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}

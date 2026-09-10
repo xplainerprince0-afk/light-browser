@@ -64,6 +64,8 @@ b shot [--full] | b console [n] | b cookies [get [url] | set "k=v" [url] | clear
  b wait <text|css:sel> [ms] | links [n] | forms | survey   # senses
  b do "c1; c2" | run <file> | replay <rec> | queue         # macros (EXEC-only)
  b alias [name expansion] | unalias <name>   # EXEC one-liners
+ b mkcmd <name> ["c1; c2"] | cmds             # macro files (~/.b-cmd/), both modes
+ b block <domain> | unblock | blocks          # AI no-go sites (host+subdomains)
 b ext | mkext <name>    # your own SCRIPT commands (~/.b-ext/*.sh, both modes)
  b record start|stop|pause|resume|save <n>|list | b serve on|off
  b metrics [--json]   # screen+page geometry + tap audit (auto-logged)

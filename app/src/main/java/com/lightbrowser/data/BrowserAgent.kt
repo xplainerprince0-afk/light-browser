@@ -284,6 +284,8 @@ object BrowserAgent {
     fun navigate(url: String) {
         val safe = url.trim()
         if (!safe.startsWith("http://") && !safe.startsWith("https://")) return
+        // User blocklist (b block): refuse before touching the WebView.
+        if (com.lightbrowser.ui.terminal.BBlock.blocksUrl(safe)) return
         mainHandler.post {
             try {
                 webViewProvider?.invoke()?.loadUrl(safe, mapOf("X-Requested-With" to ""))
@@ -937,6 +939,9 @@ object BrowserAgent {
             }
             "/open" -> {
                 val url = q["url"] ?: return """{"ok":false,"err":"missing url"}"""
+                if (com.lightbrowser.ui.terminal.BBlock.blocksUrl(url)) {
+                    return """{"ok":false,"err":"blocked by user: ${com.lightbrowser.ui.terminal.BBlock.normalize(url)}"}"""
+                }
                 navigate(url)
                 """{"ok":true}"""
             }
@@ -1109,7 +1114,7 @@ object BrowserAgent {
                         """{"ok":true}"""
                     }
                     "remove" -> {
-                        S.remove(q["name"] ?: "")
+                        B.remove(q["host"] ?: q["name"] ?: "")
                         """{"ok":true}"""
                     }
                     else -> {
@@ -1141,6 +1146,9 @@ object BrowserAgent {
             }
             "/new" -> {
                 val url = q["url"] ?: return """{"ok":false,"err":"missing url"}"""
+                if (com.lightbrowser.ui.terminal.BBlock.blocksUrl(url)) {
+                    return """{"ok":false,"err":"blocked by user: ${com.lightbrowser.ui.terminal.BBlock.normalize(url)}"}"""
+                }
                 mainHandler.post {
                     try { com.lightbrowser.ui.browser.TabBus.openInNewTab?.invoke(url) } catch (_: Exception) {}
                 }
@@ -1246,8 +1254,29 @@ object BrowserAgent {
                         .put("label", serverLabel.value).toString()
                 }
             }
-            "/alias" -> {
-                val A = com.lightbrowser.ui.terminal.BrowserAliases
+            "/block" -> {
+                // User blocklist over HTTP: AI no-go sites (host + subdomains).
+                val B = com.lightbrowser.ui.terminal.BBlock
+                when (q["op"] ?: "list") {
+                    "add" -> {
+                        val h = B.normalize(q["host"] ?: "")
+                        if (h.isEmpty() || "." !in h || !B.add(h)) {
+                            return """{"ok":false,"err":"bad host"}"""
+                        }
+                        """{"ok":true,"blocked":"$h"}"""
+                    }
+                    "remove" -> {
+                        B.remove(q["host"] ?: "")
+                        """{"ok":true}"""
+                    }
+                    else -> {
+                        val arr = org.json.JSONArray()
+                        B.all().sorted().forEach { arr.put(it) }
+                        JSONObject().put("ok", true).put("blocked", arr).toString()
+                    }
+                }
+            }
+            "/alias" -> {                val A = com.lightbrowser.ui.terminal.BrowserAliases
                 when (q["op"] ?: "list") {
                     "set" -> {
                         val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""
@@ -1502,7 +1531,7 @@ object BrowserAgent {
                         .put("bytes", r.length).toString()
                 } catch (e: Exception) { """{"ok":false,"err":"save failed: ${e.message}"}""" }
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias /block"}"""
         }
     }
 }

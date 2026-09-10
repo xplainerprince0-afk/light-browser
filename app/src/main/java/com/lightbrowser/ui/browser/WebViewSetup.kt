@@ -193,6 +193,15 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                 return true
             }
             if (!raw.startsWith("http://") && !raw.startsWith("https://") && !raw.startsWith("lb://")) return true
+            // User blocklist (b block): clicks, JS navs and b-driven loads die
+            // here with a popup — the AI sees "blocked by user", never the page.
+            if (com.lightbrowser.ui.terminal.BBlock.blocksUrl(raw)) {
+                try {
+                    val h = com.lightbrowser.ui.terminal.BBlock.normalize(raw)
+                    android.widget.Toast.makeText(app, "⛔ $h blocked by you (b unblock $h)", android.widget.Toast.LENGTH_LONG).show()
+                } catch (_: Exception) {}
+                return true
+            }
             return false
         }
     }
@@ -220,9 +229,18 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                     override fun shouldOverrideUrlLoading(view: WebView?, req: WebResourceRequest?): Boolean {
                         val u = req?.url?.toString() ?: return true
                         if (u.startsWith("http://") || u.startsWith("https://")) {
-                            try { com.lightbrowser.ui.browser.TabBus.openInNewTab(u) } catch (_: Exception) {
-                                try { view?.context?.let { c -> android.content.Intent(android.content.Intent.ACTION_VIEW, req?.url).let { c.startActivity(it) } } } catch (_: Exception) {}
+                            if (com.lightbrowser.ui.terminal.BBlock.blocksUrl(u)) {
+                                try {
+                                    val h = com.lightbrowser.ui.terminal.BBlock.normalize(u)
+                                    android.widget.Toast.makeText(view?.context ?: app, "⛔ $h blocked by you", android.widget.Toast.LENGTH_LONG).show()
+                                } catch (_: Exception) {}
+                                try { tmp.destroy() } catch (_: Exception) {}
+                                return true
                             }
+                            try { com.lightbrowser.ui.browser.TabBus.openInNewTab(u) } catch (_: Exception) {
+                                try { view?.context?.let { c -> android.content.Intent(android.content.Intent.ACTION_VIEW, req?.url).let { c.startActivity(it) } } catch (_: Exception) {}
+                            }
+                        }
                         }
                         try { tmp.destroy() } catch (_: Exception) {}
                         return true

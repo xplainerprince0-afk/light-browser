@@ -1547,6 +1547,27 @@ class TerminalViewModel : ViewModel() {
                 val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
                 java.io.File(sd, ".b-ext")
             } catch (_: Exception) { null }
+            fun macroDir(): java.io.File? = try {
+                val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
+                java.io.File(sd, ".b-cmd")
+            } catch (_: Exception) { null }
+            /** Read a macro file's b-lines (full `b …` lines, # comments, ! soft). */
+            fun macroLines(f: java.io.File): List<BStep>? {
+                return try {
+                    if (!f.isFile) return null
+                    val out = mutableListOf<BStep>()
+                    f.readLines(Charsets.UTF_8).take(200).forEach { rawLine ->
+                        var t = rawLine.trim()
+                        if (t.isEmpty() || t.startsWith("#")) return@forEach
+                        var soft = false
+                        if (t.startsWith("!")) { soft = true; t = t.substring(1).trim() }
+                        if (t.isEmpty()) return@forEach
+                        val full = normalizeBLine(t) ?: return null
+                        out.add(BStep(full, soft))
+                    }
+                    out
+                } catch (_: Exception) { null }
+            }
             try {
                 var cmd = line
                 // Trailing `> file` / `>> file`: buffer output into a jailed
@@ -1599,6 +1620,8 @@ class TerminalViewModel : ViewModel() {
                             "b history [n] | downloads | save <name> | metrics (auto-logged)\n" +
                             "b wait <text|css:sel> [ms] | links [n] | forms | survey — automation senses\n" +
                             "b do \"c1; c2\" | run <file> | replay <rec> | queue — macros (! skips errors)\n" +
+                            "b block <domain> | unblock <domain> | blocks — AI no-go sites\n" +
+                            "b mkcmd <name> [\"c1; c2\"] | cmds — your macro folder (~/.b-cmd/)\n" +
                             "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
                             "b ext | mkext <name> — your own SCRIPT commands (~/.b-ext/, both modes)\n" +
                             "b record start|stop|pause|resume|save <n>|list | serve [on|off]\n" +
@@ -1608,7 +1631,9 @@ class TerminalViewModel : ViewModel() {
                         val url = parts.getOrNull(1) ?: ""
                         val fixed = resolveUrlish(url)
                         if (fixed == null) out("Usage: b open <url>\n", TermRed)
-                        else {
+                        else if (BBlock.blocksUrl(fixed)) {
+                            out("⛔ Blocked by you: ${BBlock.normalize(fixed)} (b unblock ${BBlock.normalize(fixed)} to allow)\n", TermRed)
+                        } else {
                             com.lightbrowser.data.BrowserAgent.navigate(fixed)
                             out("Opening $fixed\n", TermGreen)
                         }
@@ -1617,10 +1642,36 @@ class TerminalViewModel : ViewModel() {
                         val url = parts.getOrNull(1) ?: ""
                         val fixed = resolveUrlish(url)
                         if (fixed == null) out("Usage: b new <url>\n", TermRed)
-                        else {
+                        else if (BBlock.blocksUrl(fixed)) {
+                            out("⛔ Blocked by you: ${BBlock.normalize(fixed)} (b unblock ${BBlock.normalize(fixed)} to allow)\n", TermRed)
+                        } else {
                             com.lightbrowser.ui.browser.TabBus.openInNewTab(fixed)
                             out("New tab: $fixed\n", TermGreen)
                         }
+                    }
+                    "block" -> {
+                        val target = parts.getOrNull(1) ?: ""
+                        val h = BBlock.normalize(target)
+                        if (h.isEmpty() || "." !in h) {
+                            out("Usage: b block <domain-or-url>  (blocks host + subdomains)\n", TermRed)
+                        } else if (BBlock.add(h)) {
+                            out("⛔ Blocked $h — AI and b commands can't open it (b unblock $h)\n", TermGreen)
+                        } else out("Couldn't block '$target'\n", TermRed)
+                    }
+                    "unblock" -> {
+                        val target = parts.getOrNull(1) ?: ""
+                        if (target.isBlank()) out("Usage: b unblock <domain>\n", TermRed)
+                        else if (BBlock.remove(target)) out("Unblocked ${BBlock.normalize(target)}\n", TermGreen)
+                        else out("Wasn't blocked: $target\n", TermDim)
+                    }
+                    "blocks" -> {
+                        val all = BBlock.all().sorted()
+                        if (all.isEmpty()) out("(nothing blocked — b block <domain>)\n", TermDim)
+                        else if (jsonMode) {
+                            val arr = org.json.JSONArray()
+                            all.forEach { arr.put(it) }
+                            out(org.json.JSONObject().put("blocked", arr).toString() + "\n", TermWhite)
+                        } else all.forEach { out("⛔ $it (+subdomains)\n", TermWhite) }
                     }
                     "tabs" -> {
                         val list = try { com.lightbrowser.ui.browser.TabBus.listTabs?.invoke() } catch (_: Exception) { null }
@@ -1790,6 +1841,75 @@ class TerminalViewModel : ViewModel() {
                                     out("Created ${homeify(f.absolutePath)}\nEdit it (Files → Sandbox → .b-ext) then run: b $name\n", TermGreen)
                                 }
                             } catch (e: Exception) { out("mkext failed: ${e.message}\n", TermRed) }
+                        }
+                    }
+                    "cmds" -> {
+                        val files = try {
+                            macroDir()?.listFiles { f -> f.isFile && f.name.endsWith(".b") }
+                                ?.sortedBy { it.name }?.take(30)
+                        } catch (_: Exception) { null }
+                        if (files.isNullOrEmpty()) out("(no macros — create one: b mkcmd <name>)\n", TermDim)
+                        else if (jsonMode) {
+                            val arr = org.json.JSONArray()
+                            files.forEach { arr.put(it.name.removeSuffix(".b")) }
+                            out(org.json.JSONObject().put("cmds", arr).toString() + "\n", TermWhite)
+                        } else files.forEach { f ->
+                            val n = try {
+                                f.readLines(Charsets.UTF_8).take(100).count {
+                                    val t = it.trim()
+                                    t.isNotEmpty() && !t.startsWith("#")
+                                }
+                            } catch (_: Exception) { -1 }
+                            out("• b ${f.name.removeSuffix(".b")}" + (if (n >= 0) " ($n steps)" else "") + "\n", TermWhite)
+                        }
+                    }
+                    "mkcmd" -> {
+                        // b mkcmd <name> ["c1; c2"] — macro file of plain b-lines.
+                        val rest = cmd.removePrefix("mkcmd").trim()
+                        val sp = rest.indexOf(' ')
+                        val name = if (sp < 0) rest else rest.substring(0, sp)
+                        var body = if (sp < 0) "" else rest.substring(sp + 1).trim().removeSurrounding("\"")
+                        if (!name.matches(Regex("[a-z0-9_-]+"))) {
+                            out("Usage: b mkcmd <name> [\"cmd1; cmd2\"]  (macro file, plain b-lines)\n", TermRed)
+                        } else if (isBuiltinB(name) || BrowserAliases.all().containsKey(name)) {
+                            out("'$name' is taken (built-in/alias) — pick another name\n", TermRed)
+                        } else {
+                            try {
+                                val dir = macroDir() ?: throw IllegalStateException("no sandbox")
+                                dir.mkdirs()
+                                val f = java.io.File(dir, "$name.b")
+                                if (f.exists()) out("Exists: ${homeify(f.absolutePath)}\n", TermRed)
+                                else {
+                                    if (body.isBlank()) {
+                                        body = "# macro: b $name — one b-command per line (# comments, ! = skip errors)\n" +
+                                            "# example:\n# b open https://example.com\n# b wait \"Welcome\"\n# b snap\n"
+                                    } else {
+                                        // Validate now so a broken macro never gets saved.
+                                        val steps = splitBatch(body)
+                                        var badStep: String? = null
+                                        if (steps.isEmpty()) badStep = "(empty)"
+                                        else for (s in steps) {
+                                            var t = s.trim()
+                                            if (t.startsWith("!")) t = t.substring(1).trim()
+                                            if (normalizeBLine(t) == null) { badStep = s; break }
+                                        }
+                                        if (badStep != null) {
+                                            out("Not a b command: $badStep\n", TermRed)
+                                            withContext(Dispatchers.Main) { afterCommand() }
+                                            return@launch
+                                        }
+                                        body = steps.joinToString("\n") { s ->
+                                            var t = s.trim()
+                                            val soft = t.startsWith("!")
+                                            if (soft) t = t.substring(1).trim()
+                                            val full = normalizeBLine(t) ?: t
+                                            (if (soft) "! " else "") + full
+                                        } + "\n"
+                                    }
+                                    f.writeText(body, Charsets.UTF_8)
+                                    out("Created ${homeify(f.absolutePath)}\nRun it: b $name (or b run $name)\n", TermGreen)
+                                }
+                            } catch (e: Exception) { out("mkcmd failed: ${e.message}\n", TermRed) }
                         }
                     }
                     "url" -> out((com.lightbrowser.data.BrowserAgent.currentUrl() ?: "(none)") + "\n", TermWhite)
@@ -2073,11 +2193,21 @@ class TerminalViewModel : ViewModel() {
                     }
                     "run" -> {
                         // b run <file> — b-script from the sandbox, one command per line.
+                        // Bare names also match the macro folder (~/.b-cmd/<name>[.b]).
                         val name = parts.getOrNull(1) ?: ""
-                        if (name.isBlank()) { out("Usage: b run <file>  (sandbox-jailed, # comments)\n", TermRed) }
+                        if (name.isBlank()) { out("Usage: b run <file|macro>  (sandbox-jailed, # comments)\n", TermRed) }
                         else {
-                            val f = resolve(name)
-                            if (f == null || !f.isFile) { out("Not found in sandbox: $name\n", TermRed) }
+                            val f = if ("/" in name) resolve(name)
+                            else {
+                                val m = try {
+                                    macroDir()?.let { d ->
+                                        java.io.File(d, "$name.b").takeIf { it.isFile }
+                                            ?: java.io.File(d, name).takeIf { it.isFile }
+                                    }
+                                } catch (_: Exception) { null }
+                                m ?: resolve(name)
+                            }
+                            if (f == null || !f.isFile) { out("Not found in sandbox: $name (try b cmds)\n", TermRed) }
                             else {
                                 val lines = try { f.readLines(Charsets.UTF_8) } catch (_: Exception) { emptyList() }
                                 val norm = mutableListOf<BStep>()
@@ -2464,8 +2594,9 @@ class TerminalViewModel : ViewModel() {
                         } catch (e: Exception) { out("metrics error: ${e.message}\n", TermRed) }
                     }
                     else -> {
-                        // b extensions: ~/.b-ext/<cmd>.sh (create: b mkext <name>).
-                        // Runs in both modes — the PTY `b()` fn dispatches the same dir.
+                        // Dispatch order: shell extensions (~/.b-ext/<cmd>.sh),
+                        // then macro files (~/.b-cmd/<cmd>.b, plain b-lines).
+                        // Runs in both modes — the PTY `b()` fn mirrors this.
                         val head = parts.getOrNull(0) ?: ""
                         val extFile = try {
                             val f = extDir()?.let { java.io.File(it, "$head.sh") }
@@ -2479,16 +2610,36 @@ class TerminalViewModel : ViewModel() {
                             extRan = true
                             runShell("sh " + extFile.absolutePath + (if (args.isNotBlank()) " $args" else ""), 30)
                         } else {
-                            val cands = BuiltinB + BrowserAliases.all().keys + try {
-                                extDir()?.listFiles { f -> f.isFile && f.name.endsWith(".sh") }
-                                    ?.map { it.name.removeSuffix(".sh") } ?: emptyList()
-                            } catch (_: Exception) { emptyList() }
-                            val s = suggestB(head, cands)
-                            out(
-                                if (s != null) "Unknown b command '$head'. Did you mean 'b $s'?\n"
-                                else "Unknown b command. Try: b help (or define your own: b alias name expansion)\n",
-                                TermRed
-                            )
+                            val macroFile = try {
+                                macroDir()?.let { java.io.File(it, "$head.b") }
+                                    ?.takeIf { it.isFile }
+                            } catch (_: Exception) { null }
+                            val steps = macroFile?.let { macroLines(it) }
+                            if (macroFile != null && steps == null) {
+                                out("Macro ${homeify(macroFile.absolutePath)} has a bad line (every line needs a b command)\n", TermRed)
+                            } else if (macroFile != null) {
+                                if (steps.isNullOrEmpty()) out("(empty macro — edit ${homeify(macroFile.absolutePath)})\n", TermDim)
+                                else {
+                                    val extra = cmd.removePrefix(head).trim()
+                                    if (extra.isNotEmpty()) out("(macros take no args — ignoring '$extra'; use b alias for params)\n", TermDim)
+                                    enqueueBatch(steps, 250)
+                                    out("Running $head (${steps.size} step(s))\n", TermGreen)
+                                }
+                            } else {
+                                val cands = BuiltinB + BrowserAliases.all().keys + try {
+                                    extDir()?.listFiles { f -> f.isFile && f.name.endsWith(".sh") }
+                                        ?.map { it.name.removeSuffix(".sh") } ?: emptyList()
+                                } catch (_: Exception) { emptyList() } + try {
+                                    macroDir()?.listFiles { f -> f.isFile && f.name.endsWith(".b") }
+                                        ?.map { it.name.removeSuffix(".b") } ?: emptyList()
+                                } catch (_: Exception) { emptyList() }
+                                val s = suggestB(head, cands)
+                                out(
+                                    if (s != null) "Unknown b command '$head'. Did you mean 'b $s'?\n"
+                                    else "Unknown b command. Try: b help (or define your own: b alias/mkcmd)\n",
+                                    TermRed
+                                )
+                            }
                         }
                     }
                 }
@@ -2542,7 +2693,8 @@ private val BuiltinB = setOf(
     "pos", "tap", "swipe", "scroll", "scroll-to", "scrollto", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
     "alias", "unalias", "ext", "mkext", "metrics",
-    "wait", "links", "forms", "survey", "do", "run", "replay", "queue"
+    "wait", "links", "forms", "survey", "do", "run", "replay", "queue",
+    "block", "unblock", "blocks", "mkcmd", "cmds"
 )
 
 /** Levenshtein distance for `b` did-you-mean suggestions. */
@@ -2687,5 +2839,86 @@ object BStore {
         val a = arg.trim()
         if (a.isEmpty()) return arg
         return all()[a] ?: arg
+    }
+}
+
+/**
+ * Blocked hosts: `b block discord.com` keeps the AI (and every b command)
+ * off a site — privacy guard against agents wandering into settings/billing.
+ * Enforced in WebViewClient.shouldOverrideUrlLoading (clicks, JS navs),
+ * navigate()/open/new entries, and the human search bar. Matches the host
+ * itself + all subdomains. SharedPreferences-backed (survives restarts).
+ */
+object BBlock {
+    private const val PREF = "b_block"
+    private const val KEY = "hosts"
+
+    private fun prefs() = try {
+        com.lightbrowser.data.AppCtx.ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+    } catch (_: Exception) { null }
+
+    /** Normalize a URL, bare domain, or host to a rule host ("" = invalid). */
+    fun normalize(input: String): String {
+        return try {
+            var t = input.trim().lowercase()
+            if (t.isEmpty()) return ""
+            if ("://" !in t) t = "https://$t"
+            val h = try {
+                android.net.Uri.parse(t).host
+            } catch (_: Exception) { null } ?: return ""
+            h.trim().trimEnd('.').lowercase().take(253)
+        } catch (_: Exception) { "" }
+    }
+
+    fun all(): Set<String> {
+        return try {
+            val raw = prefs()?.getString(KEY, null) ?: return emptySet()
+            val o = org.json.JSONObject(raw)
+            buildSet {
+                o.keys().forEach { k ->
+                    try { if (o.optBoolean(k, false)) add(k) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) { emptySet() }
+    }
+
+    fun add(host: String): Boolean {
+        val h = normalize(host)
+        if (h.isEmpty() || "." !in h) return false
+        return try {
+            val o = org.json.JSONObject()
+            (all() + h).forEach { o.put(it, true) }
+            prefs()?.edit()?.putString(KEY, o.toString())?.apply()
+            true
+        } catch (_: Exception) { false }
+    }
+
+    fun remove(host: String): Boolean {
+        val h = normalize(host)
+        if (h.isEmpty()) return false
+        return try {
+            val o = org.json.JSONObject()
+            (all() - h).forEach { o.put(it, true) }
+            prefs()?.edit()?.putString(KEY, o.toString())?.apply()
+            true
+        } catch (_: Exception) { false }
+    }
+
+    /** True when [host] is blocked (exact or any subdomain of a rule). */
+    fun matches(host: String?): Boolean {
+        val h = (host ?: "").trim().lowercase().trimEnd('.')
+        if (h.isEmpty()) return false
+        return all().any { r -> h == r || h.endsWith(".$r") }
+    }
+
+    /** True when this URL's host is blocked (http/https/lb only matter: host). */
+    fun blocksUrl(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        return try {
+            var t = url.trim()
+            if ("://" !in t) t = "https://$t"
+            val h = try { android.net.Uri.parse(t).host } catch (_: Exception) { null }
+            matches(h)
+        } catch (_: Exception) { false }
     }
 }

@@ -98,11 +98,25 @@ screenshots; Stop auto-saves to `~/agent_recs/`. Captures clicks, fills,
 taps and swipes with element, coords, scroll and viewport — replay data),
 `b ext | mkext <name>` (your own script commands).
 
-**Make your own:** `b alias deploy 'b open https://example.com'` → `b deploy`
-works forever (stored on-device, `$1…$9` + `$@` supported; manage them in the
-Agent panel too — drawer → Agent bridge → Your commands). `b unalias deploy`
-removes it. The Agent panel (drawer → Agent bridge) shows all of these
-tappable, plus server start/stop and copy-URL/token.
+### Your own commands: aliases, scripts, macros
+
+| Where | Format | Args? | Both modes? |
+|---|---|---|---|
+| `b alias <name> <expansion>` (prefs) | one-liner with `$1…$9`/`$@` | yes | EXEC dispatches; PTY via `/alias` |
+| `b mkext <name>` → `~/.b-ext/<name>.sh` | shell script (`B_PORT`/`B_KEY` in PTY) | yes (`$1…`) | yes |
+| `b mkcmd <name> ["c1; c2"]` → `~/.b-cmd/<name>.b` | plain b-lines (`#` comments, `!` = skip errors) | no (use alias) | yes — just type `b <name>` |
+
+`b cmds` lists macros, `b run <name>` runs any macro/file, and the Agent
+panel manages all three kinds (plus the blocklist below) without typing.
+
+### Blocked sites (AI no-go)
+
+`b block <domain-or-url>` blocks a host **and its subdomains** everywhere:
+`b open/new`, link taps, JS navigations, popups, and your own address bar —
+every refusal prints `⛔ Blocked by you: <host>`, which is also the popup
+the AI sees. `b blocks` lists, `b unblock <domain>` removes. Example: block
+`discord.com` and no agent flow can wander into `discord.com/settings`
+anymore. Manage it in the Agent panel too.
 
 **Output modifiers:** append `--json` for raw machine output (no PAGE
 markers), or `> file` / `>> file` to save into the sandbox instead of

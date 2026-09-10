@@ -31,6 +31,17 @@ object AlpineEnv {
     /** `b` for real shells (PTY): talks to the agent HTTP bridge. No exec needed. */
     private const val B_FUNCTION =
         "# >>> LIGHTBROWSER-B (managed — do not edit) >>>\n" +
+            "# Macro-file runner (plain b-lines; PTY keeps going past errors).\n" +
+            "_b_runfile() {\n" +
+            "  _b_f=\"\$1\"\n" +
+            "  [ -f \"\$_b_f\" ] || { echo \"no macro file: \$_b_f\"; return 1; }\n" +
+            "  while IFS= read -r _b_l || [ -n \"\$_b_l\" ]; do\n" +
+            "    _b_l=\"\$(printf '%s' \"\$_b_l\" | sed 's/^[[:space:]]*//;s/[[:space:]]*\$//')\"\n" +
+            "    case \"\$_b_l\" in ''|'#'*) continue;; esac\n" +
+            "    case \"\$_b_l\" in '! '*) _b_l=\"\${_b_l#! }\";; '!'*) _b_l=\"\${_b_l#!}\";; esac\n" +
+            "    case \"\$_b_l\" in 'b '*) b \${_b_l#b };; *) echo \"skip (needs b prefix): \$_b_l\";; esac\n" +
+            "  done < \"\$_b_f\"\n" +
+            "}\n" +
             "b() {\n" +
             "  _b_tok=\"\$(cat \"\$HOME/.agent_token\" 2>/dev/null)\"\n" +
             "  if [ -z \"\$_b_tok\" ]; then echo 'agent server is off — start it (drawer -> Agent bridge, or EXEC: b serve on)'; return 1; fi\n" +
@@ -40,7 +51,7 @@ object AlpineEnv {
             "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
             "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
             "  case \"\$_b_c\" in\n" +
-            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|url|title|find|next|prev|snap|text|read|dom|js|links|forms|wait|survey|shot|save|metrics|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|pos|tap|swipe|scroll|scrollto|serve|record (server must be on; do/run/replay/queue are EXEC-only)';;\n" +
+            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|url|title|find|next|prev|snap|text|read|dom|js|links|forms|wait|survey|shot|save|metrics|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|mkcmd|cmds|block|pos|tap|swipe|scroll|scrollto|serve|record|run (server must be on; do/replay/queue are EXEC-only)';;\n" +
             "    status|url|title) _b_get '/status';;\n" +
             "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
             "    tabs|home|back|forward|reload|stop|snap|text|console|downloads) _b_get \"/\$_b_c\";;\n" +
@@ -76,11 +87,17 @@ object AlpineEnv {
             "    swipe) _b_get '/swipe' --data-urlencode \"x1=\$1\" --data-urlencode \"y1=\$2\" --data-urlencode \"x2=\$3\" --data-urlencode \"y2=\$4\" --data-urlencode \"ms=\${5:-300}\";;\n" +
             "    scroll) _b_get '/scroll' --data-urlencode \"y=\${1:-500}\";;\n" +
             "    scrollto) _b_get '/scrollto' --data-urlencode \"x=\${1:-0}\" --data-urlencode \"y=\${2:-0}\";;\n" +
-            "    do|run|replay|queue) echo 'use EXEC-mode b (macros run in the app terminal)';;\n" +
+            "    block) _b_get '/block' --data-urlencode 'op=add' --data-urlencode \"host=\$1\";;\n" +
+            "    unblock) _b_get '/block' --data-urlencode 'op=remove' --data-urlencode \"host=\$1\";;\n" +
+            "    blocks) _b_get '/block';;\n" +
+            "    cmds) ls -1 \"\$HOME/.b-cmd\" 2>/dev/null || echo '(no macros — b mkcmd <name>)';;\n" +
+            "    mkcmd) _b_n=\"\$1\"; case \"\$_b_n\" in ''|*[!a-z0-9_-]*) echo 'usage: b mkcmd <name>'; return 1;; esac; mkdir -p \"\$HOME/.b-cmd\"; _b_f=\"\$HOME/.b-cmd/\$_b_n.b\"; [ -f \"\$_b_f\" ] && { echo \"exists: \$_b_f\"; return 1; }; printf '%s\\n' '# macro: b \$_b_n — one b-command per line (# comments, ! = skip errors)' '# example:' '# b open https://example.com' '# b snap' > \"\$_b_f\"; echo \"created \$_b_f — edit it, then run: b \$_b_n\";;\n" +
+            "    run) _b_rf=\"\$1\"; [ -z \"\$_b_rf\" ] && { echo 'usage: b run <macro|file>'; return 1; }; case \"\$_b_rf\" in */*) ;; *) _b_rf=\"\$HOME/.b-cmd/\$_b_rf\";; esac; case \"\$_b_rf\" in *.b) ;; *) _b_rf=\"\$_b_rf.b\";; esac; _b_runfile \"\$_b_rf\";;\n" +
+            "    do|replay|queue) echo 'use EXEC-mode b (macros run in the app terminal)';;\n" +
             "    unalias) echo 'use EXEC-mode b unalias (or PTY: b alias remove <name>)';;\n" +
             "    ext) ls -1 \"\$HOME/.b-ext\" 2>/dev/null || echo '(no extensions — b mkext <name>)';;\n" +
             "    mkext) _b_n=\"\$1\"; case \"\$_b_n\" in ''|*[!a-z0-9_-]*) echo 'usage: b mkext <name>  ([a-z0-9_-])'; return 1;; esac; mkdir -p \"\$HOME/.b-ext\"; _b_f=\"\$HOME/.b-ext/\$_b_n.sh\"; [ -f \"\$_b_f\" ] && { echo \"exists: \$_b_f\"; return 1; }; printf '%s\\n' '#!/bin/sh' '# custom b command — args in \$1..' '# agent server: \$B_PORT / \$B_KEY (server must be on)' '# example: list tabs' 'curl -s --get \"http://127.0.0.1:\$B_PORT/tabs\" --data-urlencode \"token=\$B_KEY\"; echo' > \"\$_b_f\"; chmod +x \"\$_b_f\"; echo \"created \$_b_f — edit it, then run: b \$_b_n\";;\n" +
-            "    *) if [ -x \"\$HOME/.b-ext/\$_b_c.sh\" ]; then B_PORT=\"\$_b_port\" B_KEY=\"\$_b_key\" sh \"\$HOME/.b-ext/\$_b_c.sh\" \"\$@\"; else echo \"unknown b subcommand: \$_b_c\"; return 1; fi;;\n" +
+            "    *) if [ -x \"\$HOME/.b-ext/\$_b_c.sh\" ]; then B_PORT=\"\$_b_port\" B_KEY=\"\$_b_key\" sh \"\$HOME/.b-ext/\$_b_c.sh\" \"\$@\"; elif [ -f \"\$HOME/.b-cmd/\$_b_c.b\" ]; then _b_runfile \"\$HOME/.b-cmd/\$_b_c.b\"; else echo \"unknown b subcommand: \$_b_c\"; return 1; fi;;\n" +
             "  esac\n" +
             "}\n" +
             "# opencode via the system linker (direct exec is blocked for app files).\n" +
