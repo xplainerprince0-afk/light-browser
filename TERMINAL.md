@@ -207,7 +207,7 @@ Practical rules:
 | Prompt hidden / keys misplaced | Keys lift by max(decor IME, root IME, keys IME) minus the exact Scaffold outer pad — one signal can't bury them; zero when closed. Transcript follows (`Follow output` in drawer). In PTY, keyboard opens on tap/`⌨`, hides with back |
 | opencode `invalid e_shstrndx` | Truncated download — installer now verifies exact byte size + ELF sanity and deletes bad files with a retry message |
 | PTY prompt shows full path | Prompt is `sandbox $ ` everywhere (env + managed `~/.profile` block) |
-| Bottom tabs vanish while typing | No tab bar at all: switch via the app drawer, or enable edge-swipe (Settings → Navigation, opt-in middle band). MiniPlayer stays |
+| Bottom tabs vanish while typing | The tab bar is pinned at the physical bottom (keyboard slides over it). Terminal keys hug the keyboard above it |
 | `b …` says open the Browser tab first | Tab state lives in the Browser tab — visit it once so `TabBus` wires up |
 | `Server is OFF` | `b serve on` or 🤖 → Start server; copy URL+token from the panel |
 | TUI garbage in EXEC | Expected — full-screen TUIs need PTY mode, not EXEC |

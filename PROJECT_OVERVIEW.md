@@ -22,7 +22,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Scripts manager (name validation), Downloads (skip active, refresh on partial), Settings (homepage normalize+autosave, theme persist, speed clamp)
 - [x] Shell: singleTask deep-links, adjustPan keyboard, rememberSaveable tabs/theme, status-bar contrast, offscreen a11y/pointer block, allowBackup=false
 - [x] Shell: edge-swipe tab switching replaces all bottom bars (44dp strips both sides, taps/scroll pass through; left-edge long-press opens terminal drawer), order Browser/Terminal/Sandbox/Player
-- [x] Shell: edge-swipe is OPT-IN (Settings → Navigation, default OFF, slim 20dp middle band, 120px threshold) — no more war with the system back gesture or toolbar scroll; drawer long-press always on
+- [x] Shell: pinned bottom tab bar (Scaffold IME-excluded slot — keyboard slides OVER it, never shoves it up); MiniPlayer removed (Player tab + notification own playback); edge-swipe stays opt-in secondary
 - [x] Shell: hierarchical Back — find/search close → web go-back → homepage → non-browser tabs unwind (search/selection/folders/hero) then return to Browser → exit arm LAST (hoisted AppTabs state)
 - [x] Browser: cold start always homepage; background tabs can't hijack current URL (home-flash + new-tab-previous-link fixed); keyboard only autofocuses on the active tab
 - [ ] Screenshot/preview pass on foldable/tablet

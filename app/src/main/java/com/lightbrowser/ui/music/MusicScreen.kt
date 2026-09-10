@@ -476,52 +476,6 @@ private fun HeroPlayer(
     }
 }
 
-@Composable
-fun MiniPlayer(
-    modifier: Modifier = Modifier,
-    vm: MusicViewModel,
-    onExpand: () -> Unit
-) {
-    val pl by vm.player.collectAsState()
-    if (pl.novelIndex == -1) return
-    val novel = vm.currentNovel() ?: return
-    Surface(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-        shape = LargeIncreasedShape,
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        tonalElevation = 3.dp,
-        onClick = onExpand
-    ) {
-        Column {
-            Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                AsyncImage(
-                    model = novel.coverUri,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(novel.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(vm.chapterTitle(), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (!pl.ready && !pl.isPlaying && pl.positionMs == 0L) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                } else {
-                    IconButton(onClick = vm::toggle) {
-                        Icon(if (pl.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (pl.isPlaying) "Pause" else "Play")
-                    }
-                }
-            }
-            val dur = pl.durationMs.coerceAtLeast(1)
-            LinearProgressIndicator(
-                progress = { (pl.positionMs.coerceIn(0, dur)) / dur.toFloat() },
-                modifier = Modifier.fillMaxWidth().height(3.dp)
-            )
-        }
-    }
-}
-
 private fun repeatIcon(repeat: Int): ImageVector = when (repeat) {
     2 -> Icons.Filled.RepeatOne
     1 -> Icons.Filled.RepeatOn

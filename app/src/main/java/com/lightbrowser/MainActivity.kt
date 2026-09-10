@@ -35,6 +35,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
@@ -50,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -64,7 +67,6 @@ import com.lightbrowser.ui.browser.BrowserScreen
 import com.lightbrowser.ui.browser.BrowserViewModel
 import com.lightbrowser.ui.downloads.DownloadsScreen
 import com.lightbrowser.ui.files.FilesScreen
-import com.lightbrowser.ui.music.MiniPlayer
 import com.lightbrowser.ui.music.MusicScreen
 import com.lightbrowser.ui.music.MusicViewModel
 import com.lightbrowser.ui.scripts.ScriptsScreen
@@ -320,8 +322,27 @@ private fun AppShell(
         }
     ) {
         // safeDrawing INCLUDES the IME — exclude it so the keyboard overlays
-        // the pinned bottom zone instead of pushing it up (adjustNothing).
-        Scaffold(contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime)) { inner ->
+        // the pinned bottom bar instead of pushing it up (adjustNothing).
+        // The bar lives in this IME-excluded slot: it stays docked at the
+        // physical bottom (keyboard slides OVER it) — the old
+        // ride-above-the-keys bug can't recur. Hidden on wide (rail covers it).
+        Scaffold(
+            contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
+            bottomBar = {
+                if (LocalConfiguration.current.screenWidthDp < 600) {
+                    NavigationBar {
+                        Tab.entries.filter { it.inBar }.forEach { t ->
+                            NavigationBarItem(
+                                selected = tab == t,
+                                onClick = { tab = t },
+                                icon = { Icon(t.icon, t.title) },
+                                label = { Text(t.title) }
+                            )
+                        }
+                    }
+                }
+            }
+        ) { inner ->
             // Publish the real outer bottom pad for `kbd-diag` (terminal
             // root-lift math needs no nav assumptions).
             val outerDensity = LocalDensity.current
@@ -350,7 +371,10 @@ private fun AppShell(
                         // ALL tabs stay composed (WebView keeps its page, lists keep
                         // scroll, terminal keeps colors). Inactive ones are parked
                         // offscreen: no destroy, no reload, no state reset, no touch.
-                        Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                        // No bottom content here: the tab bar lives in Scaffold's
+                        // bottomBar slot (IME-excluded, always docked). Playback is
+                        // controlled from the Player tab + notification.
+                        Box(modifier = Modifier.fillMaxSize()) {
                             BrowserScreen(
                                 modifier = Modifier.fillMaxSize().offscreen(tab != Tab.Browser),
                                 active = tab == Tab.Browser,
@@ -415,17 +439,6 @@ private fun AppShell(
                                 modifier = Modifier.align(Alignment.CenterEnd)
                                     .fillMaxHeight(0.55f)
                             )
-                        }
-                        // Bottom zone: MiniPlayer only. No tab bar of any kind —
-                        // tabs switch via the left/right edge-swipe strips
-                        // (below). Nothing here changes size with the keyboard,
-                        // so the outer bottom inset is static and terminal math
-                        // stays exact. (Terminal keeps its own keys above the
-                        // keyboard.)
-                        Column {
-                            if (tab != Tab.Music) {
-                                MiniPlayer(vm = musicVm, onExpand = { tab = Tab.Music })
-                            }
                         }
                     }
                 }

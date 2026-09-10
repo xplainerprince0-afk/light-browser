@@ -306,7 +306,7 @@ fun SettingsScreen(
                     ).show()
                 })
                 Text(
-                    "Back unwinds each tab first (search → selection → folders → Browser home) and only then exits. Tabs also live in the top-left app drawer.",
+                    "Back unwinds each tab first (search → selection → folders → Browser home) and only then exits. Main tabs live in the bottom bar.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
