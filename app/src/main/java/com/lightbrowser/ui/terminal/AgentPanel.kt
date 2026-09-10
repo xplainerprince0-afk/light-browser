@@ -125,7 +125,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                         if (recordingNow) BrowserAgent.stopRecording()
                         else BrowserAgent.startRecording()
                     } catch (_: Exception) {}
-                    withContext(Dispatchers.Main) { recVersion++ }
+                    // List reloads via recordingNow change below; no bump needed.
                 }
             }) { Text(if (recordingNow) "Stop" else "Start") }
         }
