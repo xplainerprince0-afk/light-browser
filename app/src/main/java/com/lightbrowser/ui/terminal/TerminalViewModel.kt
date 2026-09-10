@@ -682,7 +682,7 @@ class TerminalViewModel : ViewModel() {
             print("(batch stopped on error — prefix a step with ! to skip past it)\n", TermRed)
             return
         }
-        if (batchFailed && batchCurSoft) { batchFailed = false; batchFailGen = -1 }
+        if (batchFailed && batchCurSoft) { batchFailed = false }
         val step = q.removeFirst()
         if (q.isEmpty()) bQueue = null
         batchCurSoft = step.soft
