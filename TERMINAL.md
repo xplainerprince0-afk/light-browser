@@ -108,6 +108,24 @@ tappable, plus server start/stop and copy-URL/token.
 markers), or `> file` / `>> file` to save into the sandbox instead of
 printing (PTY shells already pipe natively: `b snap > page.txt`).
 
+### Web automation (`do` / `run` / `replay` / senses)
+
+Selectors with spaces must be quoted: `b click "div .btn"` (same for
+`fill/hover/select/pos/submit/dom/store/key`).
+
+| Command | What it does |
+|---|---|
+| `b wait <text\|css:sel> [ms]` | Poll until text/element appears (default 10s, max 60s) — use after clicks/navigations so macros don't race the page |
+| `b links [n]` / `b forms` | All links / form fields as JSON (feeds `fill`/`click`) |
+| `b survey` | One-shot bundle: url, title, viewport, console, tabs, view box, last tap |
+| `b do "c1; c2; !c3"` | Chain b-commands (`;` splits, quotes respected); stops on first error unless the step starts with `!` |
+| `b run <file>` | Same, from a sandbox file (`#` comments) — your saved macros |
+| `b replay <rec>` | Execute a saved recording (auto-opens URLs, 1.2s pacing, `^C` stops) |
+| `b queue` | Show pending macro steps |
+
+Example — login flow in one line:
+`b do "open example.com/login; wait css:#user; fill #user me; fill #pass x --submit; wait Welcome"`
+
 ### Tap-accuracy test (`b metrics`)
 
 1. `b pos <ref>` (or `b snap` for a ref) → note `x y`.

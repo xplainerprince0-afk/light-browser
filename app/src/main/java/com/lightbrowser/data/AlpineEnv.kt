@@ -40,10 +40,13 @@ object AlpineEnv {
             "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
             "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
             "  case \"\$_b_c\" in\n" +
-            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|url|title|find|next|prev|snap|text|read|dom|js|shot|save|metrics|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|pos|tap|swipe|scroll|scrollto|serve|record (server must be on; record/serve/alias also in EXEC)';;\n" +
+            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|stop|url|title|find|next|prev|snap|text|read|dom|js|links|forms|wait|survey|shot|save|metrics|console|cookies|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|pos|tap|swipe|scroll|scrollto|serve|record (server must be on; do/run/replay/queue are EXEC-only)';;\n" +
             "    status|url|title) _b_get '/status';;\n" +
             "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
             "    tabs|home|back|forward|reload|stop|snap|text|console|downloads) _b_get \"/\$_b_c\";;\n" +
+            "    links) _b_get '/links' --data-urlencode \"max=\${1:-100}\";;\n" +
+            "    forms|survey) _b_get \"/\$_b_c\";;\n" +
+            "    wait) _b_w=\"\$1\"; shift; case \"\$_b_w\" in css:*) _b_get '/wait' --data-urlencode 'mode=sel' --data-urlencode \"v=\${_b_w#css:}\" --data-urlencode \"timeout=\${1:-10000}\";; *) _b_get '/wait' --data-urlencode 'mode=text' --data-urlencode \"v=\$_b_w \$*\" --data-urlencode \"timeout=10000\";; esac;;\n" +
             "    read) _b_get '/read' --data-urlencode \"max=\${1:-6000}\";;\n" +
             "    dom) _b_get '/dom' --data-urlencode \"sel=\${1:-body}\";;\n" +
             "    next|prev) _b_get \"/\$_b_c\";;\n" +
@@ -73,6 +76,7 @@ object AlpineEnv {
             "    swipe) _b_get '/swipe' --data-urlencode \"x1=\$1\" --data-urlencode \"y1=\$2\" --data-urlencode \"x2=\$3\" --data-urlencode \"y2=\$4\" --data-urlencode \"ms=\${5:-300}\";;\n" +
             "    scroll) _b_get '/scroll' --data-urlencode \"y=\${1:-500}\";;\n" +
             "    scrollto) _b_get '/scrollto' --data-urlencode \"x=\${1:-0}\" --data-urlencode \"y=\${2:-0}\";;\n" +
+            "    do|run|replay|queue) echo 'use EXEC-mode b (macros run in the app terminal)';;\n" +
             "    unalias) echo 'use EXEC-mode b unalias (or PTY: b alias remove <name>)';;\n" +
             "    ext) ls -1 \"\$HOME/.b-ext\" 2>/dev/null || echo '(no extensions — b mkext <name>)';;\n" +
             "    mkext) _b_n=\"\$1\"; case \"\$_b_n\" in ''|*[!a-z0-9_-]*) echo 'usage: b mkext <name>  ([a-z0-9_-])'; return 1;; esac; mkdir -p \"\$HOME/.b-ext\"; _b_f=\"\$HOME/.b-ext/\$_b_n.sh\"; [ -f \"\$_b_f\" ] && { echo \"exists: \$_b_f\"; return 1; }; printf '%s\\n' '#!/bin/sh' '# custom b command — args in \$1..' '# agent server: \$B_PORT / \$B_KEY (server must be on)' '# example: list tabs' 'curl -s --get \"http://127.0.0.1:\$B_PORT/tabs\" --data-urlencode \"token=\$B_KEY\"; echo' > \"\$_b_f\"; chmod +x \"\$_b_f\"; echo \"created \$_b_f — edit it, then run: b \$_b_n\";;\n" +

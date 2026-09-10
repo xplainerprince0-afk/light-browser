@@ -76,6 +76,17 @@ class TerminalViewModel : ViewModel() {
     /** Offset before which the transcript is frozen while a command runs (-1 idle). */
     private var lockBefore: Int = -1
 
+    /**
+     * Batch runner for `b do` / `b run` / `b replay`: queued b-lines drained
+     * one per afterCommand ( chaining without refactoring the dispatcher).
+     * Steps print `› line`; failures stop the batch unless `!`-prefixed.
+     */
+    private data class BStep(val line: String, val soft: Boolean)
+    private var bQueue: ArrayDeque<BStep>? = null
+    private var bQueueDelayMs: Long = 250
+    private var batchFailed = false
+    private var batchCurSoft = false
+
     var sandboxDir: File? = null
         private set
     var alpineInstalled = false
@@ -628,12 +639,18 @@ class TerminalViewModel : ViewModel() {
         running = null
         lockBefore = -1
         _status.value = "idle"
+        // ^C stops automation too.
+        bQueue = null
+        batchFailed = false
     }
 
     fun clear() {
         // Reset the lock: submit() sets it before execCmd, so a guarded early-return
         // here permanently bricked the terminal after every `clear` command.
         lockBefore = -1
+        // Fresh transcript stops any running batch as well.
+        bQueue = null
+        batchFailed = false
         try {
             val s = active()
             s.segs.clear()
@@ -651,6 +668,37 @@ class TerminalViewModel : ViewModel() {
         refreshPrompt()
         printPrompt()
         lockBefore = -1
+        maybeNextQueued()
+    }
+
+    /** Drain one queued b-line per completed command (Main thread only). */
+    private fun maybeNextQueued() {
+        val q = bQueue ?: return
+        if (q.isEmpty()) { bQueue = null; return }
+        if (lockBefore >= 0 || running != null) return
+        if (batchFailed && !batchCurSoft) {
+            bQueue = null
+            batchFailed = false
+            print("(batch stopped on error — prefix a step with ! to skip past it)\n", TermRed)
+            return
+        }
+        if (batchFailed && batchCurSoft) { batchFailed = false; batchFailGen = -1 }
+        val step = q.removeFirst()
+        if (q.isEmpty()) bQueue = null
+        batchCurSoft = step.soft
+        viewModelScope.launch(Dispatchers.Main) {
+            if (bQueueDelayMs > 0) kotlinx.coroutines.delay(bQueueDelayMs)
+            if (lockBefore >= 0 || running != null) {
+                // User started something meanwhile — requeue at front.
+                val qq = bQueue ?: ArrayDeque()
+                qq.addFirst(step)
+                bQueue = qq
+                batchCurSoft = false
+                return@launch
+            }
+            print("› ${step.line}\n", TermDim)
+            try { execCmd(step.line) } catch (_: Exception) {}
+        }
     }
 
     private fun execCmd(raw: String) {
@@ -1269,6 +1317,93 @@ class TerminalViewModel : ViewModel() {
         return out
     }
 
+    /**
+     * Split `head <selector…> [rest]` honoring quotes: CSS selectors contain
+     * spaces (`div .btn`), which naive tokenizing mangles. `"a b" c` → (a b, c).
+     */
+    private fun splitSel(cmd: String, head: String): Pair<String, String> {
+        val r = cmd.removePrefix(head).trim()
+        if (r.isEmpty()) return "" to ""
+        val q = r[0]
+        if (q == '"' || q == '\'') {
+            val end = r.indexOf(q, 1)
+            if (end < 0) return r.substring(1) to ""
+            return r.substring(1, end) to r.substring(end + 1).trim()
+        }
+        val sp = r.indexOf(' ')
+        if (sp < 0) return r to ""
+        return r.substring(0, sp) to r.substring(sp + 1)
+    }
+
+    /** Quote a selector/value for generated b-lines (replay). */
+    private fun bq(s: String): String {
+        if (s.isEmpty() || s.any { it.isWhitespace() || it == '"' || it == '\'' }) {
+            return "'" + s.replace("'", "'\\''") + "'"
+        }
+        return s
+    }
+
+    /** Unwrap evaluateJavascript double-encoding → JSONArray, or null. */
+    private fun parseJsonArray(raw: String): org.json.JSONArray? {
+        return try {
+            var s = raw.trim()
+            repeat(2) {
+                if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                    s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                }
+            }
+            org.json.JSONArray(s)
+        } catch (_: Exception) { null }
+    }
+
+    /** Split batch text on `;` respecting single/double quotes. */
+    private fun splitBatch(raw: String): List<String> {
+        val out = mutableListOf<String>()
+        val cur = StringBuilder()
+        var q: Char? = null
+        var i = 0
+        while (i < raw.length) {
+            val c = raw[i]
+            if (q != null) {
+                cur.append(c)
+                if (c == q) q = null
+            } else if (c == '"' || c == '\'') {
+                q = c
+                cur.append(c)
+            } else if (c == ';') {
+                out.add(cur.toString())
+                cur.clear()
+            } else cur.append(c)
+            i++
+        }
+        out.add(cur.toString())
+        return out.map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
+    /** Normalize one batch line to a full `b …` line (null = not a b command). */
+    private fun normalizeBLine(t: String): String? {
+        if (t == "b" || t.startsWith("b ")) return t
+        val head = t.substringBefore(" ").trim().lowercase()
+        if (head.isEmpty()) return null
+        if (!isBuiltinB(head) && !BrowserAliases.all().containsKey(head)) {
+            // Extension scripts count too.
+            val ok = try {
+                val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
+                java.io.File(sd, ".b-ext/$head.sh").let { it.isFile && it.canExecute() }
+            } catch (_: Exception) { false }
+            if (!ok) return null
+        }
+        return "b $t"
+    }
+
+    private fun enqueueBatch(steps: List<BStep>, delayMs: Long) {
+        val q = bQueue ?: ArrayDeque<BStep>().also { bQueue = it }
+        q.addAll(steps)
+        bQueueDelayMs = delayMs
+        batchFailed = false
+        batchCurSoft = false
+    }
+
     private fun runShell(cmd: String, timeoutSec: Int = 15) {
         val sd = sandboxDir ?: return
         val cwd = try { active().dir } catch (_: Exception) { null } ?: sd
@@ -1380,6 +1515,23 @@ class TerminalViewModel : ViewModel() {
                     fileBuf.append(t)
                     return
                 }
+                // Batch fail-fast signal: error-ish SHORT lines stop `b do/run`
+                // at the next drain (Main FIFO keeps this ordered before it).
+                // Length gate: page bodies can start with "Error…" — not failures.
+                if (bQueue != null && !batchFailed && t.length < 500) {
+                    val tl = t.trimStart()
+                    if (tl.startsWith("ERR", ignoreCase = true) ||
+                        tl.startsWith("Unknown b command", ignoreCase = true) ||
+                        tl.startsWith("Usage:", ignoreCase = true) ||
+                        tl.contains("failed", ignoreCase = true) ||
+                        tl.contains("TIMEOUT", ignoreCase = true) ||
+                        tl.startsWith("Nothing to save", ignoreCase = true) ||
+                        tl.startsWith("Shot failed", ignoreCase = true) ||
+                        tl.startsWith("(no tabs", ignoreCase = true) ||
+                        tl.startsWith("Access denied", ignoreCase = true) ||
+                        tl.startsWith("save failed", ignoreCase = true)
+                    ) batchFailed = true
+                }
                 viewModelScope.launch(Dispatchers.Main) { print(t, c) }
             }
             fun wrapped(origin: String, body: String) {
@@ -1445,6 +1597,8 @@ class TerminalViewModel : ViewModel() {
                             "b find <text> | next | prev | b scroll-to (scrollto) <x> <y> | b scroll [px]\n" +
                             "b shot [--full] | console [n] | cookies [get [url] | set \"k=v\" [url] | clear]\n" +
                             "b history [n] | downloads | save <name> | metrics (auto-logged)\n" +
+                            "b wait <text|css:sel> [ms] | links [n] | forms | survey — automation senses\n" +
+                            "b do \"c1; c2\" | run <file> | replay <rec> | queue — macros (! skips errors)\n" +
                             "b alias [name expansion] | unalias <name> — your own cmds, no update needed\n" +
                             "b ext | mkext <name> — your own SCRIPT commands (~/.b-ext/, both modes)\n" +
                             "b record start|stop|pause|resume|save <n>|list | serve [on|off]\n" +
@@ -1530,8 +1684,8 @@ class TerminalViewModel : ViewModel() {
                     "prev" -> com.lightbrowser.data.BrowserAgent.findNext(false)
                     "pos" -> {
                         // Resolve ref/css → screen coords (CSS px). Feed them to `b tap`.
-                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
-                        if (sel.isBlank()) out("Usage: b pos <ref|css>  (try b snap first)\n", TermRed)
+                        val sel = BStore.resolve(splitSel(cmd, "pos").first)
+                        if (sel.isBlank()) out("Usage: b pos <ref|css>  (try b snap first, quote sels with spaces)\n", TermRed)
                         else {
                             val raw = com.lightbrowser.data.BrowserAgent.locateBlocking(sel)
                             if (raw.startsWith("ERR")) out("$raw\n", TermRed)
@@ -1657,7 +1811,7 @@ class TerminalViewModel : ViewModel() {
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
                     }
                     "dom" -> {
-                        val sel = BStore.resolve(parts.getOrNull(1)?.takeIf { it.isNotBlank() } ?: "body")
+                        val sel = BStore.resolve(splitSel(cmd, "dom").first.ifBlank { "body" })
                         val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
                         val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$esc');return e?e.outerHTML.slice(0,20000):'ERR no-node';}catch(e){return 'ERR '+e;}})()")
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
@@ -1667,8 +1821,9 @@ class TerminalViewModel : ViewModel() {
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
                     }
                     "click" -> {
-                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
-                        if (sel.isBlank()) out("Usage: b click <ref|css>\n", TermRed)
+                        // Selectors may contain spaces — quote them: b click "div .btn".
+                        val sel = BStore.resolve(splitSel(cmd, "click").first)
+                        if (sel.isBlank()) out("Usage: b click <ref|css>  (quote sels with spaces)\n", TermRed)
                         else {
                             val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
                             val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.click('$esc');}catch(e){return 'ERR '+e;}})()")
@@ -1676,18 +1831,19 @@ class TerminalViewModel : ViewModel() {
                         }
                     }
                     "fill" -> {
-                        var rest = cmd.removePrefix("fill").trim()
+                        var rest = splitSel(cmd, "fill")
                         var submit = false
-                        if (rest.endsWith("--submit")) {
+                        var selRaw = rest.first
+                        var v = rest.second
+                        if (v.endsWith("--submit")) {
                             submit = true
-                            rest = rest.removeSuffix("--submit").trim()
+                            v = v.removeSuffix("--submit").trim()
                         }
-                        val sp = rest.indexOf(' ')
-                        if (sp < 0) out("Usage: b fill <ref|css> <value> [--submit]\n", TermRed)
+                        if (selRaw.isBlank() || v.isEmpty()) out("Usage: b fill <ref|css> <value> [--submit]  (quote sels with spaces)\n", TermRed)
                         else {
-                            val sel = BStore.resolve(rest.substring(0, sp)).replace("\\", "\\\\").replace("'", "\\'")
-                            val v = rest.substring(sp + 1).replace("\\", "\\\\").replace("'", "\\'")
-                            var r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.fill('$sel','$v');}catch(e){return 'ERR '+e;}})()")
+                            val sel = BStore.resolve(selRaw).replace("\\", "\\\\").replace("'", "\\'")
+                            val vv = v.replace("\\", "\\\\").replace("'", "\\'")
+                            var r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{return window.LightAgent.fill('$sel','$vv');}catch(e){return 'ERR '+e;}})()")
                             if (r.contains("OK") && submit) {
                                 val r2 = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$sel');var f=e?(e.form||e.closest('form')):null;if(!f)return 'ERR no-form';f.submit();return 'OK submitted';}catch(e){return 'ERR '+e;}})()")
                                 r = "$r / $r2"
@@ -1757,7 +1913,262 @@ class TerminalViewModel : ViewModel() {
                                 if (recs.isEmpty()) out("(no saved recordings — sandbox/agent_recs)\n", TermDim)
                                 else recs.take(10).forEach { (f, n) -> out("• $f ($n actions)\n", TermWhite) }
                             }
-                            else -> out("Usage: b record start|stop|save <name>|list\n", TermRed)
+                            else -> out("Usage: b record start|stop|pause|resume|save <name>|list\n", TermRed)
+                        }
+                    }
+                    "wait" -> {
+                        // b wait <text|css:sel> [timeoutMs] — poll for SPA loads
+                        // and post-click navigation so macros don't race the page.
+                        val rawArg = cmd.removePrefix("wait").trim()
+                        if (rawArg.isBlank()) {
+                            out("Usage: b wait <text|css:sel> [timeoutMs]\n", TermRed)
+                        } else {
+                            val toks = rawArg.split(Regex("\\s+"))
+                            val target: String
+                            val timeout: Long
+                            if (toks.size >= 2 && toks.last().toLongOrNull() != null) {
+                                target = toks.dropLast(1).joinToString(" ")
+                                timeout = toks.last().toLong().coerceIn(1000, 60000)
+                            } else {
+                                target = rawArg
+                                timeout = 10000L
+                            }
+                            val selMode = target.startsWith("css:")
+                            val query = if (selMode) target.removePrefix("css:") else target
+                            if (selMode && query.isBlank()) {
+                                out("Usage: b wait <text|css:sel> [timeoutMs]\n", TermRed)
+                            } else {
+                                out("Waiting ${if (selMode) "for $query" else "for \"$target\""} (up to ${timeout}ms)…\n", TermDim)
+                                val t0 = System.currentTimeMillis()
+                                var found = false
+                                while (System.currentTimeMillis() - t0 < timeout) {
+                                    try {
+                                        found = if (selMode) {
+                                            val esc = query.replace("\\", "\\\\").replace("'", "\\'")
+                                            val r = com.lightbrowser.data.BrowserAgent.eval(
+                                                "(function(){try{return document.querySelector('$esc')?'YES':'NO';}catch(e){return 'ERR';}})()"
+                                            )
+                                            r.contains("YES")
+                                        } else {
+                                            try { com.lightbrowser.data.BrowserAgent.pageText(2000).contains(target) } catch (_: Exception) { false }
+                                        }
+                                    } catch (_: Exception) { found = false }
+                                    if (found) break
+                                    try { kotlinx.coroutines.delay(500) } catch (_: Exception) { break }
+                                }
+                                val el = System.currentTimeMillis() - t0
+                                if (found) out("FOUND in ${el}ms\n", TermGreen)
+                                else out("TIMEOUT after ${el}ms\n", TermRed)
+                            }
+                        }
+                    }
+                    "links" -> {
+                        val max = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(1, 200) ?: 100
+                        val raw = com.lightbrowser.data.BrowserAgent.eval(
+                            "(function(){try{var a=Array.prototype.slice.call(document.querySelectorAll('a[href]'),0,$max)" +
+                                ".map(function(e){return{text:(e.innerText||'').trim().slice(0,80),href:(e.href||'').slice(0,500)}});" +
+                                "return JSON.stringify(a);}catch(e){return 'ERR '+e;}})()"
+                        )
+                        if (raw.trimStart().startsWith("ERR")) out("$raw\n", TermRed)
+                        else {
+                            val arr = parseJsonArray(raw)
+                            if (arr == null) out("$raw\n", TermRed)
+                            else if (jsonMode) out(arr.toString() + "\n", TermWhite)
+                            else {
+                                if (arr.length() == 0) out("(no links on this page)\n", TermDim)
+                                else for (i in 0 until arr.length()) {
+                                    val o = arr.optJSONObject(i) ?: continue
+                                    out("• ${o.optString("text").ifBlank { "(no text)" }.take(60)} → ${o.optString("href").take(100)}\n", TermWhite)
+                                }
+                            }
+                        }
+                    }
+                    "forms" -> {
+                        val raw = com.lightbrowser.data.BrowserAgent.eval(
+                            "(function(){try{" +
+                                "function ps(e){try{if(e.id)return '#'+e.id;var p=e.parentNode;if(!p)return e.tagName.toLowerCase();" +
+                                "var sibs=Array.prototype.filter.call(p.children,function(x){return x.tagName===e.tagName;});" +
+                                "return e.tagName.toLowerCase()+':nth-of-type('+(sibs.indexOf(e)+1)+')';}catch(x){return '?';}}" +
+                                "var out=[];var els=document.querySelectorAll('input,select,textarea');" +
+                                "for(var i=0;i<els.length&&i<100;i++){var e=els[i];" +
+                                "var f=e.form;var fi=-1;if(f){var fs=document.forms;for(var k=0;k<fs.length;k++){if(fs[k]===f){fi=k;break;}}}" +
+                                "out.push({form:fi,type:(e.type||e.tagName.toLowerCase()),name:(e.name||'')," +
+                                "label:((e.placeholder||e.getAttribute('aria-label')||'')+'').slice(0,60),sel:ps(e)});}" +
+                                "return JSON.stringify(out);}catch(e){return 'ERR '+e;}})()"
+                        )
+                        if (raw.trimStart().startsWith("ERR")) out("$raw\n", TermRed)
+                        else {
+                            val arr = parseJsonArray(raw)
+                            if (arr == null) out("$raw\n", TermRed)
+                            else if (jsonMode) out(arr.toString() + "\n", TermWhite)
+                            else {
+                                if (arr.length() == 0) out("(no form fields on this page)\n", TermDim)
+                                else for (i in 0 until arr.length()) {
+                                    val o = arr.optJSONObject(i) ?: continue
+                                    out("form#${o.optInt("form")} [${o.optString("type")}] ${o.optString("name").ifBlank { o.optString("label") }} → ${o.optString("sel")}\n", TermWhite)
+                                }
+                            }
+                        }
+                    }
+                    "survey" -> {
+                        // One-shot bundle for agents: nav + viewport + errors + taps.
+                        val url = com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?"
+                        val title = try {
+                            com.lightbrowser.data.BrowserAgent.eval("(function(){return document.title;})()")
+                        } catch (_: Exception) { "?" }
+                        var s = try {
+                            com.lightbrowser.data.BrowserAgent.eval(
+                                "(function(){try{return JSON.stringify({vw:window.innerWidth,vh:window.innerHeight,dpr:window.devicePixelRatio||1,sx:window.scrollX,sy:window.scrollY});}catch(e){return 'ERR '+e;}})()"
+                            )
+                        } catch (_: Exception) { "ERR" }
+                        s = s.trim()
+                        repeat(2) {
+                            if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                                s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                            }
+                        }
+                        val vp = try { org.json.JSONObject(s) } catch (_: Exception) { org.json.JSONObject() }
+                        val cons = org.json.JSONArray()
+                        try { com.lightbrowser.data.BrowserAgent.consoleTail(8).forEach { cons.put(it.take(300)) } } catch (_: Exception) {}
+                        val tabs = try {
+                            com.lightbrowser.ui.browser.TabBus.listTabs?.invoke()?.size ?: -1
+                        } catch (_: Exception) { -1 }
+                        val rep = org.json.JSONObject().put("url", url).put("title", title)
+                            .put("viewport", vp).put("console", cons).put("tabs", tabs)
+                        try {
+                            val box = com.lightbrowser.data.BrowserAgent.webViewBoxBlocking(8)
+                            try { rep.put("view", org.json.JSONObject(box)) }
+                            catch (_: Exception) { rep.put("viewErr", box.take(80)) }
+                        } catch (_: Exception) {}
+                        try {
+                            com.lightbrowser.data.BrowserAgent.lastTap?.let { rep.put("lastTap", org.json.JSONObject(it)) }
+                        } catch (_: Exception) {}
+                        if (jsonMode) out(rep.toString() + "\n", TermWhite)
+                        else out(rep.toString(1) + "\n", TermWhite)
+                    }
+                    "do" -> {
+                        // b do "cmd1; cmd2" — chain steps (! prefix = skip past errors).
+                        var rest = cmd.removePrefix("do").trim().removeSurrounding("\"")
+                        if (rest.isBlank()) {
+                            out("Usage: b do \"cmd1; cmd2\"  (! prefix skips errors)\n", TermRed)
+                        } else {
+                            val norm = mutableListOf<BStep>()
+                            var bad: String? = null
+                            for (s in splitBatch(rest)) {
+                                var t = s.trim()
+                                var soft = false
+                                if (t.startsWith("!")) { soft = true; t = t.substring(1).trim() }
+                                if (t.isEmpty()) continue
+                                val full = normalizeBLine(t)
+                                if (full == null) { bad = s; break }
+                                norm.add(BStep(full, soft))
+                            }
+                            if (bad != null) out("Not a b command: $bad\n", TermRed)
+                            else if (norm.isEmpty()) out("Nothing to run\n", TermRed)
+                            else {
+                                enqueueBatch(norm, 250)
+                                out("Queued ${norm.size} step(s)\n", TermGreen)
+                            }
+                        }
+                    }
+                    "run" -> {
+                        // b run <file> — b-script from the sandbox, one command per line.
+                        val name = parts.getOrNull(1) ?: ""
+                        if (name.isBlank()) { out("Usage: b run <file>  (sandbox-jailed, # comments)\n", TermRed) }
+                        else {
+                            val f = resolve(name)
+                            if (f == null || !f.isFile) { out("Not found in sandbox: $name\n", TermRed) }
+                            else {
+                                val lines = try { f.readLines(Charsets.UTF_8) } catch (_: Exception) { emptyList() }
+                                val norm = mutableListOf<BStep>()
+                                var bad: String? = null
+                                for (rawLine in lines) {
+                                    var t = rawLine.trim()
+                                    if (t.isEmpty() || t.startsWith("#")) continue
+                                    var soft = false
+                                    if (t.startsWith("!")) { soft = true; t = t.substring(1).trim() }
+                                    if (t.isEmpty()) continue
+                                    val full = normalizeBLine(t)
+                                    if (full == null) { bad = rawLine.trim(); break }
+                                    norm.add(BStep(full, soft))
+                                }
+                                if (bad != null) out("Not a b command: $bad\n", TermRed)
+                                else if (norm.isEmpty()) out("Nothing to run in ${f.name}\n", TermRed)
+                                else {
+                                    enqueueBatch(norm, 250)
+                                    out("Queued ${norm.size} step(s) from ${f.name}\n", TermGreen)
+                                }
+                            }
+                        }
+                    }
+                    "replay" -> {
+                        // b replay <name|file> — execute a saved recording (tap/swipe/click/fill).
+                        val arg = parts.getOrNull(1) ?: ""
+                        if (arg.isBlank()) { out("Usage: b replay <name|file>  (from b record save)\n", TermRed) }
+                        else {
+                            val f = if ("/" in arg) resolve(arg)
+                            else {
+                                val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
+                                val dir = java.io.File(sd, "agent_recs")
+                                val withExt = if (arg.endsWith(".json")) arg else "$arg.json"
+                                java.io.File(dir, withExt).takeIf { it.isFile }
+                                    ?: dir.listFiles { x -> x.isFile && x.name.startsWith(arg) }
+                                        ?.maxByOrNull { it.lastModified() }
+                            }
+                            if (f == null || !f.isFile) { out("Recording not found: $arg\n", TermRed) }
+                            else {
+                                try {
+                                    val root = org.json.JSONObject(f.readText(Charsets.UTF_8))
+                                    val arr = root.optJSONArray("actions")
+                                    if (arr == null || arr.length() == 0) {
+                                        out("No actions in ${f.name}\n", TermRed)
+                                    } else {
+                                        val steps = mutableListOf<BStep>()
+                                        var lastUrl = com.lightbrowser.data.BrowserAgent.currentUrl() ?: ""
+                                        for (i in 0 until arr.length()) {
+                                            val o = arr.optJSONObject(i) ?: continue
+                                            val aUrl = o.optString("url", "")
+                                            if (aUrl.isNotBlank() && aUrl != lastUrl && !aUrl.startsWith("lb://")) {
+                                                steps.add(BStep("b open ${bq(aUrl)}", false))
+                                                lastUrl = aUrl
+                                            }
+                                            when (o.optString("op", "")) {
+                                                "click" -> {
+                                                    val s = o.optString("selector", "")
+                                                    if (s.isNotBlank()) steps.add(BStep("b click ${bq(s)}", false))
+                                                }
+                                                "fill" -> {
+                                                    val s = o.optString("selector", "")
+                                                    val v = o.optString("value", "").replace("\r", " ").replace("\n", " ")
+                                                    if (s.isNotBlank()) steps.add(BStep("b fill ${bq(s)} ${bq(v)}", false))
+                                                }
+                                                "tap" -> steps.add(
+                                                    BStep("b tap ${o.optDouble("x", -1.0)} ${o.optDouble("y", -1.0)}", false)
+                                                )
+                                                "swipe" -> steps.add(
+                                                    BStep(
+                                                        "b swipe ${o.optDouble("x1", 0.0)} ${o.optDouble("y1", 0.0)} " +
+                                                            "${o.optDouble("x2", 0.0)} ${o.optDouble("y2", 0.0)} ${o.optInt("ms", 300)}",
+                                                        false
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        if (steps.isEmpty()) out("No replayable actions in ${f.name}\n", TermRed)
+                                        else {
+                                            enqueueBatch(steps, 1200)
+                                            out("Replaying ${steps.size} step(s) from ${f.name} — don't type, ^C stops\n", TermGreen)
+                                        }
+                                    }
+                                } catch (e: Exception) { out("replay failed: ${e.message}\n", TermRed) }
+                            }
+                        }
+                    }
+                    "queue" -> {
+                        val q = bQueue
+                        if (q.isNullOrEmpty()) out("(queue empty)\n", TermDim)
+                        else q.forEachIndexed { i, s ->
+                            out("${i + 1}. ${if (s.soft) "! " else ""}${s.line}\n", TermWhite)
                         }
                     }
                     "console" -> {
@@ -1850,7 +2261,7 @@ class TerminalViewModel : ViewModel() {
                         } catch (e: Exception) { out("downloads error: ${e.message}\n", TermRed) }
                     }
                     "submit" -> {
-                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
+                        val sel = BStore.resolve(splitSel(cmd, "submit").first)
                         if (sel.isBlank()) out("Usage: b submit <form|css>\n", TermRed)
                         else {
                             val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
@@ -1866,8 +2277,8 @@ class TerminalViewModel : ViewModel() {
                         wrapped(com.lightbrowser.data.BrowserAgent.currentUrl() ?: "?", r)
                     }
                     "hover" -> {
-                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
-                        if (sel.isBlank()) out("Usage: b hover <ref|css>  (reveals menus/tooltips)\n", TermRed)
+                        val sel = BStore.resolve(splitSel(cmd, "hover").first)
+                        if (sel.isBlank()) out("Usage: b hover <ref|css>  (quote sels with spaces)\n", TermRed)
                         else {
                             val esc = sel.replace("\\", "\\\\").replace("'", "\\'")
                             val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$esc');if(!e)return 'ERR no-node';var r=e.getBoundingClientRect();['mouseover','mouseenter','mousemove'].forEach(function(t){e.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));});try{e.focus();}catch(x){}return 'OK hover '+Math.round(r.left)+','+Math.round(r.top);}catch(e){return 'ERR '+e;}})()")
@@ -1875,28 +2286,27 @@ class TerminalViewModel : ViewModel() {
                         }
                     }
                     "select" -> {
-                        val rest = cmd.removePrefix("select").trim()
-                        val sp = rest.indexOf(' ')
-                        if (sp < 0) out("Usage: b select <sel> <value-or-text>\n", TermRed)
+                        val (selRaw, vRaw) = splitSel(cmd, "select")
+                        if (selRaw.isBlank() || vRaw.isEmpty()) out("Usage: b select <sel> <value-or-text>  (quote sels with spaces)\n", TermRed)
                         else {
-                            val sel = BStore.resolve(rest.substring(0, sp)).replace("\\", "\\\\").replace("'", "\\'")
-                            val v = rest.substring(sp + 1).replace("\\", "\\\\").replace("'", "\\'")
+                            val sel = BStore.resolve(selRaw).replace("\\", "\\\\").replace("'", "\\'")
+                            val v = vRaw.replace("\\", "\\\\").replace("'", "\\'")
                             val r = com.lightbrowser.data.BrowserAgent.eval("(function(){try{var e=document.querySelector('$sel');if(!e)return 'ERR no-node';if(e.tagName!=='SELECT')return 'ERR not-a-select';var v='$v';var hit=false;for(var i=0;i<e.options.length;i++){if(e.options[i].value===v||e.options[i].text.trim()===v){e.selectedIndex=i;hit=true;break;}}if(!hit)e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'OK selected '+e.selectedIndex;}catch(e){return 'ERR '+e;}})()")
                             out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
                         }
                     }
                     "store" -> {
-                        val name = parts.getOrNull(1) ?: ""
-                        val sel = parts.getOrNull(2) ?: ""
-                        if (name.isBlank() || sel.isBlank()) out("Usage: b store <name> <css>  (then: b click <name>)\n", TermRed)
+                        val (name, cssRaw) = splitSel(cmd, "store")
+                        val css = cssRaw.removeSurrounding("\"").removeSurrounding("'")
+                        if (name.isBlank() || css.isBlank()) out("Usage: b store <name> <css>  (then: b click <name>)\n", TermRed)
                         else if (!name.matches(Regex("[a-zA-Z0-9_-]+"))) out("Name must be [a-zA-Z0-9_-]+\n", TermRed)
                         else {
-                            BStore.set(name, sel)
-                            out("Stored '$name' → $sel\n", TermGreen)
+                            BStore.set(name, css)
+                            out("Stored '$name' → $css\n", TermGreen)
                         }
                     }
                     "key" -> {
-                        val sel = BStore.resolve(parts.getOrNull(1) ?: "")
+                        val sel = BStore.resolve(splitSel(cmd, "key").first)
                         out("Probing for the button near the field…\n", TermDim)
                         val raw = com.lightbrowser.data.BrowserAgent.eval(
                             com.lightbrowser.data.BrowserAgent.keyProbeJs(sel)
@@ -2131,7 +2541,8 @@ private val BuiltinB = setOf(
     "fill", "submit", "key", "hover", "select", "store", "stores", "unstore",
     "pos", "tap", "swipe", "scroll", "scroll-to", "scrollto", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
-    "alias", "unalias", "ext", "mkext", "metrics"
+    "alias", "unalias", "ext", "mkext", "metrics",
+    "wait", "links", "forms", "survey", "do", "run", "replay", "queue"
 )
 
 /** Levenshtein distance for `b` did-you-mean suggestions. */

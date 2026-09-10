@@ -108,11 +108,23 @@ object BrowserAgent {
     }
 
     fun captureShot(): String? {
-        // Fast path: already on Main — do directly, no post+wait.
-        if (Looper.myLooper() == Looper.getMainLooper()) return captureViewportOnMain()
+        // Worker path: async PixelCopy on Main, block the WORKER on the latch.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            // Main path: synchronous draw fallback ONLY. Blocking Main on the
+            // PixelCopy latch deadlocks it (the callback needs Main) — that
+            // was the record-start ANR (freeze → wait/close → slow fallback).
+            return try { captureShotOnMain() } catch (e: Exception) {
+                Log.w(TAG, "shot", e)
+                null
+            }
+        }
         val f = CompletableFuture<String?>()
         mainHandler.post {
-            try { f.complete(captureViewportOnMain()) } catch (e: Exception) {
+            try {
+                captureViewportOnMain { p ->
+                    try { f.complete(p) } catch (_: Exception) {}
+                }
+            } catch (e: Exception) {
                 Log.w(TAG, "shot", e)
                 try { f.complete(null) } catch (_: Exception) {}
             }
@@ -123,68 +135,73 @@ object BrowserAgent {
     }
 
     /**
-     * Viewport-only capture. PixelCopy from the window when the WebView is
-     * actually on-screen — draw() can't copy hardware-rendered surfaces
-     * (blank shots — the "shot isn't working" bug; same root cause as the
-     * MAUI WebView screenshot fix). draw() stays as the fallback for
-     * parked tabs / pre-26 / PixelCopy failure.
+     * Viewport-only capture, ALWAYS async, runs ON Main, never blocks it.
+     * PixelCopy from the window when the WebView is actually on-screen —
+     * draw() can't copy hardware-rendered surfaces (blank shots). draw()
+     * stays as the synchronous fallback for parked tabs / pre-26 / failure.
      */
-    private fun captureViewportOnMain(): String? {
-        return try {
-            val wv = webViewProvider?.invoke() ?: return null
-            if (wv.width <= 0 || wv.height <= 0) return null
+    private fun captureViewportOnMain(cb: (String?) -> Unit) {
+        fun done(p: String?) { try { cb(p) } catch (_: Exception) {} }
+        fun restoreOverlay() { try { _shotHideOverlay.value = false } catch (_: Exception) {} }
+        try {
+            val wv = webViewProvider?.invoke() ?: return done(null)
+            if (wv.width <= 0 || wv.height <= 0) return done(null)
             val loc = IntArray(2)
-            try { wv.getLocationInWindow(loc) } catch (_: Exception) { return captureShotOnMain() }
+            try { wv.getLocationInWindow(loc) } catch (_: Exception) { return done(captureShotOnMain()) }
             // Parked offscreen tabs (our offscreen() modifier) sit at
             // -100000: PixelCopy would grab the wrong pixels — fall back.
-            if (loc[0] < 0 || loc[1] < 0) return captureShotOnMain()
-            if (android.os.Build.VERSION.SDK_INT < 26) return captureShotOnMain()
+            if (loc[0] < 0 || loc[1] < 0) return done(captureShotOnMain())
+            if (android.os.Build.VERSION.SDK_INT < 26) return done(captureShotOnMain())
             val act = try {
                 var c: android.content.Context? = wv.context
                 while (c is android.content.ContextWrapper && c !is android.app.Activity) c = c.baseContext
                 c as? android.app.Activity
-            } catch (_: Exception) { null } ?: return captureShotOnMain()
-            val win = try { act.window } catch (_: Exception) { null } ?: return captureShotOnMain()
+            } catch (_: Exception) { null } ?: return done(captureShotOnMain())
+            val win = try { act.window } catch (_: Exception) { null } ?: return done(captureShotOnMain())
             val rect = android.graphics.Rect(loc[0], loc[1], loc[0] + wv.width, loc[1] + wv.height)
             val bmp = android.graphics.Bitmap.createBitmap(wv.width, wv.height, android.graphics.Bitmap.Config.ARGB_8888)
-            val f = CompletableFuture<Boolean>()
             // PixelCopy grabs the WINDOW (Compose overlays included) — hide the
             // recording pill first, wait a frame, restore in the callback.
             // draw()/capturePicture fallbacks render the WebView only: unaffected.
-            fun restoreOverlay() { try { _shotHideOverlay.value = false } catch (_: Exception) {} }
             try { _shotHideOverlay.value = true } catch (_: Exception) {}
             try {
                 mainHandler.postDelayed({
                     try {
                         android.view.PixelCopy.request(win, rect, bmp, { res ->
-                            try { f.complete(res == android.view.PixelCopy.SUCCESS) } catch (_: Exception) {}
-                            restoreOverlay()
+                            try {
+                                if (res == android.view.PixelCopy.SUCCESS) {
+                                    val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
+                                    pruneDir(dir, 30)
+                                    val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
+                                    java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+                                    try { bmp.recycle() } catch (_: Exception) {}
+                                    restoreOverlay()
+                                    done(out.absolutePath)
+                                } else {
+                                    try { bmp.recycle() } catch (_: Exception) {}
+                                    restoreOverlay()
+                                    done(captureShotOnMain())
+                                }
+                            } catch (_: Exception) {
+                                try { bmp.recycle() } catch (_: Exception) {}
+                                restoreOverlay()
+                                done(null)
+                            }
                         }, mainHandler)
                     } catch (_: Exception) {
-                        try { f.complete(false) } catch (_: Exception) {}
+                        try { bmp.recycle() } catch (_: Exception) {}
                         restoreOverlay()
+                        done(captureShotOnMain())
                     }
                 }, 120)
             } catch (_: Exception) {
                 try { bmp.recycle() } catch (_: Exception) {}
                 restoreOverlay()
-                return captureShotOnMain()
+                done(captureShotOnMain())
             }
-            val ok = try { f.get(10, TimeUnit.SECONDS) } catch (_: Exception) { false }
-            if (!ok) restoreOverlay()
-            if (!ok) {
-                try { bmp.recycle() } catch (_: Exception) {}
-                return captureShotOnMain()
-            }
-            val dir = java.io.File(wv.context.filesDir, "sandbox/shots").apply { mkdirs() }
-            pruneDir(dir, 30)
-            val out = java.io.File(dir, "shot_${System.currentTimeMillis()}.png")
-            java.io.FileOutputStream(out).use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
-            try { bmp.recycle() } catch (_: Exception) {}
-            out.absolutePath
         } catch (e: Exception) {
             Log.w(TAG, "shot", e)
-            null
+            done(null)
         }
     }
 
@@ -498,6 +515,13 @@ object BrowserAgent {
 
     suspend fun pageText(max: Int = 8000): String =
         eval("(function(){try{return JSON.stringify(document.body?document.body.innerText.slice(0,$max):'');}catch(e){return 'ERR '+e;}})()")
+
+    /** Blocking page text for worker threads (/wait polls, no coroutine scope). */
+    fun pageTextBlocking(max: Int = 8000): String {
+        return try {
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { pageText(max) }
+        } catch (_: Exception) { "ERR" }
+    }
 
     // ── LightAgent JS shim ──
 
@@ -1347,6 +1371,108 @@ object BrowserAgent {
                 }
                 rep.toString()
             }
+            "/links" -> {
+                val max = q["max"]?.toIntOrNull()?.coerceIn(1, 200) ?: 100
+                val raw = evalBlocking(
+                    "(function(){try{var a=Array.prototype.slice.call(document.querySelectorAll('a[href]'),0,$max)" +
+                        ".map(function(e){return{text:(e.innerText||'').trim().slice(0,80),href:(e.href||'').slice(0,500)}});" +
+                        "return JSON.stringify(a);}catch(e){return 'ERR '+e;}})()", 12
+                )
+                if (raw.startsWith("ERR")) """{"ok":false,"err":"${raw.take(200)}"}"""
+                else {
+                    var s = raw.trim()
+                    repeat(2) {
+                        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                            s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                        }
+                    }
+                    try {
+                        JSONObject().put("ok", true).put("links", org.json.JSONArray(s)).toString()
+                    } catch (_: Exception) { """{"ok":false,"err":"parse failed"}""" }
+                }
+            }
+            "/forms" -> {
+                val raw = evalBlocking(
+                    "(function(){try{" +
+                        "function ps(e){try{if(e.id)return '#'+e.id;var p=e.parentNode;if(!p)return e.tagName.toLowerCase();" +
+                        "var sibs=Array.prototype.filter.call(p.children,function(x){return x.tagName===e.tagName;});" +
+                        "return e.tagName.toLowerCase()+':nth-of-type('+(sibs.indexOf(e)+1)+')';}catch(x){return '?';}}" +
+                        "var out=[];var els=document.querySelectorAll('input,select,textarea');" +
+                        "for(var i=0;i<els.length&&i<100;i++){var e=els[i];" +
+                        "var f=e.form;var fi=-1;if(f){var fs=document.forms;for(var k=0;k<fs.length;k++){if(fs[k]===f){fi=k;break;}}}" +
+                        "out.push({form:fi,type:(e.type||e.tagName.toLowerCase()),name:(e.name||'')," +
+                        "label:((e.placeholder||e.getAttribute('aria-label')||'')+'').slice(0,60),sel:ps(e)});}" +
+                        "return JSON.stringify(out);}catch(e){return 'ERR '+e;}})()", 12
+                )
+                if (raw.startsWith("ERR")) """{"ok":false,"err":"${raw.take(200)}"}"""
+                else {
+                    var s = raw.trim()
+                    repeat(2) {
+                        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                            s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                        }
+                    }
+                    try {
+                        JSONObject().put("ok", true).put("fields", org.json.JSONArray(s)).toString()
+                    } catch (_: Exception) { """{"ok":false,"err":"parse failed"}""" }
+                }
+            }
+            "/wait" -> {
+                // Worker-safe poll: text present or selector exists. For macros.
+                val mode = q["mode"] ?: "text"
+                val v = q["v"] ?: return """{"ok":false,"err":"missing v"}"""
+                val timeout = q["timeout"]?.toLongOrNull()?.coerceIn(1000, 60000) ?: 10000L
+                val t0 = System.currentTimeMillis()
+                var found = false
+                while (System.currentTimeMillis() - t0 < timeout) {
+                    try {
+                        found = if (mode == "sel") {
+                            val esc = v.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                            val r = evalBlocking(
+                                "(function(){try{return document.querySelector('$esc')?'YES':'NO';}catch(e){return 'ERR';}})()", 8
+                            )
+                            r.contains("YES")
+                        } else {
+                            try { pageTextBlocking(2000).contains(v) } catch (_: Exception) { false }
+                        }
+                    } catch (_: Exception) { false }
+                    if (found) break
+                    try { Thread.sleep(500) } catch (_: Exception) { break }
+                }
+                JSONObject().put("ok", found).put("found", found)
+                    .put("elapsedMs", System.currentTimeMillis() - t0).toString()
+            }
+            "/survey" -> {
+                // One-shot page bundle for agents: nav + viewport + errors + taps.
+                val url = try { currentUrl() } catch (_: Exception) { "?" }
+                val title = try {
+                    evalBlockingJs("(function(){return document.title;})()", 8)
+                } catch (_: Exception) { "?" }
+                var s = evalBlockingJs("(function(){try{return JSON.stringify({vw:window.innerWidth,vh:window.innerHeight,dpr:window.devicePixelRatio||1,sx:window.scrollX,sy:window.scrollY});}catch(e){return 'ERR '+e;}})()", 8).trim()
+                repeat(2) {
+                    if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                        s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                    }
+                }
+                val vp = try { org.json.JSONObject(s) } catch (_: Exception) { org.json.JSONObject() }
+                val cons = org.json.JSONArray()
+                try { consoleTail(8).forEach { cons.put(it.take(300)) } } catch (_: Exception) {}
+                val tabs = try {
+                    com.lightbrowser.ui.browser.TabBus.listTabs?.invoke()?.size ?: -1
+                } catch (_: Exception) { -1 }
+                val rep = JSONObject().put("ok", true)
+                    .put("url", url ?: "?").put("title", title)
+                    .put("viewport", vp).put("console", cons).put("tabs", tabs)
+                try {
+                    val box = webViewBoxBlocking(8)
+                    try { rep.put("view", org.json.JSONObject(box)) }
+                    catch (_: Exception) { rep.put("viewErr", box.take(80)) }
+                } catch (_: Exception) {}
+                try {
+                    lastTap?.let { rep.put("lastTap", org.json.JSONObject(it)) }
+                } catch (_: Exception) {}
+                rep.toString()
+            }
             "/save" -> {                val name = q["name"] ?: return """{"ok":false,"err":"missing name"}"""
                 val ctx = webViewProvider?.invoke()?.context
                     ?: return """{"ok":false,"err":"no webview"}"""
@@ -1376,7 +1502,7 @@ object BrowserAgent {
                         .put("bytes", r.length).toString()
                 } catch (e: Exception) { """{"ok":false,"err":"save failed: ${e.message}"}""" }
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias"}"""
         }
     }
 }

@@ -60,10 +60,13 @@ b store <name> <css> | stores | unstore <name>   # named selectors
 b pos <ref|css> | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]
 b scroll [px] | b scroll-to <x> <y> | b find <text> | next | prev
 b shot [--full] | b console [n] | b cookies [get [url] | set "k=v" [url] | clear]
-b history [n] | downloads | save <name.html|txt>
-b alias [name expansion] | unalias <name>   # EXEC one-liners
+ b history [n] | downloads | save <name.html|txt>
+ b wait <text|css:sel> [ms] | links [n] | forms | survey   # senses
+ b do "c1; c2" | run <file> | replay <rec> | queue         # macros (EXEC-only)
+ b alias [name expansion] | unalias <name>   # EXEC one-liners
 b ext | mkext <name>    # your own SCRIPT commands (~/.b-ext/*.sh, both modes)
-b record start|stop|save <n>|list | b serve on|off
+ b record start|stop|pause|resume|save <n>|list | b serve on|off
+ b metrics [--json]   # screen+page geometry + tap audit (auto-logged)
 ```
 PTY `b()` covers the same via HTTP routes (`/switch /submit /read /hover
 /select /store /stores /history /downloads /dom /save /serve /alias /record`
