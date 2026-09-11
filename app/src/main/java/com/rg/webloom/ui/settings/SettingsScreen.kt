@@ -579,9 +579,13 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(4.dp))
-                Button(
+                FilledTonalButton(
                     onClick = { confirmFlow = "prefs" },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
                 ) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -598,7 +602,10 @@ private fun SettingsCard(
     title: String,
     content: @Composable () -> Unit
 ) {
-    Card(modifier = modifier.fillMaxWidth()) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

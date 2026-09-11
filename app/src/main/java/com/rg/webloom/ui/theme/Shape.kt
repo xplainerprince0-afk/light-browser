@@ -4,7 +4,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Shapes
 import androidx.compose.ui.unit.dp
 
-// M3 Expressive shape scale. extraExtraLarge (48dp pebble) is used directly
+// M3 Expressive shape scale. Pebble (48dp) is used directly
 // as RoundedCornerShape(48.dp) where hero morphs happen.
 val AppShapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp),

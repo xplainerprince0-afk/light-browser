@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -293,8 +294,10 @@ private fun AppShell(
         // Scripts/Downloads/Settings stay reachable via the browser ⋮ menu.
         gesturesEnabled = false,
         drawerContent = {
-            ModalDrawerSheet {
-                Text("Webloom", style = androidx.compose.material3.MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp))
+            ModalDrawerSheet(
+                drawerContainerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerLow
+            ) {
+                Text("Webloom", style = androidx.compose.material3.MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp))
                 Text(
                     "v${try { com.rg.webloom.BuildConfig.VERSION_NAME } catch (_: Exception) { "?" }} (${try { com.rg.webloom.BuildConfig.VERSION_CODE } catch (_: Exception) { "?" }})",
                     style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
@@ -332,12 +335,29 @@ private fun AppShell(
             contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
             bottomBar = {
                 if (LocalConfiguration.current.screenWidthDp < 600) {
+                    val activeDls by com.rg.webloom.data.DownloadHelper.active.collectAsState()
+                    val pl by musicVm.player.collectAsState()
                     NavigationBar {
                         Tab.entries.filter { it.inBar }.forEach { t ->
                             NavigationBarItem(
                                 selected = tab == t,
                                 onClick = { tab = t },
-                                icon = { Icon(t.icon, t.title) },
+                                icon = {
+                                    androidx.compose.foundation.layout.Box {
+                                        Icon(t.icon, t.title)
+                                        if (t == Tab.Downloads && activeDls.isNotEmpty()) {
+                                            Badge(
+                                                modifier = Modifier.align(Alignment.TopEnd)
+                                            ) { Text("${activeDls.size}") }
+                                        }
+                                        if (t == Tab.Music && pl.isPlaying) {
+                                            Badge(
+                                                containerColor = androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.align(Alignment.TopEnd)
+                                            )
+                                        }
+                                    }
+                                },
                                 label = { Text(t.title) }
                             )
                         }

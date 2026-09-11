@@ -98,8 +98,7 @@ fun HomeScreen(
                 Spacer(Modifier.height(24.dp))
                 Text(
                     "Webloom",
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.displaySmall,
                     color = MaterialTheme.colorScheme.primary,
                     textAlign = TextAlign.Center
                 )
@@ -126,7 +125,7 @@ fun HomeScreen(
             Text("Shortcuts", style = MaterialTheme.typography.titleSmall)
             Spacer(Modifier.height(8.dp))
             LazyVerticalGrid(
-                columns = GridCells.Fixed(4),
+                columns = GridCells.Adaptive(72.dp),
                 modifier = Modifier.fillMaxWidth().height(190.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -140,7 +139,7 @@ fun HomeScreen(
                         Box(
                             modifier = Modifier
                                 .size(52.dp)
-                                .clip(RoundedCornerShape(16.dp))
+                                .clip(MaterialTheme.shapes.large)
                                 .background(androidx.compose.ui.graphics.Color(s.tint).copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -163,7 +162,7 @@ fun HomeScreen(
                 Card(
                     onClick = { onNavigate(h.url) },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = MaterialTheme.shapes.large
                 ) {
                     ListItem(
                         headlineContent = { Text(h.title.ifBlank { h.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -181,7 +180,7 @@ fun HomeScreen(
                         Card(
                             onClick = { onNavigate(b.url) },
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                            shape = RoundedCornerShape(16.dp)
+                            shape = MaterialTheme.shapes.large
                         ) {
                             Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Filled.Bookmark, null, modifier = Modifier.size(16.dp))

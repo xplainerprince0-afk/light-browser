@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -264,11 +265,18 @@ fun FilesScreen(
                     title = {
                         Column {
                             Text(folderName, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                "${ui.count} items",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "${ui.count} items",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Badge(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                ) { Text("${ui.count}") }
+                            }
                         }
                     },
                     navigationIcon = {
@@ -383,7 +391,7 @@ fun FilesScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = MaterialTheme.shapes.large
                 ) {
                     Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(if (ui.clipCut) Icons.Filled.ContentCut else Icons.Filled.ContentCopy, null, modifier = Modifier.size(18.dp))
@@ -403,7 +411,7 @@ fun FilesScreen(
             Card(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                shape = RoundedCornerShape(16.dp)
+                shape = MaterialTheme.shapes.large
             ) {
                 Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Storage, null, tint = MaterialTheme.colorScheme.primary)
@@ -413,7 +421,8 @@ fun FilesScreen(
                         Spacer(Modifier.height(6.dp))
                         LinearProgressIndicator(
                             progress = { (ui.usedBytes / (1f * 1024 * 1024 * 1024)).coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            trackColor = MaterialTheme.colorScheme.primaryContainer
                         )
                     }
                 }
@@ -457,7 +466,7 @@ fun FilesScreen(
                                 containerColor = if (sel) MaterialTheme.colorScheme.primaryContainer
                                 else MaterialTheme.colorScheme.surfaceContainerLow
                             ),
-                            shape = RoundedCornerShape(20.dp),
+                            shape = com.rg.webloom.ui.theme.LargeIncreasedShape,
                             modifier = Modifier.size(110.dp)
                         ) {
                             Column(
@@ -472,8 +481,8 @@ fun FilesScreen(
                                 verticalArrangement = Arrangement.Center
                             ) {
                                 Box(
-                                    modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp))
-                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                                    modifier = Modifier.size(48.dp).clip(MaterialTheme.shapes.large)
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(fileIcon(f), null, modifier = Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)
@@ -499,10 +508,10 @@ fun FilesScreen(
                             },
                             leadingContent = {
                                 Box(
-                                    modifier = Modifier.size(46.dp).clip(RoundedCornerShape(14.dp))
+                                    modifier = Modifier.size(46.dp).clip(MaterialTheme.shapes.medium)
                                         .background(
                                             if (sel) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                            else MaterialTheme.colorScheme.secondaryContainer
                                         ),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -543,8 +552,8 @@ fun FilesScreen(
                     headlineContent = { Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingContent = {
                         Box(
-                            modifier = Modifier.size(46.dp).clip(RoundedCornerShape(14.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                            modifier = Modifier.size(46.dp).clip(MaterialTheme.shapes.medium)
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
                             contentAlignment = Alignment.Center
                         ) { Icon(fileIcon(f), null, tint = MaterialTheme.colorScheme.primary) }
                     }
@@ -691,9 +700,11 @@ fun FilesScreen(
 private fun BottomAction(icon: ImageVector, label: String, onClick: () -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.combinedClickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 4.dp)
+        modifier = Modifier.padding(horizontal = 4.dp)
     ) {
-        Icon(icon, label, modifier = Modifier.size(22.dp))
+        IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) {
+            Icon(icon, label, modifier = Modifier.size(22.dp))
+        }
         Text(label, style = MaterialTheme.typography.labelSmall)
     }
 }

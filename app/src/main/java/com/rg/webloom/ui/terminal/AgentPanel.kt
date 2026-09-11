@@ -7,8 +7,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -107,7 +114,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 if (recordingNow) "● Recording taps (${BrowserAgent.recCount()} actions)" else "○ Click recorder",
-                color = if (recordingNow) androidx.compose.ui.graphics.Color.Red else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (recordingNow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.weight(1f)
             )
@@ -140,7 +147,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             recs.forEach { (f, n) ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("• $f ($n)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    TextButton(onClick = {
+                    FilledTonalButton(onClick = {
                         scope.launch(Dispatchers.IO) {
                             try { BrowserAgent.saveRecording(f.substringBefore("_")) } catch (_: Exception) {}
                             withContext(Dispatchers.Main) { recVersion++ }
@@ -153,7 +160,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
         if (!recordingNow && BrowserAgent.recCount() > 0) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Unsaved: ${BrowserAgent.recCount()} actions", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                TextButton(onClick = {
+                FilledTonalButton(onClick = {
                     scope.launch(Dispatchers.IO) {
                         try { BrowserAgent.saveRecording("rec") } catch (_: Exception) {}
                         withContext(Dispatchers.Main) { recVersion++ }
@@ -186,13 +193,18 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             "b shot — save screenshot | b shot-el <ref>" to "b shot",
             "b console — JS logs" to "b console",
             "b record start|stop|pause|save <name>|list — capture taps+swipes" to "b record ",
+            "b box <ref> — coords + bounds + safe points" to "b box ",
             "b block — AI no-go sites (EXEC-only)" to "b block "
         ).forEach { (label, insert) ->
-            Text(
-                "• $label",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().clickable { onInsert(insert) }.padding(vertical = 2.dp)
+            ListItem(
+                headlineContent = {
+                    Text("• $label", style = MaterialTheme.typography.bodySmall)
+                },
+                colors = androidx.compose.material3.ListItemDefaults.colors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    headlineColor = MaterialTheme.colorScheme.onSurfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { onInsert(insert) }
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -235,12 +247,18 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f).clickable { onInsert("b $name") }
                 )
-                TextButton(onClick = {
-                    scope.launch(Dispatchers.IO) {
-                        try { BrowserAliases.remove(name) } catch (_: Exception) {}
-                        withContext(Dispatchers.Main) { refreshLocal() }
-                    }
-                }) { Text("Delete") }
+                FilledTonalButton(
+                    onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            try { BrowserAliases.remove(name) } catch (_: Exception) {}
+                            withContext(Dispatchers.Main) { refreshLocal() }
+                        }
+                    },
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) { Text("Delete") }
             }
         }
         exts.forEach { name ->
@@ -251,15 +269,21 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f).clickable { onInsert("b $name") }
                 )
-                TextButton(onClick = {
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val sd = com.rg.webloom.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-ext") }
-                            java.io.File(sd, "$name.sh").delete()
-                        } catch (_: Exception) {}
-                        withContext(Dispatchers.Main) { refreshLocal() }
-                    }
-                }) { Text("Delete") }
+                FilledTonalButton(
+                    onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val sd = com.rg.webloom.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-ext") }
+                                java.io.File(sd, "$name.sh").delete()
+                            } catch (_: Exception) {}
+                            withContext(Dispatchers.Main) { refreshLocal() }
+                        }
+                    },
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) { Text("Delete") }
             }
         }
         macros.forEach { name ->
@@ -270,15 +294,21 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f).clickable { onInsert("b $name") }
                 )
-                TextButton(onClick = {
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val sd = com.rg.webloom.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-cmd") }
-                            java.io.File(sd, "$name.b").delete()
-                        } catch (_: Exception) {}
-                        withContext(Dispatchers.Main) { refreshLocal() }
-                    }
-                }) { Text("Delete") }
+                FilledTonalButton(
+                    onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val sd = com.rg.webloom.data.AppCtx.ctx.filesDir.let { java.io.File(it, "sandbox/.b-cmd") }
+                                java.io.File(sd, "$name.b").delete()
+                            } catch (_: Exception) {}
+                            withContext(Dispatchers.Main) { refreshLocal() }
+                        }
+                    },
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) { Text("Delete") }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -322,21 +352,23 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             )
         }
         Spacer(Modifier.height(4.dp))
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            listOf("Alias", "Script", "Macro").forEachIndexed { index, label ->
+                SegmentedButton(
+                    selected = newKind == index,
+                    onClick = { newKind = index; formErr = "" },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = 3),
+                    label = { Text(label) }
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { newKind = 0; formErr = "" }) {
-                Text(if (newKind == 0) "✓ Alias" else "Alias")
-            }
-            TextButton(onClick = { newKind = 1; formErr = "" }) {
-                Text(if (newKind == 1) "✓ Script" else "Script")
-            }
-            TextButton(onClick = { newKind = 2; formErr = "" }) {
-                Text(if (newKind == 2) "✓ Macro" else "Macro")
-            }
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = {
+            FilledTonalButton(onClick = {
                 val n = newName.trim()
-                if (!n.matches(Regex("[a-z0-9_-]+"))) { formErr = "Name must be [a-z0-9_-]"; return@TextButton }
-                if (isBBlocked(n)) { formErr = "'$n' is built-in — pick another name"; return@TextButton }
+                if (!n.matches(Regex("[a-z0-9_-]+"))) { formErr = "Name must be [a-z0-9_-]"; return@FilledTonalButton }
+                if (isBBlocked(n)) { formErr = "'$n' is built-in — pick another name"; return@FilledTonalButton }
                 scope.launch(Dispatchers.IO) {
                     var err = ""
                     try {

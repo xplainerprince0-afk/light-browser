@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -160,7 +161,14 @@ fun DownloadsScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Downloads")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Downloads")
+                            Spacer(Modifier.width(8.dp))
+                            Badge(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ) { Text("${files.size}") }
+                        }
                         Text(
                             "${files.size} file${if (files.size == 1) "" else "s"} · sandbox",
                             style = MaterialTheme.typography.labelMedium,
@@ -196,7 +204,7 @@ fun DownloadsScreen(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 ),
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+                shape = com.rg.webloom.ui.theme.LargeIncreasedShape
             ) {
                 Row(
                     modifier = Modifier
@@ -223,7 +231,7 @@ fun DownloadsScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+                    shape = com.rg.webloom.ui.theme.LargeIncreasedShape
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -234,7 +242,7 @@ fun DownloadsScreen(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
-                            TextButton(onClick = { com.rg.webloom.data.DownloadHelper.cancel(dl.id) }) {
+                            FilledTonalButton(onClick = { com.rg.webloom.data.DownloadHelper.cancel(dl.id) }) {
                                 Text("Cancel")
                             }
                         }
@@ -313,7 +321,7 @@ fun DownloadsScreen(
                             val f = item.file
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                                shape = com.rg.webloom.ui.theme.LargeIncreasedShape,
                                 colors = CardDefaults.cardColors(
                                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                                 )
@@ -334,8 +342,8 @@ fun DownloadsScreen(
                                         Box(
                                             modifier = Modifier
                                                 .size(44.dp)
-                                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                                                .clip(MaterialTheme.shapes.medium)
+                                                .background(MaterialTheme.colorScheme.primaryContainer),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(Icons.Filled.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary)

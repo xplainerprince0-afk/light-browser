@@ -62,6 +62,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -289,16 +290,22 @@ fun MusicScreen(
             text = {
                 Column {
                     listOf(null to "Off", 15 to "15 min", 30 to "30 min", 45 to "45 min", 60 to "1 hour").forEach { (m, label) ->
-                        ListItem(
-                            headlineContent = { Text(label) },
-                            trailingContent = {
-                                if (pl.sleepMinutesLeft == m && m != null) Text("●", color = MaterialTheme.colorScheme.primary)
-                            },
-                            modifier = Modifier.clickable {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().clickable {
                                 vm.setSleepTimer(m)
                                 showSleep = false
                             }
-                        )
+                        ) {
+                            RadioButton(
+                                selected = pl.sleepMinutesLeft == m,
+                                onClick = {
+                                    vm.setSleepTimer(m)
+                                    showSleep = false
+                                }
+                            )
+                            Text(label, modifier = Modifier.padding(start = 8.dp))
+                        }
                     }
                 }
             },
@@ -321,7 +328,7 @@ private fun NovelCard(novel: Novel, playing: Boolean, onClick: () -> Unit) {
             AsyncImage(
                 model = novel.coverUri,
                 contentDescription = null,
-                modifier = Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)),
+                modifier = Modifier.size(64.dp).clip(MaterialTheme.shapes.large),
                 contentScale = ContentScale.Crop
             )
             Spacer(Modifier.width(12.dp))

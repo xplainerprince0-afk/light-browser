@@ -39,6 +39,9 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
@@ -153,8 +156,20 @@ fun ScriptsScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = { setAll(true) }) { Text("All on") }
-                    TextButton(onClick = { setAll(false) }) { Text("All off") }
+                    SingleChoiceSegmentedButtonRow {
+                        SegmentedButton(
+                            selected = false,
+                            onClick = { setAll(true) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                            label = { Text("All on") }
+                        )
+                        SegmentedButton(
+                            selected = false,
+                            onClick = { setAll(false) },
+                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                            label = { Text("All off") }
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -241,7 +256,7 @@ fun ScriptsScreen(
                     items(filtered, key = { it.id }) { sc ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                            shape = com.rg.webloom.ui.theme.LargeIncreasedShape,
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                             )
@@ -269,10 +284,10 @@ fun ScriptsScreen(
                                     Box(
                                         modifier = Modifier
                                             .size(44.dp)
-                                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                                            .clip(MaterialTheme.shapes.medium)
                                             .background(
                                                 if (sc.enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                                else MaterialTheme.colorScheme.surfaceVariant
+                                                else MaterialTheme.colorScheme.surfaceContainer
                                             ),
                                         contentAlignment = Alignment.Center
                                     ) {

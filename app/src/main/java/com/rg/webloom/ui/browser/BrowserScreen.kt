@@ -81,6 +81,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Badge
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -122,6 +124,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rg.webloom.data.DownloadHelper
 import com.rg.webloom.data.Prefs
+import com.rg.webloom.ui.theme.LargeIncreasedShape
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -428,13 +431,19 @@ fun BrowserScreen(
                             Icon(Icons.Filled.Refresh, "Reload")
                         }
                     }
-                    // Plain tabs button — no count badge
-                    TextButton(onClick = { showTabs = true }) { Text("Tabs") }
+                    // Tabs button with count badge
+                    FilledTonalButton(onClick = { showTabs = true }) {
+                        Text("Tabs")
+                        Badge(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ) { Text("${ui.tabs.size}") }
+                    }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
                         Icon(
                         Icons.Filled.MoreVert, "Menu",
-                        tint = if (recording) androidx.compose.ui.graphics.Color.Red else MaterialTheme.colorScheme.onSurface
+                        tint = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                         )
                         }
                         if (showMenu) {
@@ -446,7 +455,7 @@ fun BrowserScreen(
                         DropdownMenu(
                         expanded = true,
                         onDismissRequest = { showMenu = false },
-                        modifier = Modifier.width(300.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(16.dp))
+                        modifier = Modifier.width(300.dp).background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.large)
                         ) {
                         // Top action row: forward | bookmark | download page | site info | refresh
                         Row(
@@ -536,7 +545,8 @@ fun BrowserScreen(
             AnimatedVisibility(visible = ui.loading, enter = fadeIn(), exit = fadeOut()) {
                 LinearProgressIndicator(
                     progress = { (ui.progress.coerceIn(0, 100)) / 100f },
-                    modifier = Modifier.fillMaxWidth().height(3.dp)
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                    trackColor = MaterialTheme.colorScheme.primaryContainer
                 )
             }
 
@@ -813,8 +823,7 @@ fun BrowserScreen(
                         Surface(
                             modifier = Modifier.fillMaxWidth().padding(8.dp),
                             shape = MaterialTheme.shapes.extraLarge,
-                            tonalElevation = 6.dp,
-                            shadowElevation = 6.dp
+                            tonalElevation = 6.dp
                         ) {
                             LazyColumn(
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
@@ -919,9 +928,9 @@ fun BrowserScreen(
                 // Count badge with active underline, like Chrome's tab counter.
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
-                        modifier = Modifier
+                            modifier = Modifier
                             .size(34.dp)
-                            .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp)),
+                            .border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small),
                         contentAlignment = Alignment.Center
                     ) {
                         Text("${ui.tabs.size}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
@@ -978,7 +987,7 @@ fun BrowserScreen(
                         Card(
                             onClick = { vm.selectTab(i); showTabs = false; tabSearch = "" },
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(20.dp),
+                            shape = LargeIncreasedShape,
                             border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
                         ) {
@@ -1002,7 +1011,7 @@ fun BrowserScreen(
                                     IconButton(
                                         onClick = { vm.closeTab(i) },
                                         enabled = ui.tabs.size > 1,
-                                        modifier = Modifier.size(30.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) { Icon(Icons.Filled.Close, "Close tab", modifier = Modifier.size(18.dp)) }
                                 }
                                 // Preview: live thumbnail or placeholder.
@@ -1011,12 +1020,12 @@ fun BrowserScreen(
                                     Image(
                                         bitmap = bmp.asImageBitmap(),
                                         contentDescription = null,
-                                        modifier = Modifier.fillMaxWidth().height(170.dp).padding(horizontal = 8.dp).clip(RoundedCornerShape(12.dp)),
+                                        modifier = Modifier.fillMaxWidth().height(170.dp).padding(horizontal = 8.dp).clip(MaterialTheme.shapes.medium),
                                         contentScale = ContentScale.Crop
                                     )
                                 } else {
                                     Box(
-                                        modifier = Modifier.fillMaxWidth().height(170.dp).padding(horizontal = 8.dp).clip(RoundedCornerShape(12.dp))
+                                        modifier = Modifier.fillMaxWidth().height(170.dp).padding(horizontal = 8.dp).clip(MaterialTheme.shapes.medium)
                                             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -1387,8 +1396,8 @@ private fun RecPill(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
-        color = androidx.compose.ui.graphics.Color(0xCC111111),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.inverseSurface,
         tonalElevation = 4.dp
     ) {
         Row(
@@ -1397,8 +1406,8 @@ private fun RecPill(
         ) {
             Text(
                 "● $count",
-                color = if (paused) androidx.compose.ui.graphics.Color(0xFFFFB74D)
-                else androidx.compose.ui.graphics.Color(0xFFFF5252),
+                color = if (paused) MaterialTheme.colorScheme.tertiary
+                else MaterialTheme.colorScheme.error,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
                 modifier = Modifier.padding(horizontal = 6.dp)
@@ -1407,7 +1416,7 @@ private fun RecPill(
                 Icon(
                     if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
                     if (paused) "Resume recording" else "Pause recording",
-                    tint = androidx.compose.ui.graphics.Color.White,
+                    tint = MaterialTheme.colorScheme.inverseOnSurface,
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -1415,7 +1424,7 @@ private fun RecPill(
                 Icon(
                     Icons.Filled.Stop,
                     "Stop recording",
-                    tint = androidx.compose.ui.graphics.Color.White,
+                    tint = MaterialTheme.colorScheme.inverseOnSurface,
                     modifier = Modifier.size(18.dp)
                 )
             }

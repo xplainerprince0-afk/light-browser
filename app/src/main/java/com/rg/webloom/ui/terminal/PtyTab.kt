@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Badge
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -354,8 +355,11 @@ fun PtyTab(
         onDispose { ctl.showKeyboard = null; ctl.pasteText = null; ctl.refocus = null; ctl.copyAll = null }
     }
 
-    Column(modifier = modifier.fillMaxSize().background(Color.Black)) {
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+    Column(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest)) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+            var appliedClient by remember { mutableStateOf<TerminalViewClient?>(null) }
+            var appliedFontPx by remember { mutableStateOf(-1) }
+            var appliedSession by remember { mutableStateOf<TerminalSession?>(null) }
             AndroidView(
                 factory = { c ->
                     TerminalView(c, null).also { v ->
@@ -368,31 +372,42 @@ fun PtyTab(
                     }
                 },
                 update = { v ->
-                    v.setTerminalViewClient(viewClient)
-                    try { v.setTextSize(fontPx) } catch (_: Exception) {}
+                    // Guard: only re-apply when identity actually changed (perf).
+                    if (appliedClient !== viewClient) {
+                        v.setTerminalViewClient(viewClient)
+                        appliedClient = viewClient
+                    }
+                    if (appliedFontPx != fontPx) {
+                        try { v.setTextSize(fontPx) } catch (_: Exception) {}
+                        appliedFontPx = fontPx
+                    }
                     // Idempotent (no-op when the same session is attached);
                     // updateSize() inside initializes the emulator once the
                     // view has a non-zero size. No focus here — keyboard opens
                     // on user tap / ⌨ only (forced focus double-lifts keys).
-                    session?.let { s -> try { v.attachSession(s) } catch (_: Exception) {} }
+                    val cur = session
+                    if (cur != null && appliedSession !== cur) {
+                        try { v.attachSession(cur) } catch (_: Exception) {}
+                        appliedSession = cur
+                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )
-            // Tiny green dot (non-interactive — touches pass through).
+            // Status badge (non-interactive).
             Box(
                 modifier = Modifier.align(Alignment.TopEnd)
                     .padding(6.dp)
-                    .size(10.dp)
-                    .background(Color(0xFF4CAF50), CircleShape)
-            )
+            ) {
+                Badge(containerColor = MaterialTheme.colorScheme.primary)
+            }
             if (exited != null) {
                 Column(
-                    modifier = Modifier.fillMaxSize().background(Color(0xCC000000)).padding(24.dp),
+                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.8f)).padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         "Session exited (${exited})",
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.inverseOnSurface,
                         style = MaterialTheme.typography.titleMedium
                     )
                     Row(modifier = Modifier.padding(top = 12.dp)) {
@@ -412,7 +427,7 @@ fun PtyTab(
         // Keys ride the measured keyboard top (keyboardLift(): visible-frame
         // height, suggestion strip included) and scroll sideways.
         // Disabled after exit — writes to a dead session go nowhere.
-        androidx.compose.material3.HorizontalDivider(color = Color(0xFF222222))
+        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Column(modifier = Modifier.fillMaxWidth().keyboardLift()) {
             TermKeyRow(
                 keys = listOf(

@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -28,6 +30,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.Badge
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -208,14 +211,14 @@ fun TerminalScreen(
         modifier = modifier.fillMaxSize(),
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = Color(0xFF111111),
-                modifier = Modifier.width(280.dp)
+                drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.widthIn(max = 320.dp)
             ) {
                 // Scrollable: sessions (up to 8) + actions overflow on small phones.
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     "Terminal",
-                    color = TermWhite,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 14.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
@@ -245,7 +248,7 @@ fun TerminalScreen(
                 }
                 Text(
                     "Sessions",
-                    color = Color(0xFF888888),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                 )
@@ -260,7 +263,7 @@ fun TerminalScreen(
                                     onClick = { vm.closeSession(s.id) },
                                     modifier = Modifier.size(48.dp)
                                 ) {
-                                    Icon(Icons.Filled.Close, "Close session ${s.name}", tint = Color(0xFF888888), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Filled.Close, "Close session ${s.name}", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                                 }
                             }
                         },
@@ -277,7 +280,7 @@ fun TerminalScreen(
                 NavigationDrawerItem(
                     label = { Text("Agent bridge", fontSize = 13.sp) },
                     selected = false,
-                    badge = { if (recording) Text("●", color = Color.Red, fontSize = 12.sp) },
+                    badge = { if (recording) Badge(containerColor = MaterialTheme.colorScheme.error) },
                     onClick = { closeDrawer(); showAgent = true },
                     modifier = Modifier.padding(horizontal = 12.dp)
                 )
@@ -371,14 +374,14 @@ fun TerminalScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         snackbarHost = { SnackbarHost(snacks) },
-        containerColor = TermBlack
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLowest
     ) { innerPad ->
         // Measured lift lives on the keys themselves (keyboardLift()):
         // visible-frame height covers suggestion strips that IME insets
         // omit. Consume navigationBars only — consuming IME here would zero
         // the live keys-level IME read and bury Row 2 (see InsetDebug).
         // Scaffold pad applied so content never hides under system bars.
-        Box(modifier = Modifier.fillMaxSize().background(TermBlack).padding(innerPad)) {
+        Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(innerPad)) {
         Column(
             modifier = Modifier.fillMaxSize()
                 .consumeWindowInsets(WindowInsets.navigationBars)
@@ -442,7 +445,7 @@ fun TerminalScreen(
             // ── Keys ride the measured keyboard top (keyboardLift(): ──
             // visible-frame height, suggestion strip included) and scroll ──
             // sideways for the full set ──
-            androidx.compose.material3.HorizontalDivider(color = Color(0xFF222222))
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Column(modifier = Modifier.fillMaxWidth().keyboardLift()) {
                 TermKeyRow(
                     keys = listOf(
@@ -479,11 +482,12 @@ fun TerminalScreen(
                 )
             }
             } // inner Column
-            // Tiny dot for EXEC (non-interactive — touches pass through).
+            // Status badge for EXEC (non-interactive).
             Box(
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 8.dp)
-                    .size(10.dp).background(Color(0xFFFFB74D), CircleShape)
-            )
+            ) {
+                Badge(containerColor = MaterialTheme.colorScheme.tertiary)
+            }
             } // exec Box
             } // else: exec mode
         } // content Column
@@ -529,7 +533,7 @@ internal fun TermKeyRow(
     sticky: String?
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().background(Color(0xFF0A0A0A))
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow)
             .horizontalScroll(rememberScrollState())
     ) {
         keys.forEach { (label, onTap) ->
@@ -537,6 +541,7 @@ internal fun TermKeyRow(
             Box(
                 modifier = Modifier
                     .width(64.dp)
+                    .heightIn(min = 48.dp)
                     .background(if (armed) TermWhite else Color.Transparent)
                     .clickable(
                         onClickLabel = if (armed) "$label armed, tap to disarm" else "Send $label key",
@@ -550,8 +555,8 @@ internal fun TermKeyRow(
                 Text(
                     label,
                     color = if (armed) TermBlack else TermWhite,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 13.sp
+                    style = MaterialTheme.typography.labelLarge,
+                    fontFamily = FontFamily.Monospace
                 )
             }
         }
