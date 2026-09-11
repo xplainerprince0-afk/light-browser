@@ -14,8 +14,10 @@ to close. Edge-swipe TAB SWITCHING is a separate opt-in (Settings →
 Navigation, default OFF) on a slim middle band — it never fights the system
 back gesture or the key rows. Drawer is slim (280dp) by design and scrolls.
 
-**Keys:** two rows, **swipe sideways** for the full set (`ESC TAB / - HOME ↑
-END PGUP PGDN |` and `CTRL ALT ^C ^D ← ↓ → ~ : ;`). They hug the keyboard
+**Keys:** two rows, **swipe sideways** for the full set (`ESC TAB / - HOME
+END PGUP PGDN |` and `CTRL ALT ← ↑ ↓ → ~ : ;` — arrows clustered row 2).
+Interrupt via sticky `CTRL` + letter (`CTRL+C` kills), `CTRL+Enter` while busy
+in EXEC, drawer → Kill. They hug the keyboard
 (keys end exactly at screenBottom − kbHeight — max(decor inset, live IME)
 minus the exact reserved outer pad, measured not guessed). No focus grab at
 app launch: the keyboard only opens when the Terminal tab is frontmost.
@@ -186,10 +188,10 @@ pos/box/tap/swipe/scroll/scrollto/scroll-top/scroll-bottom/serve/record. EXEC-on
 - Drawer → sessions list (tap = switch, `×` = close), `+ New session` (max 8).
   Sessions keep their own dir, history (200), and transcript.
 - Keys: as above. Sticky: tap `CTRL`, then a letter = real control byte —
-  works with the soft keyboard too (also `ALT+x` = `ESC x`); `^C` (or
-  CTRL+Enter while busy) kills the running process; `^D` clears.
+  works with the soft keyboard too (also `ALT+x` = `ESC x`); sticky `CTRL+C`
+  (or CTRL+Enter while busy) kills the running process; drawer → Kill/Clear.
 - Drawer: Follow output (auto-scroll), text bigger/smaller, rename, paste
-  (works in PTY too), copy-all, clear, kill, Agent bridge.
+  (works in PTY too), copy (selection in PTY), Agent bridge.
 - PTY typing invisible? It was focus theft (Compose buttons stole the View's
   focus) — fixed: keys/buttons hand focus back automatically; keyboard opens
   on tap/`⌨`.
@@ -206,7 +208,8 @@ pos/box/tap/swipe/scroll/scrollto/scroll-top/scroll-bottom/serve/record. EXEC-on
 - `⌨` (drawer) forces the keyboard; focus is handed back automatically
   after every key/drawer tap (no invisible typing).
 - Own key rows: same layout, but arrows/HOME/END send real escape sequences
-  and `^C/^D` send `0x03/0x04` through the pty (real SIGINT semantics).
+  and sticky `CTRL`/`ALT` + soft-keyboard letter sends control bytes/`ESC x`
+  through the pty (real SIGINT semantics — `CTRL+C` interrupts).
 - Typing `opencode` in the PTY shell runs an `opencode()` shell function
   (linker path) — deterministic, no toggle dance needed.
 - Session exits → Restart / back-to-EXEC overlay. Font follows density

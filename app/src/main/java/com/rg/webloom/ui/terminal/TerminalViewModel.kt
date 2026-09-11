@@ -713,7 +713,7 @@ class TerminalViewModel : ViewModel() {
             val arg = if (parts.size > 1) parts[1] else ""
             when (cmd) {
                 "help" -> {
-                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-fix | opencode-diag | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent|opencode> (dev tools via apk)  b-setup (b for PTY)\nKeys: CTRL+Enter=interrupt(^C)  ^C key=kills  ^D=clear  ALT=sends ESC\n", TermDim)
+                    print("help/clear/history/scripts/install-alpine/alpine-status\nls [path]  cd  pwd  cat  mkdir  rm [-r]  cp  mv\nsh <cmd>  ping  curl  echo  cache  b (browser agent)\nopencode-install | opencode-fix | opencode-diag | opencode-status | opencode <args> (AI agent, needs install first)\ntoolbox | toolbox-install <name|essentials|agent|opencode> (dev tools via apk)  b-setup (b for PTY)\nKeys: CTRL+Enter=interrupt(busy)  CTRL/ALT sticky + key (CTRL+C=kills via shell)  ALT=sends ESC  ←↑↓→=cursor/history\n", TermDim)
                     afterCommand()
                 }
                 "clear" -> clear()
@@ -1914,10 +1914,9 @@ class TerminalViewModel : ViewModel() {
                                     else if (jsonMode) out(o.toString() + "\n", TermGreen)
                                     else {
                                         val mx = maxOf((w * 0.15).toInt(), 2); val my = maxOf((h * 0.15).toInt(), 2)
-                                        out("center $cx,$cy  bounds l=$l t=$t w=$w h=$h\n", TermGreen)
-                                        out("safe: ($cx,$cy) (${l + mx},${t + my}) (${l + w - mx},${t + my}) " +
+                                        out("ok box $cx,$cy bounds=$l,$t,$w,$h\n", TermGreen)
+                                        out("safe ($cx,$cy) (${l + mx},${t + my}) (${l + w - mx},${t + my}) " +
                                             "(${l + mx},${t + h - my}) (${l + w - mx},${t + h - my})\n", TermWhite)
-                                        out("→ b tap $cx $cy  (any safe point works)\n", TermDim)
                                     }
                                 } catch (_: Exception) { out("$raw\n", TermWhite) }
                             }
@@ -1930,14 +1929,14 @@ class TerminalViewModel : ViewModel() {
                         if (nums.size < 2) out("Usage: b tap <x> <y> [--click]  (CSS px from b pos/box)\n", TermRed)
                         else {
                             val r = com.rg.webloom.data.BrowserAgent.tapSync(nums[0], nums[1])
-                            if (!r.delivered) out("Tap dropped (${r.reason}) — page may be loading; retry or b metrics\n", TermRed)
+                            if (!r.delivered) out("err tap ${nums[0]},${nums[1]} delivered=false reason=${r.reason}\n", TermRed)
                             else {
-                                var msg = "Tapped ${nums[0]},${nums[1]} (delivered)"
+                                var msg = "ok tap ${nums[0]},${nums[1]} delivered=true"
                                 if (click) {
                                     val cr = com.rg.webloom.data.BrowserAgent.eval(
                                         "(function(){try{var e=document.elementFromPoint(${nums[0]},${nums[1]});if(!e)return 'ERR no-node';e.click();return 'OK click';}catch(e){return 'ERR '+e;}})()"
                                     )
-                                    msg += if (cr.contains("OK")) " + click" else " (click fallback: $cr)"
+                                    msg += if (cr.contains("OK")) " click=ok" else " click=$cr"
                                 }
                                 out("$msg\n", TermGreen)
                             }
@@ -1949,8 +1948,8 @@ class TerminalViewModel : ViewModel() {
                         if (nums.size < 4) out("Usage: b swipe <x1> <y1> <x2> <y2> [ms]  (CSS px)\n", TermRed)
                         else {
                             val r = com.rg.webloom.data.BrowserAgent.swipeSync(nums[0], nums[1], nums[2], nums[3], nums.getOrNull(4)?.toLong()?.coerceIn(50, 2000) ?: 300)
-                            if (r.delivered) out("Swiped (delivered)\n", TermGreen)
-                            else out("Swipe dropped (${r.reason}) — retry or b metrics\n", TermRed)
+                            if (r.delivered) out("ok swipe ${nums[0]},${nums[1]}→${nums[2]},${nums[3]} delivered=true\n", TermGreen)
+                            else out("err swipe delivered=false reason=${r.reason}\n", TermRed)
                         }
                     }
                     "scroll-to" -> {
@@ -2632,8 +2631,8 @@ class TerminalViewModel : ViewModel() {
                                 if (x < 0 || y < 0) out("No button found near the field\n", TermRed)
                                 else {
                                     val r = com.rg.webloom.data.BrowserAgent.tapSync(x.toFloat(), y.toFloat())
-                                    if (r.delivered) out("Tapped '${o.optString("label", "button")}' at ${x.toInt()},${y.toInt()} (delivered)\n", TermGreen)
-                                    else out("Tap dropped (${r.reason})\n", TermRed)
+                                    if (r.delivered) out("ok key '${o.optString("label", "button")}' ${x.toInt()},${y.toInt()} delivered=true\n", TermGreen)
+                                    else out("err key delivered=false reason=${r.reason}\n", TermRed)
                                 }
                             }
                         } catch (_: Exception) { out("$raw\n", TermWhite) }
@@ -2756,9 +2755,10 @@ class TerminalViewModel : ViewModel() {
                                     }
                                 } catch (_: Exception) {}
                                 if (tap != null) {
-                                    out("last tap ${tap.optString("kind", "tap")} css ${tap.optDouble("cssX")},${tap.optDouble("cssY")}" +
-                                        " → view ${tap.optDouble("viewX")},${tap.optDouble("viewY")}" +
-                                        " (scale ${tap.optDouble("scale")}, delivered=${tap.optBoolean("delivered", false)})\n", TermGreen)
+                                    out("ok metrictap kind=${tap.optString("kind", "tap")} css=${tap.optDouble("cssX")},${tap.optDouble("cssY")}" +
+                                        " view=${tap.optDouble("viewX")},${tap.optDouble("viewY")}" +
+                                        " scale=${tap.optDouble("scale")} delivered=${tap.optBoolean("delivered", false)}" +
+                                        " reason=${tap.optString("reason", "?")} parked=${tap.optBoolean("parked", false)}\n", TermGreen)
                                 } else out("last tap: none yet (b tap something first)\n", TermDim)
                                 out("$logInfo\n", TermDim)
                             }

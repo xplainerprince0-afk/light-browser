@@ -133,6 +133,10 @@ fun FilesScreen(
     var showHidden by remember {
         mutableStateOf(try { com.rg.webloom.data.Prefs.showHidden } catch (_: Exception) { false })
     }
+    // Fast folder cache: skip re-stat when child count + dir mtime match.
+    var fastCache by remember {
+        mutableStateOf(try { com.rg.webloom.data.Prefs.fastDirCache } catch (_: Exception) { true })
+    }
     var createIsFile by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.init() }
@@ -307,6 +311,15 @@ fun FilesScreen(
                                         overflow = false
                                         showHidden = !showHidden
                                         try { com.rg.webloom.data.Prefs.showHidden = showHidden } catch (_: Exception) {}
+                                        vm.refresh()
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (fastCache) "✓ Fast folder cache" else "Fast folder cache") },
+                                    onClick = {
+                                        overflow = false
+                                        fastCache = !fastCache
+                                        try { com.rg.webloom.data.Prefs.fastDirCache = fastCache } catch (_: Exception) {}
                                         vm.refresh()
                                     }
                                 )

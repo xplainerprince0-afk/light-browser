@@ -90,6 +90,27 @@ with tool output:
 --- END PAGE CONTENT ---
 ```
 
+## For AI agents (touch loop contract)
+
+Result lines are machine-parseable: `ok <cmd> … delivered=true` or
+`err <cmd> … delivered=false reason=<r>`. Reasons: `no-webview`,
+`detached`, `rejected`, `timeout`, `deliver-error`. `b metrics` prints
+`ok metrictap … parked=<bool>` — `parked=true` means the Browser tab was
+backgrounded (the target auto-resumes, but prefer acting while it is visible).
+
+Reliable interaction loop:
+1. `b box "<css>"` → pick the center or any `safe` point (vary per attempt
+   using `bounds` — never hammer the identical pixel).
+2. Deterministic actions FIRST: `b click` / `b fill` / `b js` (selector-based,
+   always land). Raw `b tap` is a real finger touch: some pages only navigate
+   on click — append `--click` for links, or verify with a `touchstart`
+   listener + `b metrics`.
+3. After every `b tap`/`b swipe`, require `delivered=true`. On `false`, wait,
+   `b metrics` once, retry with a different safe point — never blind-repeat
+   the same coords.
+4. Gestures serialize server-side (150ms gap); bursts are safe but slow —
+   batch thoughtfully.
+
 ## Build order
 
 1. Bus + `b open/url/title/reload/back` + `b js` (timeout + truncate).

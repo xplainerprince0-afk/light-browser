@@ -110,6 +110,11 @@ object Prefs {
         get() = p(AppCtx.ctx).getBoolean("files_hidden", false)
         set(v) { p(AppCtx.ctx).edit().putBoolean("files_hidden", v).apply() }
 
+    /** Fast folder cache: skip re-stat when child count + dir mtime unchanged. */
+    var fastDirCache: Boolean
+        get() = p(AppCtx.ctx).getBoolean("files_fast_cache", true)
+        set(v) { p(AppCtx.ctx).edit().putBoolean("files_fast_cache", v).apply() }
+
     /** Build search URL for the given query using the configured search engine */
     fun buildSearchUrl(query: String): String {
         val encoded = android.net.Uri.encode(query)

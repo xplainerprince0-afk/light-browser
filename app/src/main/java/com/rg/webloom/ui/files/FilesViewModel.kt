@@ -41,6 +41,36 @@ class FilesViewModel : ViewModel() {
         private set
     private var currentDir: File? = null
 
+    /** Fast dir cache: revisits skip listFiles/stat/sum when the cheap
+     *  names-only count + dir mtime match (external changes fall back to a
+     *  full rescan via count mismatch). IO-confined, LRU 20 dirs. */
+    private data class DirCacheEntry(
+        val childCount: Int,
+        val dirModified: Long,
+        val totalSize: Long,
+        val files: List<File>,
+        val query: String,
+        val sortMode: Int,
+        val showHidden: Boolean
+    )
+    private val dirCache = object : LinkedHashMap<String, DirCacheEntry>(24, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DirCacheEntry>): Boolean = size > 20
+    }
+    /** Sandbox-wide usage total: full tree walk, cached 30s + invalidated on writes. */
+    private var cachedUsage: Pair<Long, Long>? = null
+    private fun invalidateUsage() { cachedUsage = null }
+    private fun usageBytes(): Long {
+        cachedUsage?.let { (v, at) -> if (System.currentTimeMillis() - at < 30_000) return v }
+        val sd = sandboxDir ?: return cachedUsage?.first ?: 0L
+        val v = try {
+            sd.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        } catch (_: Exception) { cachedUsage?.first ?: 0L }
+        cachedUsage = v to System.currentTimeMillis()
+        return v
+    }
+    private fun cacheKey(dir: File): String =
+        try { dir.canonicalFile.absolutePath } catch (_: Exception) { dir.absolutePath }
+
     fun init() {
         if (sandboxDir != null) {
             refresh()
@@ -159,6 +189,7 @@ class FilesViewModel : ViewModel() {
         val move = _ui.value.clipCut
         _ui.update { it.copy(busy = if (move) "Moving…" else "Copying…") }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             var n = 0
             srcs.forEach { src ->
                 try {
@@ -207,33 +238,64 @@ class FilesViewModel : ViewModel() {
                 // Hidden dotfiles out of sight unless enabled (the shell and
                 // the agent bridge keep seeing them — only the UI filters).
                 val showHidden = try { com.rg.webloom.data.Prefs.showHidden } catch (_: Exception) { false }
-                val all = dir.listFiles()?.toList()?.filter { showHidden || !it.name.startsWith(".") } ?: emptyList()
+                val useCache = try { com.rg.webloom.data.Prefs.fastDirCache } catch (_: Exception) { true }
                 val q = _ui.value.query
+                val sort = _ui.value.sortMode
+                val key = cacheKey(dir)
+                if (useCache) {
+                    val entry = synchronized(dirCache) { dirCache[key] }
+                    if (entry != null && entry.query == q && entry.sortMode == sort && entry.showHidden == showHidden) {
+                        // Cheap freshness probe: names-only readdir + one stat.
+                        // Same count + same dir mtime ⇒ reuse listing + sizes.
+                        val names = try { dir.list() } catch (_: Exception) { null }
+                        val dirMt = try { dir.lastModified() } catch (_: Exception) { -1L }
+                        if (names != null) {
+                            val n = names.count { showHidden || !it.startsWith(".") }
+                            if (n == entry.childCount && dirMt == entry.dirModified) {
+                                val used = usageBytes()
+                                val crumbs = crumbsFor(dir)
+                                withContext(Dispatchers.Main) {
+                                    _ui.update {
+                                        it.copy(
+                                            currentPath = dir.absolutePath,
+                                            crumbs = crumbs,
+                                            files = entry.files,
+                                            count = entry.files.size,
+                                            usedBytes = used
+                                        )
+                                    }
+                                }
+                                return@launch
+                            }
+                        }
+                    }
+                }
+                val all = dir.listFiles()?.toList()?.filter { showHidden || !it.name.startsWith(".") } ?: emptyList()
                 val filtered = if (q.isBlank()) all
                 else all.filter { it.name.contains(q, ignoreCase = true) }
-                val sorted = when (_ui.value.sortMode) {
+                val sorted = when (sort) {
                     1 -> filtered.sortedWith(compareBy({ !it.isDirectory }, { if (it.isFile) -it.length() else 0L }))
                     2 -> filtered.sortedWith(compareBy({ !it.isDirectory }, { -it.lastModified() }))
                     3 -> filtered.sortedWith(compareBy({ !it.isDirectory }, { it.extension.lowercase() }, { it.name.lowercase() }))
                     else -> filtered.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
                 }
-                val sd = sandboxDir
-                val crumbs = buildList {
-                    if (sd != null) {
-                        add("Sandbox" to sd.absolutePath)
-                        val rel = dir.absolutePath.removePrefix(sd.absolutePath).trim('/').trimStart('/')
-                        if (rel.isNotEmpty()) {
-                            var p = sd
-                            rel.split("/").forEach { seg ->
-                                p = File(p, seg)
-                                add(seg to p.absolutePath)
-                            }
-                        }
-                    }
+                val crumbs = crumbsFor(dir)
+                val used = usageBytes()
+                if (useCache) {
+                    try {
+                        val names = dir.list()
+                        val entry = DirCacheEntry(
+                            childCount = names?.count { showHidden || !it.startsWith(".") } ?: all.size,
+                            dirModified = try { dir.lastModified() } catch (_: Exception) { -1L },
+                            totalSize = all.filter { it.isFile }.sumOf { try { it.length() } catch (_: Exception) { 0L } },
+                            files = sorted,
+                            query = q,
+                            sortMode = sort,
+                            showHidden = showHidden
+                        )
+                        synchronized(dirCache) { dirCache[key] = entry }
+                    } catch (_: Exception) {}
                 }
-                val used = try {
-                    sd?.walkTopDown()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
-                } catch (_: Exception) { 0L }
                 withContext(Dispatchers.Main) {
                     _ui.update {
                         it.copy(
@@ -249,11 +311,27 @@ class FilesViewModel : ViewModel() {
         }
     }
 
+    private fun crumbsFor(dir: File): List<Pair<String, String>> {
+        val sd = sandboxDir ?: return emptyList()
+        return buildList {
+            add("Sandbox" to sd.absolutePath)
+            val rel = dir.absolutePath.removePrefix(sd.absolutePath).trim('/').trimStart('/')
+            if (rel.isNotEmpty()) {
+                var p = sd
+                rel.split("/").forEach { seg ->
+                    p = File(p, seg)
+                    add(seg to p.absolutePath)
+                }
+            }
+        }
+    }
+
     fun createFolder(name: String, done: (Boolean) -> Unit) {
         val dir = currentDir ?: return
         val safe = sanitizeName(name)
         if (safe == null) { done(false); return }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             val ok = try {
                 val out = File(dir, safe)
                 if (!out.canonicalFile.absolutePath.startsWith(dir.canonicalFile.absolutePath + File.separator)) false
@@ -271,6 +349,7 @@ class FilesViewModel : ViewModel() {
         val safe = sanitizeName(name)
         if (safe == null) { done(false); return }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             val ok = try {
                 val out = File(dir, safe)
                 if (!out.canonicalFile.absolutePath.startsWith(dir.canonicalFile.absolutePath + File.separator)) false
@@ -304,6 +383,7 @@ class FilesViewModel : ViewModel() {
         val dest = try { File(file.parentFile, file.nameWithoutExtension) } catch (_: Exception) { return }
         _ui.update { it.copy(busy = "Extracting…") }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             var count = 0
             var totalBytes = 0L
             try {
@@ -369,6 +449,7 @@ class FilesViewModel : ViewModel() {
         val safe = sanitizeName(newName)
         if (safe == null || !isAllowed(file)) { done(false); return }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             val ok = try {
                 val out = File(file.parentFile, safe)
                 if (!out.canonicalFile.absolutePath.startsWith(file.parentFile.canonicalFile.absolutePath + File.separator)) false
@@ -386,6 +467,7 @@ class FilesViewModel : ViewModel() {
         val targets = files.filter { isAllowed(it) }
         _ui.update { it.copy(busy = "Deleting…", selected = emptySet()) }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             var ok = true
             targets.forEach {
                 try {
@@ -405,6 +487,7 @@ class FilesViewModel : ViewModel() {
         if (!isAllowed(destDir)) { done(null); return }
         _ui.update { it.copy(busy = "Importing…") }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             try {
                 val app = AppCtx.ctx
                 var name: String? = null
@@ -444,6 +527,7 @@ class FilesViewModel : ViewModel() {
         if (!isAllowed(destDir)) { done(0); return }
         _ui.update { it.copy(busy = "Importing folder…") }
         viewModelScope.launch(Dispatchers.IO) {
+            invalidateUsage()
             var count = 0
             try {
                 val app = AppCtx.ctx
@@ -486,8 +570,13 @@ class FilesViewModel : ViewModel() {
     }
 
     fun details(file: File): String {
+        // Cheap: cached count or names-only listing — never a recursive walk
+        // (the old walkTopDown().count{} ran synchronously on Main per open).
         val size = if (file.isDirectory) {
-            "${try { file.walkTopDown().count { it.isFile } } catch (_: Exception) { 0 }} files"
+            val key = cacheKey(file)
+            val cached = try { synchronized(dirCache) { dirCache[key]?.childCount } } catch (_: Exception) { null }
+            val n = cached ?: try { file.list()?.size ?: 0 } catch (_: Exception) { 0 }
+            "$n items"
         } else formatSize(file.length())
         return "Name: ${file.name}\nPath: ${file.absolutePath}\nSize: $size\n" +
             "Type: ${if (file.isDirectory) "Folder" else file.extension.uppercase().ifEmpty { "File" }}\n" +

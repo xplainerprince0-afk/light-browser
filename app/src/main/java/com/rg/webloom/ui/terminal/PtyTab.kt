@@ -436,7 +436,6 @@ fun PtyTab(
                     "/" to { if (exited == null) sendChar("/") },
                     "-" to { if (exited == null) sendChar("-") },
                     "HOME" to { if (exited == null) sendSeq("\u001B[H") },
-                    "↑" to { if (exited == null) sendSeq("\u001B[A") },
                     "END" to { if (exited == null) sendSeq("\u001B[F") },
                     "PGUP" to { if (exited == null) sendSeq("\u001B[5~") },
                     "PGDN" to { if (exited == null) sendSeq("\u001B[6~") },
@@ -448,9 +447,8 @@ fun PtyTab(
                 keys = listOf(
                     "CTRL" to { if (exited == null) { sticky = if (sticky == "CTRL") null else "CTRL"; refocus() } },
                     "ALT" to { if (exited == null) { sticky = if (sticky == "ALT") null else "ALT"; refocus() } },
-                    "^C" to { if (exited == null) writeBytes(byteArrayOf(0x03)) },
-                    "^D" to { if (exited == null) writeBytes(byteArrayOf(0x04)) },
                     "←" to { if (exited == null) sendSeq("\u001B[D") },
+                    "↑" to { if (exited == null) sendSeq("\u001B[A") },
                     "↓" to { if (exited == null) sendSeq("\u001B[B") },
                     "→" to { if (exited == null) sendSeq("\u001B[C") },
                     "~" to { if (exited == null) sendChar("~") },

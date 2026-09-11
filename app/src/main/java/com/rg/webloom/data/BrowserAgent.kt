@@ -395,43 +395,61 @@ object BrowserAgent {
 
     /** Humanized native touch on Main. Instance-pinned: delivers to the exact
      *  WebView captured at enqueue time (no provider re-resolve mid-stream).
-     *  Pressure/size/duration/±1px jitter defeat exact-coordinate bot checks;
-     *  pure DOWN→UP (no spurious MOVE) lets Chromium synthesize click. */
+     *  FINGER tool type + touchscreen source (Chromium drops UNKNOWN-tool
+     *  streams after accepting them — the delivered:true/zero-events ghost);
+     *  pressure/size/duration/±1px jitter defeat exact-coordinate bot checks;
+     *  pure DOWN→UP (no spurious MOVE) lets Chromium synthesize click.
+     *  A backgrounded (parked/paused) target gets onResume() first so its
+     *  renderer actually runs input; parked is logged for forensics. */
     private fun deliverTouch(op: TouchOp): TouchResult {
         val wv = op.wv
         try {
             if (wv.parent == null) {
-                logTouch(op, 0f, 0f, 0f, 0f, 0f, false, "detached", 0L)
+                logTouch(op, 0f, 0f, 0f, 0f, 0f, false, "detached", 0L, parked = false)
                 return TouchResult(false, "detached")
             }
+            // Wake a parked/paused page: its renderer acks input without
+            // running it otherwise. Idempotent when already resumed.
+            try { wv.onResume() } catch (_: Exception) {}
+            val parked = try {
+                val loc = IntArray(2)
+                wv.getLocationInWindow(loc)
+                loc[0] < -1000 || loc[1] < -1000
+            } catch (_: Exception) { false }
             val dm = wv.resources.displayMetrics
             val d = dm.density.coerceAtLeast(1f)
             val s = viewScale(wv, op.jsZoom, op.jsDpr)
             val t0 = android.os.SystemClock.uptimeMillis()
             val pressure = 0.85f + touchRand.nextFloat() * 0.15f
             val size = 0.9f + touchRand.nextFloat() * 0.2f
+            val props = arrayOf(android.view.MotionEvent.PointerProperties().apply {
+                id = 0; toolType = android.view.MotionEvent.TOOL_TYPE_FINGER
+            })
+            fun evAt(downT: Long, et: Long, action: Int, x: Float, y: Float) =
+                android.view.MotionEvent.obtain(downT, et, action, 1, props,
+                    arrayOf(android.view.MotionEvent.PointerCoords().apply {
+                        this.x = x; this.y = y; this.pressure = pressure; this.size = size
+                    }), 0, 0, 1f, 1f, 0, 0, android.view.InputDevice.SOURCE_TOUCHSCREEN, 0)
             fun jx(css: Float) = (css + (touchRand.nextFloat() - 0.5f) * 2f) * s
             fun jy(css: Float) = (css + (touchRand.nextFloat() - 0.5f) * 2f) * s
-            fun downAt(x: Float, y: Float) =
-                android.view.MotionEvent.obtain(t0, t0, android.view.MotionEvent.ACTION_DOWN, x, y, pressure, size, 0, d, d, 0, 0)
             if (op.kind == "tap") {
                 val (cx, cy) = op.css[0]
                 val x = jx(cx); val y = jy(cy)
                 val dur = humanMs(95, 25) // 70..120ms finger dwell
-                val down = downAt(x, y)
+                val down = evAt(t0, t0, android.view.MotionEvent.ACTION_DOWN, x, y)
                 val dDown = try { wv.dispatchTouchEvent(down) } catch (_: Exception) { false } finally {
                     try { down.recycle() } catch (_: Exception) {}
                 }
                 val upAt = t0 + dur
                 mainHandler.postDelayed({
                     try {
-                        val up = android.view.MotionEvent.obtain(t0, upAt, android.view.MotionEvent.ACTION_UP, x, y, pressure, size, 0, d, d, 0, 0)
+                        val up = evAt(t0, upAt, android.view.MotionEvent.ACTION_UP, x, y)
                         try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
                             try { up.recycle() } catch (_: Exception) {}
                         }
                     } catch (_: Exception) {}
                 }, dur)
-                logTouch(op, x, y, x, y, s, dDown, if (dDown) "ok" else "rejected", t0, dur)
+                logTouch(op, x, y, x, y, s, dDown, if (dDown) "ok" else "rejected", t0, dur, parked)
                 return TouchResult(dDown, if (dDown) "ok" else "rejected")
             } else {
                 // Swipe: discrete eased MOVEs (Chromium ignores addBatch history
@@ -440,7 +458,7 @@ object BrowserAgent {
                 val (c2x, c2y) = op.css[1]
                 val x1 = jx(c1x); val y1 = jy(c1y); val x2 = jx(c2x); val y2 = jy(c2y)
                 val steps = ((op.ms / 16).toLong()).coerceIn(6, 32).toInt()
-                val down = downAt(x1, y1)
+                val down = evAt(t0, t0, android.view.MotionEvent.ACTION_DOWN, x1, y1)
                 val dDown = try { wv.dispatchTouchEvent(down) } catch (_: Exception) { false } finally {
                     try { down.recycle() } catch (_: Exception) {}
                 }
@@ -453,7 +471,7 @@ object BrowserAgent {
                         val at = (op.ms * e).toLong()
                         mainHandler.postDelayed({
                             try {
-                                val mv = android.view.MotionEvent.obtain(t0, et, android.view.MotionEvent.ACTION_MOVE, mx, my, pressure, size, 0, d, d, 0, 0)
+                                val mv = evAt(t0, et, android.view.MotionEvent.ACTION_MOVE, mx, my)
                                 try { wv.dispatchTouchEvent(mv) } catch (_: Exception) {} finally {
                                     try { mv.recycle() } catch (_: Exception) {}
                                 }
@@ -463,14 +481,14 @@ object BrowserAgent {
                     val upEt = t0 + op.ms + 20
                     mainHandler.postDelayed({
                         try {
-                            val up = android.view.MotionEvent.obtain(t0, upEt, android.view.MotionEvent.ACTION_UP, x2, y2, pressure, size, 0, d, d, 0, 0)
+                            val up = evAt(t0, upEt, android.view.MotionEvent.ACTION_UP, x2, y2)
                             try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
                                 try { up.recycle() } catch (_: Exception) {}
                             }
                         } catch (_: Exception) {}
                     }, op.ms + 20)
                 }
-                logTouch(op, x1, y1, x2, y2, s, dDown, if (dDown) "ok" else "rejected", t0, op.ms)
+                logTouch(op, x1, y1, x2, y2, s, dDown, if (dDown) "ok" else "rejected", t0, op.ms, parked)
                 return TouchResult(dDown, if (dDown) "ok" else "rejected")
             }
         } catch (_: Exception) {
@@ -480,7 +498,8 @@ object BrowserAgent {
 
     private fun logTouch(
         op: TouchOp, vx1: Float, vy1: Float, vx2: Float, vy2: Float,
-        scale: Float, delivered: Boolean, reason: String, downTime: Long, durMs: Long = 0
+        scale: Float, delivered: Boolean, reason: String, downTime: Long, durMs: Long = 0,
+        parked: Boolean = false
     ) {
         try {
             val wv = op.wv
@@ -496,6 +515,7 @@ object BrowserAgent {
                 .put("progress", try { wv.progress } catch (_: Exception) { -1 })
                 .put("jsZoom", op.jsZoom.toDouble()).put("jsDpr", op.jsDpr.toDouble())
                 .put("delivered", delivered).put("reason", reason)
+                .put("tool", "finger").put("parked", parked)
                 .put("downTime", downTime).put("durMs", durMs)
                 .put("ts", System.currentTimeMillis())
             if (op.kind == "swipe" && op.css.size > 1) {

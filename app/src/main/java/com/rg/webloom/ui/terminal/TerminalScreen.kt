@@ -457,7 +457,6 @@ fun TerminalScreen(
                         "/" to { if (vm.applyStickyKey(sticky, "/")) sticky = null },
                         "-" to { if (vm.applyStickyKey(sticky, "-")) sticky = null },
                         "HOME" to { if (sticky == "ALT") { vm.insertText("[H"); sticky = null } else { sticky = null; vm.moveLineHome() } },
-                        "↑" to { sticky = null; vm.historyUp() },
                         "END" to { if (sticky == "ALT") { vm.insertText("[F"); sticky = null } else { sticky = null; vm.moveLineEnd() } },
                         "PGUP" to { sticky = null; vm.moveCursorTo(0) },
                         "PGDN" to { sticky = null; vm.moveCursorTo(999999) },
@@ -469,9 +468,8 @@ fun TerminalScreen(
                     keys = listOf(
                         "CTRL" to { sticky = if (sticky == "CTRL") null else "CTRL" },
                         "ALT" to { sticky = if (sticky == "ALT") null else "ALT" },
-                        "^C" to { sticky = null; try { vm.interrupt() } catch (_: Exception) {} },
-                        "^D" to { sticky = null; try { vm.sendEof() } catch (_: Exception) {} },
                         "←" to { sticky = null; vm.moveCursor(-1) },
+                        "↑" to { sticky = null; vm.historyUp() },
                         "↓" to { sticky = null; vm.historyDown() },
                         "→" to { sticky = null; vm.moveCursor(1) },
                         "~" to { if (vm.applyStickyKey(sticky, "~")) sticky = null },
