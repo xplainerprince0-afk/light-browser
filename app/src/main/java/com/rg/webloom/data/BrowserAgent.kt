@@ -318,15 +318,6 @@ object BrowserAgent {
         runOnPage { try { it.findNext(forward) } catch (_: Exception) {} }
     }
 
-    /** CSS px → view px for synthetic touches.
-     *  Density is exact at default zoom; WebView.getScale() returns zoom-only
-     *  1.0 on modern Chromium, so a scale at/above density implies a legacy
-     *  density-included value. Pinch-zoom beyond that is carried by the JS
-     *  visualViewport scale in locate/keyProbe (see SHIM). */
-    private fun cssScale(wv: WebView): Float {
-        return viewScale(wv, jsZoom = 1f, jsDpr = -1f)
-    }
-
     private fun viewScale(wv: WebView, jsZoom: Float, jsDpr: Float): Float {
         return try {
             val d = wv.resources.displayMetrics.density.coerceAtLeast(1f)
@@ -348,87 +339,211 @@ object BrowserAgent {
         } catch (_: Exception) { 1f }
     }
 
-    /** Real tap at CSS-pixel coords (from `locate`): full touch pipeline, trusted by pages. */
-    /** Last synthetic tap audit trail (for `b metrics` accuracy tests). */
+    /** Coordinate contract (single source of truth):
+     *  EVERYTHING is CSS px — `b pos`/`b box`, `b tap`/`b swipe`, `/tap`/`/swipe`,
+     *  recorder payloads. CSS→view scaling lives ONLY in [deliverTouch].
+     *  `lastTap` logs both spaces plus `delivered` so `b metrics` can verify. */
+    /** Last synthetic-touch audit trail (for `b metrics` accuracy tests). */
     @Volatile
     var lastTap: String? = null
         private set
 
-    fun tapAt(xCss: Float, yCss: Float, jsZoom: Float = 1f, jsDpr: Float = -1f) {
+    data class TouchResult(val delivered: Boolean, val reason: String)
+
+    private data class TouchOp(
+        val wv: WebView,
+        val kind: String, // "tap" | "swipe"
+        val css: List<Pair<Float, Float>>, // tap: 1 pt; swipe: start→end
+        val ms: Long,
+        val jsZoom: Float,
+        val jsDpr: Float,
+        val future: CompletableFuture<TouchResult>? = null
+    )
+
+    private val touchQueue = ArrayDeque<TouchOp>()
+    private var touchBusy = false
+    private val touchRand = java.util.Random()
+
+    /** FIFO gestures with an inter-gesture gap: overlapping DOWN/UP streams
+     *  made Chromium cancel every stream under rapid repeats (the silent-drop
+     *  bug). Queueing + 150ms settle keeps each gesture atomic. */
+    private fun enqueueTouch(op: TouchOp) {
         mainHandler.post {
-            try {
-                val wv = webViewProvider?.invoke() ?: return@post
-                val s = viewScale(wv, jsZoom, jsDpr)
-                val x = xCss * s
-                val y = yCss * s
-                try {
-                    lastTap = JSONObject().put("cssX", xCss).put("cssY", yCss)
-                        .put("devX", x).put("devY", y).put("scale", s)
-                        .put("jsZoom", jsZoom.toDouble()).put("jsDpr", jsDpr.toDouble())
-                        .put("viewW", wv.width).put("viewH", wv.height)
-                        .put("scrollX", try { wv.scrollX } catch (_: Exception) { -1 })
-                        .put("scrollY", try { wv.scrollY } catch (_: Exception) { -1 })
-                        .put("ts", System.currentTimeMillis()).toString()
-                } catch (_: Exception) {}
-                val now = android.os.SystemClock.uptimeMillis()
-                try {
-                    val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
-                    try { wv.dispatchTouchEvent(down) } catch (_: Exception) {} finally {
-                        try { down.recycle() } catch (_: Exception) {}
-                    }
-                    // Small MOVE makes the gesture look like a real finger to
-                    // pages that ignore bare DOWN/UP (maps, sliders, SPA buttons).
-                    val mv = android.view.MotionEvent.obtain(now, now + 10, android.view.MotionEvent.ACTION_MOVE, x, y, 0)
-                    try { wv.dispatchTouchEvent(mv) } catch (_: Exception) {} finally {
-                        try { mv.recycle() } catch (_: Exception) {}
-                    }
-                } catch (_: Exception) {}
-                wv.postDelayed({
+            touchQueue.add(op)
+            pumpTouch()
+        }
+    }
+
+    private fun pumpTouch() {
+        if (touchBusy) return
+        val op = touchQueue.removeFirstOrNull() ?: return
+        touchBusy = true
+        try {
+            val res = deliverTouch(op)
+            try { op.future?.complete(res) } catch (_: Exception) {}
+            val settle = if (op.kind == "swipe") op.ms + 180L else 150L
+            mainHandler.postDelayed({ touchBusy = false; pumpTouch() }, settle)
+        } catch (_: Exception) {
+            try { op.future?.complete(TouchResult(false, "pump-error")) } catch (_: Exception) {}
+            touchBusy = false
+            pumpTouch()
+        }
+    }
+
+    private fun humanMs(base: Long, spread: Long): Long =
+        (base + (touchRand.nextFloat() - 0.5f) * 2 * spread).toLong().coerceAtLeast(40)
+
+    /** Humanized native touch on Main. Instance-pinned: delivers to the exact
+     *  WebView captured at enqueue time (no provider re-resolve mid-stream).
+     *  Pressure/size/duration/±1px jitter defeat exact-coordinate bot checks;
+     *  pure DOWN→UP (no spurious MOVE) lets Chromium synthesize click. */
+    private fun deliverTouch(op: TouchOp): TouchResult {
+        val wv = op.wv
+        try {
+            if (wv.parent == null) {
+                logTouch(op, 0f, 0f, 0f, 0f, 0f, false, "detached", 0L)
+                return TouchResult(false, "detached")
+            }
+            val dm = wv.resources.displayMetrics
+            val d = dm.density.coerceAtLeast(1f)
+            val s = viewScale(wv, op.jsZoom, op.jsDpr)
+            val t0 = android.os.SystemClock.uptimeMillis()
+            val pressure = 0.85f + touchRand.nextFloat() * 0.15f
+            val size = 0.9f + touchRand.nextFloat() * 0.2f
+            fun jx(css: Float) = (css + (touchRand.nextFloat() - 0.5f) * 2f) * s
+            fun jy(css: Float) = (css + (touchRand.nextFloat() - 0.5f) * 2f) * s
+            fun downAt(x: Float, y: Float) =
+                android.view.MotionEvent.obtain(t0, t0, android.view.MotionEvent.ACTION_DOWN, x, y, pressure, size, 0, d, d, 0, 0)
+            if (op.kind == "tap") {
+                val (cx, cy) = op.css[0]
+                val x = jx(cx); val y = jy(cy)
+                val dur = humanMs(95, 25) // 70..120ms finger dwell
+                val down = downAt(x, y)
+                val dDown = try { wv.dispatchTouchEvent(down) } catch (_: Exception) { false } finally {
+                    try { down.recycle() } catch (_: Exception) {}
+                }
+                val upAt = t0 + dur
+                mainHandler.postDelayed({
                     try {
-                        val up = android.view.MotionEvent.obtain(now, now + 60, android.view.MotionEvent.ACTION_UP, x, y, 0)
+                        val up = android.view.MotionEvent.obtain(t0, upAt, android.view.MotionEvent.ACTION_UP, x, y, pressure, size, 0, d, d, 0, 0)
                         try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
                             try { up.recycle() } catch (_: Exception) {}
                         }
                     } catch (_: Exception) {}
-                }, 70)
-            } catch (_: Exception) {}
+                }, dur)
+                logTouch(op, x, y, x, y, s, dDown, if (dDown) "ok" else "rejected", t0, dur)
+                return TouchResult(dDown, if (dDown) "ok" else "rejected")
+            } else {
+                // Swipe: discrete eased MOVEs (Chromium ignores addBatch history
+                // folded into ACTION_DOWN — the old swipe never scrolled).
+                val (c1x, c1y) = op.css[0]
+                val (c2x, c2y) = op.css[1]
+                val x1 = jx(c1x); val y1 = jy(c1y); val x2 = jx(c2x); val y2 = jy(c2y)
+                val steps = ((op.ms / 16).toLong()).coerceIn(6, 32).toInt()
+                val down = downAt(x1, y1)
+                val dDown = try { wv.dispatchTouchEvent(down) } catch (_: Exception) { false } finally {
+                    try { down.recycle() } catch (_: Exception) {}
+                }
+                if (dDown) {
+                    for (i in 1..steps) {
+                        val t = i.toFloat() / steps
+                        val e = if (t < 0.5f) 2 * t * t else 1 - ((-2 * t + 2) * (-2 * t + 2)) / 2
+                        val mx = x1 + (x2 - x1) * e; val my = y1 + (y2 - y1) * e
+                        val et = t0 + (op.ms * e).toLong()
+                        val at = (op.ms * e).toLong()
+                        mainHandler.postDelayed({
+                            try {
+                                val mv = android.view.MotionEvent.obtain(t0, et, android.view.MotionEvent.ACTION_MOVE, mx, my, pressure, size, 0, d, d, 0, 0)
+                                try { wv.dispatchTouchEvent(mv) } catch (_: Exception) {} finally {
+                                    try { mv.recycle() } catch (_: Exception) {}
+                                }
+                            } catch (_: Exception) {}
+                        }, at)
+                    }
+                    val upEt = t0 + op.ms + 20
+                    mainHandler.postDelayed({
+                        try {
+                            val up = android.view.MotionEvent.obtain(t0, upEt, android.view.MotionEvent.ACTION_UP, x2, y2, pressure, size, 0, d, d, 0, 0)
+                            try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
+                                try { up.recycle() } catch (_: Exception) {}
+                            }
+                        } catch (_: Exception) {}
+                    }, op.ms + 20)
+                }
+                logTouch(op, x1, y1, x2, y2, s, dDown, if (dDown) "ok" else "rejected", t0, op.ms)
+                return TouchResult(dDown, if (dDown) "ok" else "rejected")
+            }
+        } catch (_: Exception) {
+            return TouchResult(false, "deliver-error")
         }
     }
 
-    /** Shared stroke dispatcher: DOWN once, batched MOVEs, UP once. */
-    private fun dispatchStroke(wv: WebView, pts: List<Pair<Float, Float>>, t0: Long, stepMs: Long) {
+    private fun logTouch(
+        op: TouchOp, vx1: Float, vy1: Float, vx2: Float, vy2: Float,
+        scale: Float, delivered: Boolean, reason: String, downTime: Long, durMs: Long = 0
+    ) {
         try {
-            val first = pts.firstOrNull() ?: return
-            val down = android.view.MotionEvent.obtain(t0, t0, android.view.MotionEvent.ACTION_DOWN, first.first, first.second, 0)
-            // Batch MOVE history so fling/scroll handlers see velocity.
-            for (i in 1 until pts.size) {
-                try { down.addBatch(t0 + stepMs * i, pts[i].first, pts[i].second, 1f, 1f, 0) } catch (_: Exception) { break }
+            val wv = op.wv
+            val o = JSONObject()
+                .put("kind", op.kind)
+                .put("cssX", op.css[0].first).put("cssY", op.css[0].second)
+                .put("viewX", vx1).put("viewY", vy1)
+                .put("scale", scale.toDouble())
+                .put("density", wv.resources.displayMetrics.density.toDouble())
+                .put("viewW", wv.width).put("viewH", wv.height)
+                .put("scrollX", try { wv.scrollX } catch (_: Exception) { -1 })
+                .put("scrollY", try { wv.scrollY } catch (_: Exception) { -1 })
+                .put("progress", try { wv.progress } catch (_: Exception) { -1 })
+                .put("jsZoom", op.jsZoom.toDouble()).put("jsDpr", op.jsDpr.toDouble())
+                .put("delivered", delivered).put("reason", reason)
+                .put("downTime", downTime).put("durMs", durMs)
+                .put("ts", System.currentTimeMillis())
+            if (op.kind == "swipe" && op.css.size > 1) {
+                o.put("cssX2", op.css[1].first).put("cssY2", op.css[1].second)
+                    .put("viewX2", vx2).put("viewY2", vy2).put("ms", op.ms)
             }
-            try { wv.dispatchTouchEvent(down) } catch (_: Exception) {} finally {
-                try { down.recycle() } catch (_: Exception) {}
-            }
-            val last = pts.last()
-            wv.postDelayed({
-                try {
-                    val t = android.os.SystemClock.uptimeMillis()
-                    val up = android.view.MotionEvent.obtain(t0, t, android.view.MotionEvent.ACTION_UP, last.first, last.second, 0)
-                    try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
-                        try { up.recycle() } catch (_: Exception) {}
-                    }
-                } catch (_: Exception) {
-                    try {
-                        val t = android.os.SystemClock.uptimeMillis()
-                        val c = android.view.MotionEvent.obtain(t0, t, android.view.MotionEvent.ACTION_CANCEL, last.first, last.second, 0)
-                        try { wv.dispatchTouchEvent(c) } catch (_: Exception) {} finally {
-                            try { c.recycle() } catch (_: Exception) {}
-                        }
-                    } catch (_: Exception) {}
-                }
-            }, stepMs * pts.size + 30)
+            lastTap = o.toString()
         } catch (_: Exception) {}
     }
 
-    /** Drag from (x1,y1) to (x2,y2) in CSS px over ~ms: scrolls, sliders, drawers. */
+    /** Async tap (CSS px): enqueue + return. Safe from any thread. */
+    fun tapAt(xCss: Float, yCss: Float, jsZoom: Float = 1f, jsDpr: Float = -1f) {
+        val wv = try { webViewProvider?.invoke() } catch (_: Exception) { null }
+        if (wv == null) {
+            try {
+                lastTap = JSONObject().put("kind", "tap").put("cssX", xCss).put("cssY", yCss)
+                    .put("delivered", false).put("reason", "no-webview")
+                    .put("ts", System.currentTimeMillis()).toString()
+            } catch (_: Exception) {}
+            return
+        }
+        enqueueTouch(TouchOp(wv, "tap", listOf(xCss to yCss), 0L, jsZoom, jsDpr, null))
+    }
+
+    /** Worker-safe blocking tap (CSS px): returns delivery. Never call on Main. */
+    fun tapSync(xCss: Float, yCss: Float, jsZoom: Float = 1f, jsDpr: Float = -1f, timeoutMs: Long = 10_000): TouchResult {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            tapAt(xCss, yCss, jsZoom, jsDpr)
+            return TouchResult(false, "main-thread-async")
+        }
+        val wv = try { webViewProvider?.invoke() } catch (_: Exception) { null }
+            ?: return TouchResult(false, "no-webview")
+        val f = CompletableFuture<TouchResult>()
+        enqueueTouch(TouchOp(wv, "tap", listOf(xCss to yCss), 0L, jsZoom, jsDpr, f))
+        return try {
+            f.get(timeoutMs, TimeUnit.MILLISECONDS) ?: TouchResult(false, "timeout")
+        } catch (_: Exception) {
+            TouchResult(false, "timeout")
+        } finally {
+            try { if (!f.isDone) f.cancel(true) } catch (_: Exception) {}
+        }
+    }
+
+    // dispatchStroke retired: swipe now schedules discrete eased MOVEs inside
+    // deliverTouch (Chromium ignores addBatch history folded into ACTION_DOWN).
+
+    /** Drag from (x1,y1) to (x2,y2) in CSS px over ~ms: scrolls, sliders, drawers.
+     *  Async version: enqueue + return. Safe from any thread. */
     fun swipe(x1Css: Float, y1Css: Float, x2Css: Float, y2Css: Float, ms: Long = 300, jsZoom: Float = 1f, jsDpr: Float = -1f) {
         // Touch-slop guard: tiny drags are taps on most pages.
         try {
@@ -438,19 +553,38 @@ object BrowserAgent {
                 return
             }
         } catch (_: Exception) {}
-        mainHandler.post {
+        val wv = try { webViewProvider?.invoke() } catch (_: Exception) { null }
+        if (wv == null) {
             try {
-                val wv = webViewProvider?.invoke() ?: return@post
-                val s = viewScale(wv, jsZoom, jsDpr)
-                val x1 = x1Css * s; val y1 = y1Css * s; val x2 = x2Css * s; val y2 = y2Css * s
-                val steps = 14
-                val t0 = android.os.SystemClock.uptimeMillis()
-                val pts = (0..steps).map { i ->
-                    val f = i.toFloat() / steps
-                    (x1 + (x2 - x1) * f) to (y1 + (y2 - y1) * f)
-                }
-                dispatchStroke(wv, pts, t0, (ms / steps).coerceAtLeast(8))
+                lastTap = JSONObject().put("kind", "swipe").put("cssX", x1Css).put("cssY", y1Css)
+                    .put("delivered", false).put("reason", "no-webview")
+                    .put("ts", System.currentTimeMillis()).toString()
             } catch (_: Exception) {}
+            return
+        }
+        enqueueTouch(TouchOp(wv, "swipe", listOf(x1Css to y1Css, x2Css to y2Css), ms.coerceIn(50, 2000), jsZoom, jsDpr, null))
+    }
+
+    /** Worker-safe blocking swipe (CSS px): returns delivery. Never call on Main. */
+    fun swipeSync(x1Css: Float, y1Css: Float, x2Css: Float, y2Css: Float, ms: Long = 300, jsZoom: Float = 1f, jsDpr: Float = -1f, timeoutMs: Long = 15_000): TouchResult {
+        try {
+            val dx = x2Css - x1Css; val dy = y2Css - y1Css
+            if (dx * dx + dy * dy < 12f * 12f) return tapSync((x1Css + x2Css) / 2f, (y1Css + y2Css) / 2f, jsZoom, jsDpr, timeoutMs)
+        } catch (_: Exception) {}
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            swipe(x1Css, y1Css, x2Css, y2Css, ms, jsZoom, jsDpr)
+            return TouchResult(false, "main-thread-async")
+        }
+        val wv = try { webViewProvider?.invoke() } catch (_: Exception) { null }
+            ?: return TouchResult(false, "no-webview")
+        val f = CompletableFuture<TouchResult>()
+        enqueueTouch(TouchOp(wv, "swipe", listOf(x1Css to y1Css, x2Css to y2Css), ms.coerceIn(50, 2000), jsZoom, jsDpr, f))
+        return try {
+            f.get(timeoutMs, TimeUnit.MILLISECONDS) ?: TouchResult(false, "timeout")
+        } catch (_: Exception) {
+            TouchResult(false, "timeout")
+        } finally {
+            try { if (!f.isDone) f.cancel(true) } catch (_: Exception) {}
         }
     }
 
@@ -494,7 +628,9 @@ object BrowserAgent {
                 try { f.complete("ERR ${e.message}") } catch (_: Exception) {}
             }
         }
-        return try { f.get(timeoutS, TimeUnit.SECONDS) } catch (_: Exception) { "ERR timeout" }
+        return try { f.get(timeoutS, TimeUnit.SECONDS) } catch (_: Exception) { "ERR timeout" } finally {
+            try { if (!f.isDone) f.cancel(true) } catch (_: Exception) {}
+        }
     }
 
     fun currentUrl(): String? = try {
@@ -508,6 +644,8 @@ object BrowserAgent {
             try { f.get(2, TimeUnit.SECONDS) } catch (_: Exception) {
                 // Timeout: Main is wedged — never touch the WebView off-Main as fallback.
                 null
+            } finally {
+                try { if (!f.isDone) f.cancel(true) } catch (_: Exception) {}
             }
         }
     } catch (_: Exception) { null }
@@ -527,7 +665,9 @@ object BrowserAgent {
                 } catch (e: Exception) {
                     try { if (!future.isDone) future.complete("ERR ${e.message}") } catch (_: Exception) {}
                 }
-                var out = try { future.get(timeoutMs, TimeUnit.MILLISECONDS) ?: "null" } catch (_: Exception) { "ERR timeout" }
+                var out = try { future.get(timeoutMs, TimeUnit.MILLISECONDS) ?: "null" } catch (_: Exception) { "ERR timeout" } finally {
+                    try { if (!future.isDone) future.cancel(true) } catch (_: Exception) {}
+                }
                 if (out.length > maxChars) out = out.take(maxChars) + "…[truncated]"
                 return out
             }
@@ -554,6 +694,8 @@ object BrowserAgent {
                 future.get(timeoutMs, TimeUnit.MILLISECONDS) ?: "null"
             } catch (_: Exception) {
                 "ERR timeout"
+            } finally {
+                try { if (!future.isDone) future.cancel(true) } catch (_: Exception) {}
             }
             if (out.length > maxChars) out = out.take(maxChars) + "…[truncated]"
             out
@@ -841,7 +983,9 @@ object BrowserAgent {
                 try { if (!f.isDone) f.complete("ERR ${e.message}") } catch (_: Exception) {}
             }
         }
-        return try { f.get(timeoutS, TimeUnit.SECONDS) ?: "ERR timeout" } catch (_: Exception) { "ERR timeout" }
+        return try { f.get(timeoutS, TimeUnit.SECONDS) ?: "ERR timeout" } catch (_: Exception) { "ERR timeout" } finally {
+            try { if (!f.isDone) f.cancel(true) } catch (_: Exception) {}
+        }
     }
 
     @Synchronized
@@ -891,6 +1035,24 @@ object BrowserAgent {
         clearTokenFile()
     }
 
+    /** Single serialized metrics.log writer (EXEC + PTY both land here —
+     *  the old dual writers raced full-file read/rewrite and lost entries). */
+    private val metricsLock = Any()
+    fun appendMetrics(rep: JSONObject): String {
+        return try {
+            val appCtx = try { AppCtx.ctx } catch (_: Exception) { null } ?: return "log failed: no ctx"
+            synchronized(metricsLock) {
+                val dir = java.io.File(appCtx.filesDir, "sandbox/agent_metrics").apply { mkdirs() }
+                val log = java.io.File(dir, "metrics.log")
+                log.appendText(rep.toString() + "\n", Charsets.UTF_8)
+                val lines = try { log.readLines(Charsets.UTF_8) } catch (_: Exception) { emptyList() }
+                if (lines.size > 400) {
+                    try { log.writeText(lines.takeLast(300).joinToString("\n") + "\n", Charsets.UTF_8) } catch (_: Exception) {}
+                }
+                "logged → ~/agent_metrics/metrics.log (${minOf(lines.size, 400)} kept)"
+            }
+        } catch (e: Exception) { "log failed: ${e.message}" }
+    }
     /** Token file lets shell CLIs (`b` shim, curl) auth without pasting. */
     private fun tokenFile(): java.io.File? {
         return try {
@@ -911,28 +1073,29 @@ object BrowserAgent {
     private fun handleSocket(sock: Socket) {
         try {
             sock.soTimeout = 15_000
-            val reader = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8))
-            val requestLine = reader.readLine() ?: return
-            // Consume headers
-            var line: String?
-            do {
-                line = reader.readLine()
-            } while (line != null && line.isNotEmpty())
-            val parts = requestLine.split(" ")
-            if (parts.size < 2 || parts[0] != "GET") {
-                respondRaw(sock.getOutputStream(), 405, """{"ok":false,"err":"GET only"}""")
-                return
+            BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8)).use { reader ->
+                val requestLine = reader.readLine() ?: return
+                // Consume headers
+                var line: String?
+                do {
+                    line = reader.readLine()
+                } while (line != null && line.isNotEmpty())
+                val parts = requestLine.split(" ")
+                if (parts.size < 2 || parts[0] != "GET") {
+                    respondRaw(sock.getOutputStream(), 405, """{"ok":false,"err":"GET only"}""")
+                    return
+                }
+                val rawTarget = parts[1]
+                val path = rawTarget.substringBefore("?")
+                val query = if (rawTarget.contains("?")) rawTarget.substringAfter("?") else ""
+                val q = parseQuery(query)
+                // All endpoints (incl /status) require token — URL itself is private.
+                if (q["token"] != token) {
+                    respondRaw(sock.getOutputStream(), 403, """{"ok":false,"err":"bad token"}""")
+                    return
+                }
+                respondRaw(sock.getOutputStream(), 200, handle(path, q))
             }
-            val rawTarget = parts[1]
-            val path = rawTarget.substringBefore("?")
-            val query = if (rawTarget.contains("?")) rawTarget.substringAfter("?") else ""
-            val q = parseQuery(query)
-            // All endpoints (incl /status) require token — URL itself is private.
-            if (q["token"] != token) {
-                respondRaw(sock.getOutputStream(), 403, """{"ok":false,"err":"bad token"}""")
-                return
-            }
-            respondRaw(sock.getOutputStream(), 200, handle(path, q))
         } catch (_: Exception) {
             try { respondRaw(sock.getOutputStream(), 500, """{"ok":false,"err":"io"}""") } catch (_: Exception) {}
         } finally {
@@ -1024,12 +1187,47 @@ object BrowserAgent {
                 val raw = locateBlocking(sel, 12).take(4_000)
                 JSONObject().put("ok", !raw.startsWith("ERR")).put("rect", raw).toString()
             }
+            "/box" -> {
+                // Rich geometry for AI variation: center + bounds + safe inset
+                // points (CSS px — feed any of them straight to /tap).
+                val sel = com.rg.webloom.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
+                val raw = locateBlocking(sel, 12).take(4_000)
+                if (raw.startsWith("ERR")) return JSONObject().put("ok", false).put("err", raw.take(200)).toString()
+                try {
+                    var s = raw.trim()
+                    repeat(2) {
+                        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                            s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                        }
+                    }
+                    val o = org.json.JSONObject(s)
+                    val l = o.optInt("left", 0); val t = o.optInt("top", 0)
+                    val w = o.optInt("w", 0); val h = o.optInt("h", 0)
+                    val cx = o.optInt("x", -1); val cy = o.optInt("y", -1)
+                    val mx = maxOf((w * 0.15).toInt(), 2); val my = maxOf((h * 0.15).toInt(), 2)
+                    val safe = org.json.JSONArray()
+                    listOf(cx to cy, (l + mx) to (t + my), (l + w - mx) to (t + my),
+                        (l + mx) to (t + h - my), (l + w - mx) to (t + h - my)
+                    ).forEach { (px, py) ->
+                        safe.put(org.json.JSONObject().put("x", px).put("y", py))
+                    }
+                    JSONObject().put("ok", cx >= 0 && cy >= 0)
+                        .put("x", cx).put("y", cy)
+                        .put("bounds", org.json.JSONObject().put("left", l).put("top", t).put("w", w).put("h", h))
+                        .put("safe", safe)
+                        .put("vw", o.optInt("vw", -1)).put("vh", o.optInt("vh", -1))
+                        .put("sx", o.optInt("scrollX", 0)).put("sy", o.optInt("scrollY", 0))
+                        .put("z", o.optDouble("z", 1.0)).put("dpr", o.optDouble("dpr", 1.0)).toString()
+                } catch (_: Exception) { """{"ok":false,"err":"parse failed"}""" }
+            }
             "/tap" -> {
                 val x = q["x"]?.toFloatOrNull()
                 val y = q["y"]?.toFloatOrNull()
                 if (x == null || y == null) return """{"ok":false,"err":"missing x/y"}"""
-                tapAt(x, y)
-                """{"ok":true}"""
+                // CSS px (same numbers /pos and /box return). Blocks until the
+                // queued gesture delivers, so ok:false means it never landed.
+                val r = tapSync(x, y)
+                JSONObject().put("ok", r.delivered).put("reason", r.reason).toString()
             }
             "/swipe" -> {
                 val x1 = q["x1"]?.toFloatOrNull()
@@ -1037,8 +1235,8 @@ object BrowserAgent {
                 val x2 = q["x2"]?.toFloatOrNull()
                 val y2 = q["y2"]?.toFloatOrNull()
                 if (x1 == null || y1 == null || x2 == null || y2 == null) return """{"ok":false,"err":"missing x1/y1/x2/y2"}"""
-                swipe(x1, y1, x2, y2, q["ms"]?.toLongOrNull()?.coerceIn(50, 2000) ?: 300)
-                """{"ok":true}"""
+                val r = swipeSync(x1, y1, x2, y2, q["ms"]?.toLongOrNull()?.coerceIn(50, 2000) ?: 300)
+                JSONObject().put("ok", r.delivered).put("reason", r.reason).toString()
             }
             "/scrollto" -> {
                 val x = q["x"]?.toIntOrNull() ?: 0
@@ -1417,28 +1615,16 @@ object BrowserAgent {
                 try {
                     lastTap?.let { rep.put("lastTap", org.json.JSONObject(it)) }
                 } catch (_: Exception) {}
-                // On-screen WebView box: devY is WebView-relative, not screen-relative.
+                // On-screen WebView box: view x/y are WebView-relative
+                // (screen = view + box); lastTap carries both spaces + delivered.
                 try {
                     val box = webViewBoxBlocking(8)
                     try { rep.put("view", org.json.JSONObject(box)) }
                     catch (_: Exception) { rep.put("viewErr", box.take(80)) }
                 } catch (_: Exception) {}
-                // Same trail EXEC `b metrics` keeps: append, cap 300. PTY can
-                // no longer wonder where the log went — it lands here too.
+                // Same trail EXEC `b metrics` keeps: single serialized writer.
                 try {
-                    val appCtx = ctx
-                    if (appCtx != null) {
-                        val dir = java.io.File(appCtx.filesDir, "sandbox/agent_metrics").apply { mkdirs() }
-                        val log = java.io.File(dir, "metrics.log")
-                        log.appendText(rep.toString() + "\n", Charsets.UTF_8)
-                        val n = try { log.readLines(Charsets.UTF_8).size } catch (_: Exception) { 0 }
-                        if (n > 400) {
-                            try {
-                                log.writeText(log.readLines(Charsets.UTF_8).takeLast(300).joinToString("\n") + "\n", Charsets.UTF_8)
-                            } catch (_: Exception) {}
-                        }
-                        rep.put("logged", true)
-                    } else rep.put("logged", false)
+                    rep.put("logged", appendMetrics(rep).startsWith("logged"))
                 } catch (_: Exception) {
                     try { rep.put("logged", false) } catch (_: Exception) {}
                 }
@@ -1667,7 +1853,7 @@ object BrowserAgent {
                 val raw = evalBlockingJs("(function(){try{var e=document.querySelector('$esc');if(!e)return 'ERR no-node';try{e.scrollIntoView({block:'center'});}catch(x){}var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round((r.left+r.right)/2),y:Math.round((r.top+r.bottom)/2)});}catch(e){return 'ERR '+e;}})()", 10)
                 JSONObject().put("ok", !raw.startsWith("ERR")).put("pos", raw.take(500)).toString()
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /submit /key /hover /select /store /stores /unstore /pos /tap /swipe /scroll /scrollto /back /forward /reload /reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias /block(list-only)"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /submit /key /hover /select /store /stores /unstore /pos /box /tap /swipe /scroll /scrollto /back /forward /reload /reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias /block(list-only)"}"""
         }
     }
 }

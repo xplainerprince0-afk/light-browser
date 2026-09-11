@@ -88,7 +88,7 @@ viewport | zoom [in|out|reset]`, `b snap` (page refs+text), `b read [max]`
 (article text), `b click <ref|name> | fill <ref|name> <val> [--submit] |
 submit <form> | key [sel]` (nearest-button tap),
 `b hover | select <sel> <val>`, `b store <name> <css> | stores | unstore`,
-`b pos | tap <x> <y> | swipe <x1> <y1> <x2> <y2> [ms] | shot-el <ref|css>`,
+`b pos <ref|css> | box <ref|css> (coords+bounds+safe points) | tap <x> <y> [--click] | swipe <x1> <y1> <x2> <y2> [ms] | shot-el <ref|css>`,
 `b find <text> | find-clear | next | prev`, `b scroll [px] | scroll-to <x> <y> |
 scroll-top | scroll-bottom`,
 `b js <expr> | text | dom | shot [--full] | console | netlog [n]`,
@@ -146,14 +146,25 @@ Example — login flow in one line:
 
 ### Tap-accuracy test (`b metrics`)
 
-1. `b pos <ref>` (or `b snap` for a ref) → note `x y`.
-2. `b tap <x> <y>` → watch where the page reacts.
+Contract: **everything is CSS px** — `b pos`/`b box` return CSS px, `b tap`/`b swipe`
+take CSS px, scaling lives inside the app. Taps run through a serialized queue
+(150ms gap, so rapid repeats can't interleave and cancel), humanized
+(±1px jitter, 70–120ms dwell, finger-like pressure/size), and report delivery.
+
+1. `b box <ref>` (or `b pos`/`b snap` for a ref) → note `x y` + safe points.
+2. `b tap <x> <y>` → watch where the page reacts (`--click` adds an
+   elementFromPoint click fallback for plain links; raw tap alone is a touch,
+   and some pages only navigate on click).
 3. `b metrics` → prints screen px vs page CSS geometry, the WebView's
-   on-screen box (devY is WebView-top relative — that was the gotcha), and
-   the last tap's `css → view` mapping, and **appends the JSON report to
-   `~/agent_metrics/metrics.log`** (300 entries kept, both EXEC and PTY log)
-   so runs stay comparable. `b metrics --json` prints the raw report.
-4. In PTY: `b metrics` returns the same JSON and logs it too.
+   on-screen box (view x/y are WebView-top relative), and the last touch's
+   `css → view` mapping **with `delivered`/`reason`** (false = the gesture
+   never landed — retry), and **appends the JSON report to
+   `~/agent_metrics/metrics.log`** (300 entries kept, single serialized
+   writer, both EXEC and PTY log) so runs stay comparable.
+   `b metrics --json` prints the raw report.
+4. In PTY: `b metrics` returns the same JSON and logs it too. `/tap` and
+   `/swipe` block until delivery and return `{"ok":delivered,"reason":…}` —
+   `ok:false` means it never landed.
 
 Mapping rule under test: `view px = css px × scale`, where scale is screen
 density at default zoom (`b metrics` shows both). If taps land off by a
@@ -166,7 +177,7 @@ Agent panel or EXEC `b serve on`) and you need `curl` (`toolbox-install
 curl`). Supported there: open/new/tabs/close/tabdup/home/back/forward/reload/reload-hard/stop/
 url/title/ua/viewport/zoom/find/next/prev/snap/shot-el/text/read/dom/js/netlog/shot/save/metrics/console/cookies/clear-data/history/
 downloads/click/fill/submit/key/hover/select/store/stores/unstore/blocks/alias/mkext/ext/
-pos/tap/swipe/scroll/scrollto/scroll-top/scroll-bottom/serve/record. EXEC-only:
+pos/box/tap/swipe/scroll/scrollto/scroll-top/scroll-bottom/serve/record. EXEC-only:
 `b unblock`, `b block` (mutating), `b do/run/replay/queue`, `b unalias`
 (in PTY: `b alias remove <name>`).
 

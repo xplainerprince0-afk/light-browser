@@ -1430,28 +1430,30 @@ class TerminalViewModel : ViewModel() {
                 val outBuf = StringBuilder()
                 val tOut = Thread {
                     try {
-                        val r = BufferedReader(InputStreamReader(process.inputStream))
-                        var l: String?
-                        val start = System.currentTimeMillis()
-                        while (r.readLine().also { l = it } != null) {
-                            synchronized(outBuf) {
-                                outBuf.appendLine(l)
-                                if (outBuf.length > 8000) { outBuf.append("\n…truncated"); break }
+                        BufferedReader(InputStreamReader(process.inputStream)).use { r ->
+                            var l: String?
+                            val start = System.currentTimeMillis()
+                            while (r.readLine().also { l = it } != null) {
+                                synchronized(outBuf) {
+                                    outBuf.appendLine(l)
+                                    if (outBuf.length > 8000) { outBuf.append("\n…truncated"); break }
+                                }
+                                if (System.currentTimeMillis() - start > wallMs) break
                             }
-                            if (System.currentTimeMillis() - start > wallMs) break
                         }
                     } catch (_: Exception) {}
                 }.also { it.isDaemon = true; it.start() }
                 val tErr = Thread {
                     try {
-                        val r = BufferedReader(InputStreamReader(process.errorStream))
-                        var l: String?
-                        val start = System.currentTimeMillis()
-                        while (r.readLine().also { l = it } != null) {
-                            synchronized(outBuf) {
-                                if (outBuf.length < 8000) outBuf.appendLine(l)
+                        BufferedReader(InputStreamReader(process.errorStream)).use { r ->
+                            var l: String?
+                            val start = System.currentTimeMillis()
+                            while (r.readLine().also { l = it } != null) {
+                                synchronized(outBuf) {
+                                    if (outBuf.length < 8000) outBuf.appendLine(l)
+                                }
+                                if (System.currentTimeMillis() - start > wallMs) break
                             }
-                            if (System.currentTimeMillis() - start > wallMs) break
                         }
                     } catch (_: Exception) {}
                 }.also { it.isDaemon = true; it.start() }
@@ -1615,7 +1617,8 @@ class TerminalViewModel : ViewModel() {
                             "b click <ref|css|name> | fill <..> <val> [--submit] | submit <form> | key [sel]\n" +
                             "b hover <ref|css> — reveal menus | b select <sel> <val> — dropdowns\n" +
                             "b store <name> <css> | stores | unstore <name> — named selectors\n" +
-                            "b pos <ref|css> → coords | b tap <x> <y> | b swipe <x1> <y1> <x2> <y2> [ms]\n" +
+                            "b pos <ref|css> → coords | b box <ref|css> → coords+bounds+safe points\n" +
+                            "b tap <x> <y> [--click] | b swipe <x1> <y1> <x2> <y2> [ms]  (CSS px from pos/box)\n" +
                             "b shot [--full] | shot-el <ref|css> — locate element for shots\n" +
                             "b find <text> | find-clear | next | prev | b scroll-to (scrollto) <x> <y> | b scroll [px]\n" +
                             "b scroll-top | scroll-bottom — page ends without magic numbers\n" +
@@ -1863,7 +1866,7 @@ class TerminalViewModel : ViewModel() {
                     "next" -> com.rg.webloom.data.BrowserAgent.findNext(true)
                     "prev" -> com.rg.webloom.data.BrowserAgent.findNext(false)
                     "pos" -> {
-                        // Resolve ref/css → screen coords (CSS px). Feed them to `b tap`.
+                        // Resolve ref/css → CSS-px coords. Feed them to `b tap`.
                         val sel = BStore.resolve(splitSel(cmd, "pos").first)
                         if (sel.isBlank()) out("Usage: b pos <ref|css>  (try b snap first, quote sels with spaces)\n", TermRed)
                         else {
@@ -1887,22 +1890,67 @@ class TerminalViewModel : ViewModel() {
                             }
                         }
                     }
-                    "tap" -> {
-                        val x = parts.getOrNull(1)?.toFloatOrNull()
-                        val rest = parts.getOrNull(2)?.split(" ")?.firstOrNull()?.toFloatOrNull()
-                        if (x == null || rest == null) out("Usage: b tap <x> <y>  (get coords via b pos)\n", TermRed)
+                    "box" -> {
+                        // Rich geometry for AI variation: center + bounds + safe
+                        // inset points (all CSS px — feed any straight to b tap).
+                        val sel = BStore.resolve(splitSel(cmd, "box").first)
+                        if (sel.isBlank()) out("Usage: b box <ref|css>  (try b snap first, quote sels with spaces)\n", TermRed)
                         else {
-                            com.rg.webloom.data.BrowserAgent.tapAt(x, rest)
-                            out("Tapped $x,$rest\n", TermGreen)
+                            val raw = com.rg.webloom.data.BrowserAgent.locateBlocking(sel)
+                            if (raw.startsWith("ERR")) out("$raw\n", TermRed)
+                            else {
+                                try {
+                                    var s = raw.trim()
+                                    repeat(2) {
+                                        if (s.startsWith("\"") && s.endsWith("\"") && s.length >= 2) {
+                                            s = try { org.json.JSONObject("{\"v\":$s}").optString("v", s) } catch (_: Exception) { s }
+                                        }
+                                    }
+                                    val o = org.json.JSONObject(s)
+                                    val l = o.optInt("left", 0); val t = o.optInt("top", 0)
+                                    val w = o.optInt("w", 0); val h = o.optInt("h", 0)
+                                    val cx = o.optInt("x", -1); val cy = o.optInt("y", -1)
+                                    if (cx < 0 || cy < 0) out("$raw\n", TermRed)
+                                    else if (jsonMode) out(o.toString() + "\n", TermGreen)
+                                    else {
+                                        val mx = maxOf((w * 0.15).toInt(), 2); val my = maxOf((h * 0.15).toInt(), 2)
+                                        out("center $cx,$cy  bounds l=$l t=$t w=$w h=$h\n", TermGreen)
+                                        out("safe: ($cx,$cy) (${l + mx},${t + my}) (${l + w - mx},${t + my}) " +
+                                            "(${l + mx},${t + h - my}) (${l + w - mx},${t + h - my})\n", TermWhite)
+                                        out("→ b tap $cx $cy  (any safe point works)\n", TermDim)
+                                    }
+                                } catch (_: Exception) { out("$raw\n", TermWhite) }
+                            }
+                        }
+                    }
+                    "tap" -> {
+                        val click = cmd.contains("--click")
+                        val nums = line.substringAfter("tap").trim().replace("--click", "").trim()
+                            .split(Regex("\\s+")).mapNotNull { it.toFloatOrNull() }
+                        if (nums.size < 2) out("Usage: b tap <x> <y> [--click]  (CSS px from b pos/box)\n", TermRed)
+                        else {
+                            val r = com.rg.webloom.data.BrowserAgent.tapSync(nums[0], nums[1])
+                            if (!r.delivered) out("Tap dropped (${r.reason}) — page may be loading; retry or b metrics\n", TermRed)
+                            else {
+                                var msg = "Tapped ${nums[0]},${nums[1]} (delivered)"
+                                if (click) {
+                                    val cr = com.rg.webloom.data.BrowserAgent.eval(
+                                        "(function(){try{var e=document.elementFromPoint(${nums[0]},${nums[1]});if(!e)return 'ERR no-node';e.click();return 'OK click';}catch(e){return 'ERR '+e;}})()"
+                                    )
+                                    msg += if (cr.contains("OK")) " + click" else " (click fallback: $cr)"
+                                }
+                                out("$msg\n", TermGreen)
+                            }
                         }
                     }
                     "swipe" -> {
                         // b swipe x1 y1 x2 y2 [ms] — drags: scrolls, sliders, drawers.
                         val nums = line.substringAfter("swipe").trim().split(Regex("\\s+")).mapNotNull { it.toFloatOrNull() }
-                        if (nums.size < 4) out("Usage: b swipe <x1> <y1> <x2> <y2> [ms]\n", TermRed)
+                        if (nums.size < 4) out("Usage: b swipe <x1> <y1> <x2> <y2> [ms]  (CSS px)\n", TermRed)
                         else {
-                            com.rg.webloom.data.BrowserAgent.swipe(nums[0], nums[1], nums[2], nums[3], nums.getOrNull(4)?.toLong()?.coerceIn(50, 2000) ?: 300)
-                            out("Swiped\n", TermGreen)
+                            val r = com.rg.webloom.data.BrowserAgent.swipeSync(nums[0], nums[1], nums[2], nums[3], nums.getOrNull(4)?.toLong()?.coerceIn(50, 2000) ?: 300)
+                            if (r.delivered) out("Swiped (delivered)\n", TermGreen)
+                            else out("Swipe dropped (${r.reason}) — retry or b metrics\n", TermRed)
                         }
                     }
                     "scroll-to" -> {
@@ -2583,8 +2631,9 @@ class TerminalViewModel : ViewModel() {
                                 val x = o.optDouble("x", -1.0); val y = o.optDouble("y", -1.0)
                                 if (x < 0 || y < 0) out("No button found near the field\n", TermRed)
                                 else {
-                                    com.rg.webloom.data.BrowserAgent.tapAt(x.toFloat(), y.toFloat())
-                                    out("Tapped '${o.optString("label", "button")}' at ${x.toInt()},${y.toInt()}\n", TermGreen)
+                                    val r = com.rg.webloom.data.BrowserAgent.tapSync(x.toFloat(), y.toFloat())
+                                    if (r.delivered) out("Tapped '${o.optString("label", "button")}' at ${x.toInt()},${y.toInt()} (delivered)\n", TermGreen)
+                                    else out("Tap dropped (${r.reason})\n", TermRed)
                                 }
                             }
                         } catch (_: Exception) { out("$raw\n", TermWhite) }
@@ -2678,24 +2727,17 @@ class TerminalViewModel : ViewModel() {
                                     .put("cw", page.optInt("cw", -1))
                                     .put("ch", page.optInt("ch", -1)))
                             if (tap != null) rep.put("lastTap", tap)
-                            // On-screen WebView box: devY is WebView-relative.
+                            // On-screen WebView box: view x/y are WebView-relative
+                            // (screen = view + box); lastTap carries both spaces.
                             try {
                                 val box = com.rg.webloom.data.BrowserAgent.webViewBoxBlocking(8)
                                 try { rep.put("view", org.json.JSONObject(box)) }
                                 catch (_: Exception) { rep.put("viewErr", box.take(80)) }
                             } catch (_: Exception) {}
-                            // Persist the trail (already on IO).
+                            // Persist the trail (already on IO) — single writer.
                             var logInfo = ""
                             try {
-                                val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
-                                val dir = java.io.File(sd, "agent_metrics").apply { mkdirs() }
-                                val log = java.io.File(dir, "metrics.log")
-                                log.appendText(rep.toString() + "\n", Charsets.UTF_8)
-                                val lines = try { log.readLines(Charsets.UTF_8) } catch (_: Exception) { emptyList() }
-                                if (lines.size > 400) {
-                                    try { log.writeText(lines.takeLast(300).joinToString("\n") + "\n", Charsets.UTF_8) } catch (_: Exception) {}
-                                }
-                                logInfo = "logged → ~/agent_metrics/metrics.log (${minOf(lines.size, 400)} kept)"
+                                logInfo = com.rg.webloom.data.BrowserAgent.appendMetrics(rep)
                             } catch (e: Exception) { logInfo = "log failed: ${e.message}" }
                             if (jsonMode) {
                                 out(rep.toString() + "\n", TermWhite)
@@ -2714,9 +2756,9 @@ class TerminalViewModel : ViewModel() {
                                     }
                                 } catch (_: Exception) {}
                                 if (tap != null) {
-                                    out("last tap css ${tap.optDouble("cssX")},${tap.optDouble("cssY")}" +
-                                        " → view ${tap.optDouble("devX")},${tap.optDouble("devY")}" +
-                                        " (scale ${tap.optDouble("scale")})\n", TermGreen)
+                                    out("last tap ${tap.optString("kind", "tap")} css ${tap.optDouble("cssX")},${tap.optDouble("cssY")}" +
+                                        " → view ${tap.optDouble("viewX")},${tap.optDouble("viewY")}" +
+                                        " (scale ${tap.optDouble("scale")}, delivered=${tap.optBoolean("delivered", false)})\n", TermGreen)
                                 } else out("last tap: none yet (b tap something first)\n", TermDim)
                                 out("$logInfo\n", TermDim)
                             }
@@ -2821,7 +2863,7 @@ private val BuiltinB = setOf(
     "find-clear", "netlog", "clear-data", "tabdup", "tab-dup", "shot-el",
     "stop", "url", "title", "js", "text", "read", "dom", "snap", "click",
     "fill", "submit", "key", "hover", "select", "store", "stores", "unstore",
-    "pos", "tap", "swipe", "scroll", "scroll-to", "scrollto", "find", "next",
+    "pos", "box", "tap", "swipe", "scroll", "scroll-to", "scrollto", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
     "alias", "unalias", "ext", "mkext", "metrics",
     "wait", "links", "forms", "survey", "do", "run", "replay", "queue",
