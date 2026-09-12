@@ -121,6 +121,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rg.webloom.data.DownloadHelper
 import com.rg.webloom.data.Prefs
@@ -180,8 +182,59 @@ fun BrowserScreen(
     var showScriptLog by remember { mutableStateOf(false) }
     var prefsVer by remember { mutableStateOf(0) }
 
+    // ── <input type=file> picker: WebView has no chooser UI of its own.
+    // SAF grants the returned URIs directly, so no media permission is needed
+    // to pick (only direct camera capture would need CAMERA). Cancel delivers
+    // null so the page's change handler unblocks instead of hanging.
+    var fileCb by remember { mutableStateOf<android.webkit.ValueCallback<Array<android.net.Uri>>?>(null) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val cb = fileCb; fileCb = null
+        try {
+            if (res.resultCode == android.app.Activity.RESULT_OK) {
+                val uris = mutableListOf<android.net.Uri>()
+                val clip = res.data?.clipData
+                if (clip != null) {
+                    for (i in 0 until clip.itemCount) {
+                        try { clip.getItemAt(i)?.uri?.let { uris.add(it) } } catch (_: Exception) {}
+                    }
+                } else {
+                    try { res.data?.data?.let { uris.add(it) } } catch (_: Exception) {}
+                }
+                if (uris.isEmpty()) cb?.onReceiveValue(null)
+                else cb?.onReceiveValue(uris.toTypedArray())
+            } else {
+                try { cb?.onReceiveValue(null) } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {
+            try { cb?.onReceiveValue(null) } catch (_: Exception) {}
+        }
+        try { FileChooserBus.pending = null } catch (_: Exception) {}
+    }
+
     // Route TabBus window.open → new tab.
     LaunchedEffect(Unit) {
+        FileChooserBus.openChooser = { cb, params ->
+            fileCb = cb
+            try {
+                // FileChooserParams.createIntent() already carries accept types,
+                // mode (single/multiple) and OPENABLE — prefer it verbatim.
+                val base = try { params?.createIntent() } catch (_: Exception) { null }
+                    ?: android.content.Intent(android.content.Intent.ACTION_GET_CONTENT).apply {
+                        type = "*/*"
+                        addCategory(android.content.Intent.CATEGORY_OPENABLE)
+                    }
+                try {
+                    if (params?.mode == android.webkit.WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        base.putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }
+                } catch (_: Exception) {}
+                filePicker.launch(android.content.Intent.createChooser(base, "Choose file"))
+            } catch (_: Exception) {
+                try { cb.onReceiveValue(null) } catch (_: Exception) {}
+                fileCb = null
+                try { FileChooserBus.pending = null } catch (_: Exception) {}
+            }
+        }
         TabBus.openInNewTab = { url -> try { vm.openTab(url, select = true) } catch (_: Exception) {} }
         TabBus.selectTab = { i -> try { vm.selectTab(i) } catch (_: Exception) {} }
         TabBus.closeTabAt = { i ->

@@ -39,6 +39,8 @@ Prefer selector actions — they always land. Use raw touch only for gestures.
 | `b click <ref\|css>` | `b click e3` or `b click "#submit"` (quote sels with spaces) |
 | `b fill <ref\|css> <val> [--submit]` | `b fill "#user" me --submit` |
 | `b submit <form>` / `b key [sel]` (taps nearest button) / `b hover <sel>` / `b select <sel> <val>` | `b key` |
+| `b upload <ref\|css> <file>` — file input from sandbox path (`~` ok, 12MB cap) | `b upload e5 ~/pic.jpg` |
+| `b js-file <file>` — eval JS from sandbox file (no quoting) / `b fill-file <ref\|css> <file>` — long text | `b js-file ~/script.js` |
 | `b store <name> <css>` / `b stores` / `b unstore <name>` | `b store login "#user"` then `b click login` |
 
 ## Touch (raw finger)

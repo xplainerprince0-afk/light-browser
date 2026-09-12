@@ -51,7 +51,7 @@ object AlpineEnv {
             "  _b_get() { _b_p=\"\$1\"; shift; curl -s --get \"http://127.0.0.1:\$_b_port\$_b_p\" --data-urlencode \"token=\$_b_key\" \"\$@\"; echo; }\n" +
             "  _b_c=\"\$1\"; [ \$# -gt 0 ] && shift\n" +
             "  case \"\$_b_c\" in\n" +
-            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|reload-hard|stop|url|title|ua|viewport|zoom|find|next|prev|snap|shot-el|text|read|dom|js|links|forms|netlog|wait|survey|shot|save|metrics|console|cookies|clear-data|tabdup|history|downloads|click|fill|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|mkcmd|cmds|blocks|pos|box|tap|swipe|scroll|scrollto|scroll-top|scroll-bottom|serve|record|run (server must be on; do/replay/queue/unblock/block are EXEC-only)';;\n" +
+            "    ''|help) echo 'b open|new|tabs|tab|close|home|back|forward|reload|reload-hard|stop|url|title|ua|viewport|zoom|find|next|prev|snap|shot-el|text|read|dom|js|links|forms|netlog|wait|survey|shot|save|metrics|console|cookies|clear-data|tabdup|history|downloads|click|fill|upload|fill-file|js-file|submit|key|hover|select|store|stores|unstore|alias|mkext|ext|mkcmd|cmds|blocks|pos|box|tap|swipe|scroll|scrollto|scroll-top|scroll-bottom|serve|record|run (server must be on; do/replay/queue/unblock/block are EXEC-only)';;\n" +
             "    status|url|title) _b_get '/status';;\n" +
             "    open|new) [ -z \"\$1\" ] && { echo \"usage: b \$_b_c <url>\"; return 1; }; _b_get \"/\$_b_c\" --data-urlencode \"url=\$1\";;\n" +
             "    tabs|home|back|forward|reload|stop|snap|text|console|downloads) _b_get \"/\$_b_c\";;\n" +
@@ -92,6 +92,9 @@ object AlpineEnv {
             "    js) _b_get '/js' --data-urlencode \"expr=\$*\";;\n" +
             "    click) _b_get '/click' --data-urlencode \"sel=\$1\";;\n" +
             "    fill) _b_sel=\"\$1\"; shift; _b_get '/fill' --data-urlencode \"sel=\$_b_sel\" --data-urlencode \"value=\$*\";;\n" +
+            "    upload) _b_get '/upload' --data-urlencode \"sel=\$1\" --data-urlencode \"path=\$2\";;\n" +
+            "    fill-file) _b_get '/fill-file' --data-urlencode \"sel=\$1\" --data-urlencode \"path=\$2\";;\n" +
+            "    js-file) _b_get '/js-file' --data-urlencode \"path=\$1\";;\n" +
             "    pos|box) _b_get \"/\$_b_c\" --data-urlencode \"sel=\$1\";;\n" +
             "    tap) if [ \"\$3\" = \"--click\" ]; then _b_get '/tap' --data-urlencode \"x=\$1\" --data-urlencode \"y=\$2\"; _b_get '/js' --data-urlencode \"expr=document.elementFromPoint(\$1,\$2)&&document.elementFromPoint(\$1,\$2).click()\"; else _b_get '/tap' --data-urlencode \"x=\$1\" --data-urlencode \"y=\$2\"; fi;;\n" +
             "    swipe) _b_get '/swipe' --data-urlencode \"x1=\$1\" --data-urlencode \"y1=\$2\" --data-urlencode \"x2=\$3\" --data-urlencode \"y2=\$4\" --data-urlencode \"ms=\${5:-300}\";;\n" +

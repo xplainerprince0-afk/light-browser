@@ -1615,6 +1615,7 @@ class TerminalViewModel : ViewModel() {
                             "b tabs | tab <n> | new <url> | close [n] | tabdup — duplicate tab\n" +
                             "b js <expr> | text [max] | read [max] — article text only | dom [css] | snap\n" +
                             "b click <ref|css|name> | fill <..> <val> [--submit] | submit <form> | key [sel]\n" +
+                            "b upload <ref|css> <file> — file input from sandbox | b js-file <file> | b fill-file <ref|css> <file>\n" +
                             "b hover <ref|css> — reveal menus | b select <sel> <val> — dropdowns\n" +
                             "b store <name> <css> | stores | unstore <name> — named selectors\n" +
                             "b pos <ref|css> → coords | b box <ref|css> → coords+bounds+safe points\n" +
@@ -2152,6 +2153,65 @@ class TerminalViewModel : ViewModel() {
                                 r = "$r / $r2"
                             }
                             out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                        }
+                    }
+                    "upload" -> {
+                        // b upload <ref|css> <file> — file input from a sandbox path.
+                        val rest = splitSel(cmd, "upload")
+                        val selRaw = rest.first
+                        val p = rest.second.trim().removeSurrounding("\"").removeSurrounding("'")
+                        if (selRaw.isBlank() || p.isBlank()) out("Usage: b upload <ref|css> <file>  (sandbox path, ~ ok)\n", TermRed)
+                        else {
+                            val f = resolve(expandTilde(p))
+                            if (f == null || !f.isFile) out("Not found in sandbox: $p\n", TermRed)
+                            else {
+                                out("Uploading ${f.name} (${f.length() / 1024} KB)…\n", TermDim)
+                                val r = com.rg.webloom.data.BrowserAgent.uploadInput(BStore.resolve(selRaw), f)
+                                out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                            }
+                        }
+                    }
+                    "js-file" -> {
+                        // b js-file <file> — eval JS read from a sandbox file (no quoting).
+                        val p = cmd.removePrefix("js-file").trim().removeSurrounding("\"").removeSurrounding("'")
+                        if (p.isBlank()) out("Usage: b js-file <file>  (JS from sandbox, no shell quoting)\n", TermRed)
+                        else {
+                            val f = resolve(expandTilde(p))
+                            if (f == null || !f.isFile) out("Not found in sandbox: $p\n", TermRed)
+                            else {
+                                val js = try { f.readText(Charsets.UTF_8) } catch (e: Exception) { null }
+                                if (js.isNullOrBlank()) out("Empty/unreadable: $p\n", TermRed)
+                                else if (js.length > 100_000) out("Too big (>100KB): $p\n", TermRed)
+                                else {
+                                    val r = com.rg.webloom.data.BrowserAgent.eval(js)
+                                    wrapped(com.rg.webloom.data.BrowserAgent.currentUrl() ?: "?", r)
+                                }
+                            }
+                        }
+                    }
+                    "fill-file" -> {
+                        // b fill-file <ref|css> <file> — fill field from a sandbox text file.
+                        val rest = splitSel(cmd, "fill-file")
+                        val selRaw = rest.first
+                        val p = rest.second.trim().removeSurrounding("\"").removeSurrounding("'")
+                        if (selRaw.isBlank() || p.isBlank()) out("Usage: b fill-file <ref|css> <file>  (long text/chapters)\n", TermRed)
+                        else {
+                            val f = resolve(expandTilde(p))
+                            if (f == null || !f.isFile) out("Not found in sandbox: $p\n", TermRed)
+                            else {
+                                val text = try { f.readText(Charsets.UTF_8) } catch (e: Exception) { null }
+                                if (text == null) out("Unreadable: $p\n", TermRed)
+                                else if (text.length > 200_000) out("Too big (>200KB text): $p\n", TermRed)
+                                else {
+                                    val sel = BStore.resolve(selRaw).replace("\\", "\\\\").replace("'", "\\'")
+                                    val lit = org.json.JSONObject.quote(text)
+                                    val r = com.rg.webloom.data.BrowserAgent.eval(
+                                        "(function(){try{var e=document.querySelector('$sel');if(!e)return 'ERR no-node';var v=$lit;var t=e.tagName;if(t==='INPUT'||t==='TEXTAREA'){e.focus();e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}else if(e.isContentEditable){e.focus();e.textContent=v;e.dispatchEvent(new Event('input',{bubbles:true}));}else return 'ERR not-fillable';return 'OK '+((''+v).length)+' chars';}catch(x){return 'ERR '+x;}})()",
+                                        timeoutMs = 20_000
+                                    )
+                                    out("$r\n", if (r.contains("OK")) TermGreen else TermRed)
+                                }
+                            }
                         }
                     }
                     "scroll" -> {
@@ -2938,6 +2998,15 @@ class TerminalViewModel : ViewModel() {
         val f = if (input.startsWith("/")) File(input) else File(cwd, input)
         return if (isAllowed(f)) f else null
     }
+
+    /** Expand a leading ~ to the sandbox root (EXEC `b` args bypass shell expansion). */
+    private fun expandTilde(input: String): String {
+        val t = input.trim()
+        return if (t == "~" || t.startsWith("~/")) {
+            val sd = sandboxDir ?: return t
+            sd.absolutePath + t.substring(1)
+        } else t
+    }
 }
 
 /** Built-in `b` command heads — aliases may not shadow these. */
@@ -2951,7 +3020,8 @@ private val BuiltinB = setOf(
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
     "alias", "unalias", "ext", "mkext", "metrics",
     "wait", "links", "forms", "survey", "do", "run", "replay", "queue",
-    "block", "unblock", "blocks", "mkcmd", "cmds"
+    "block", "unblock", "blocks", "mkcmd", "cmds",
+    "upload", "js-file", "fill-file"
 )
 
 /** Levenshtein distance for `b` did-you-mean suggestions. */

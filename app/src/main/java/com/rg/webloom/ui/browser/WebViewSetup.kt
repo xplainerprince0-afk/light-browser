@@ -2,7 +2,9 @@ package com.rg.webloom.ui.browser
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.net.Uri
 import android.webkit.ConsoleMessage
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -22,6 +24,18 @@ const val DESKTOP_UA =
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
     @Volatile var value: String? = null
+}
+
+/**
+ * Human file-upload bridge: a WebView `<input type=file>` has NO chooser by
+ * default — taps silently die (the "can't choose anything" bug). BrowserScreen
+ * installs [openChooser] (SAF picker); the WebChromeClient below routes
+ * [WebChromeClient.onShowFileChooser] through it. Agent uploads (`b upload`)
+ * bypass this entirely (DataTransfer injection, no chooser needed).
+ */
+object FileChooserBus {
+    var openChooser: ((ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams?) -> Unit)? = null
+    var pending: ValueCallback<Array<Uri>>? = null
 }
 
 class BrowserCallbacks(
@@ -281,6 +295,32 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
             if (p == 100 || p - lastP >= 5 || now - lastT > 400) {
                 lastP = p; lastT = now
                 cb.onProgress(p)
+            }
+        }
+        // <input type=file> → SAF picker. Without this override the tap is
+        // swallowed (no chooser, no error). Previous callback is cancelled so
+        // a double-tap can't leak a dangling ValueCallback.
+        override fun onShowFileChooser(
+            v: WebView?,
+            filePathCallback: ValueCallback<Array<Uri>>?,
+            fileChooserParams: FileChooserParams?
+        ): Boolean {
+            return try {
+                try { FileChooserBus.pending?.onReceiveValue(null) } catch (_: Exception) {}
+                FileChooserBus.pending = filePathCallback
+                val h = FileChooserBus.openChooser
+                if (filePathCallback == null || h == null) {
+                    try { filePathCallback?.onReceiveValue(null) } catch (_: Exception) {}
+                    FileChooserBus.pending = null
+                    false
+                } else {
+                    h(filePathCallback, fileChooserParams)
+                    true
+                }
+            } catch (_: Exception) {
+                try { filePathCallback?.onReceiveValue(null) } catch (_: Exception) {}
+                FileChooserBus.pending = null
+                false
             }
         }
         // Popup / target=_blank / window.open (OAuth, checkout) → open in new tab.

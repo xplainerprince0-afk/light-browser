@@ -737,6 +737,90 @@ object BrowserAgent {
         } catch (_: Exception) { "ERR" }
     }
 
+    // ── Agent file bridge (b upload / js-file / fill-file) ──
+
+    /** Sandbox-jailed resolver for agent file args: ~/…, sandbox/…, relative, or absolute. */
+    fun sandboxFile(path: String): java.io.File? {
+        return try {
+            var p = path.trim()
+            if (p.isEmpty()) return null
+            val sb = java.io.File(AppCtx.ctx.filesDir, "sandbox")
+            if (p == "~" || p == "~/") return sb.takeIf { it.isDirectory }
+            if (p.startsWith("~/")) p = p.substring(2)
+            else if (p.startsWith("sandbox/")) p = p.removePrefix("sandbox/")
+            val f = if (p.startsWith("/")) java.io.File(p) else java.io.File(sb, p)
+            val root = sb.canonicalFile.absolutePath.trimEnd('/') + '/'
+            val c = f.canonicalFile.absolutePath
+            if (c == root.trimEnd('/') || c.startsWith(root)) f.takeIf { it.isFile } else null
+        } catch (_: Exception) { null }
+    }
+
+    private fun mimeFor(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "svg" -> "image/svg+xml"
+        "mp4" -> "video/mp4"
+        "webm" -> "video/webm"
+        "mp3" -> "audio/mpeg"
+        "wav" -> "audio/wav"
+        "ogg", "opus" -> "audio/ogg"
+        "pdf" -> "application/pdf"
+        "txt", "md", "log" -> "text/plain"
+        "html", "htm" -> "text/html"
+        "json" -> "application/json"
+        "js" -> "text/javascript"
+        "zip" -> "application/zip"
+        else -> "application/octet-stream"
+    }
+
+    /**
+     * Set a file input from local bytes via DataTransfer (file inputs reject
+     * programmatic `value=` — this is the only JS path). Base64 ships in
+     * binder-safe chunks (evaluateJavascript IPC caps single calls).
+     */
+    private suspend fun uploadCore(
+        sel: String, data: ByteArray, fileName: String, mime: String,
+        runJs: suspend (String) -> String
+    ): String {
+        val eSel = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+        val probe = runJs("(function(){try{var e=document.querySelector('$eSel');if(!e)return 'ERR no-node';if(e.tagName!=='INPUT'||(e.type||'').toLowerCase()!=='file')return 'ERR not-a-file-input';return 'OK'+(e.multiple?'+multi':'');}catch(x){return 'ERR '+x;}})()")
+        if (!probe.contains("OK")) return probe.take(300)
+        val b64 = try {
+            android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)
+        } catch (_: Exception) { return "ERR encode failed" }
+        var r = runJs("window.__lb_up='';'OK'")
+        if (r.startsWith("ERR")) return r.take(200)
+        var i = 0
+        while (i < b64.length) {
+            val c = b64.substring(i, minOf(i + 200_000, b64.length))
+            r = runJs("window.__lb_up+='$c';'OK'")
+            if (r.startsWith("ERR")) return "ERR chunk failed @ $i"
+            i += 200_000
+        }
+        val eName = fileName.replace("\\", "\\\\").replace("'", "\\'").take(120)
+        val eMime = mime.replace("\\", "\\\\").replace("'", "\\'").take(120)
+        return runJs("(function(){try{var e=document.querySelector('$eSel');if(!e)return 'ERR no-node';var bin=atob(window.__lb_up);window.__lb_up='';var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);var file=new File([new Blob([arr],{type:'$eMime'})],'$eName',{type:'$eMime'});var dt=new DataTransfer();if(e.multiple){for(var j=0;j<e.files.length;j++){try{dt.items.add(e.files[j]);}catch(x){}}}dt.items.add(file);e.files=dt.files;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));return 'OK uploaded '+file.name+' ('+file.size+'b)';}catch(x){try{window.__lb_up='';}catch(y){}return 'ERR '+x;}})()")
+    }
+
+    /** EXEC path (already in a coroutine). Max 12 MB (photos OK). */
+    suspend fun uploadInput(sel: String, file: java.io.File): String {
+        if (!file.isFile) return "ERR not-a-file"
+        if (file.length() > 12L * 1024 * 1024) return "ERR file too big (>12MB)"
+        val data = try { file.readBytes() } catch (e: Exception) { return "ERR read: ${e.message}" }
+        return uploadCore(sel, data, file.name, mimeFor(file.name)) { js ->
+            eval(js, timeoutMs = 20_000, maxChars = 2000)
+        }
+    }
+
+    /** PTY/worker path (never Main — waits like other blocking ops). */
+    fun uploadInputBlocking(sel: String, file: java.io.File): String {
+        return try {
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { uploadInput(sel, file) }
+        } catch (_: Exception) { "ERR upload failed" }
+    }
+
     // ── LightAgent JS shim ──
 
     val SHIM: String = """
@@ -754,7 +838,7 @@ object BrowserAgent {
             snapshot:function(max){
               max=max||8000; n=0; refs={};
               function vis(e){if(!e||!e.getBoundingClientRect)return false;try{var cs=getComputedStyle(e);if(cs.display==='none'||cs.visibility==='hidden'||cs.opacity==='0')return false;}catch(x){}var r=e.getBoundingClientRect();return r.width>4&&r.height>4&&r.bottom>0&&r.top<window.innerHeight;}
-              var els=Array.prototype.slice.call(document.querySelectorAll('a,button,input,select,textarea,[role=button]'));
+              var els=Array.prototype.slice.call(document.querySelectorAll('a,button,input,select,textarea,[role=button],[onclick]'));
               els=els.filter(function(e){return vis(e);}).slice(0,200);
               var items=els.map(function(e){
                 var r='e'+(++n); refs[r]=sel(e);
@@ -1295,6 +1379,33 @@ object BrowserAgent {
                 val e2 = value.replace("\\", "\\\\").replace("'", "\\'").take(2000)
                 val raw = evalBlocking("(function(){try{return window.LightAgent?window.LightAgent.fill('$e1','$e2'):'ERR no-shim';}catch(e){return 'ERR '+e;}})()", 12)
                 JSONObject().put("ok", raw.contains("OK")).put("result", raw).toString()
+            }
+            "/upload" -> {
+                val sel = com.rg.webloom.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
+                val path = q["path"] ?: return """{"ok":false,"err":"missing path"}"""
+                val f = sandboxFile(path) ?: return """{"ok":false,"err":"not found in sandbox: ${path.take(120)}"}"""
+                val raw = uploadInputBlocking(sel, f)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw.take(300)).toString()
+            }
+            "/fill-file" -> {
+                val sel = com.rg.webloom.ui.terminal.BStore.resolve(q["sel"] ?: return """{"ok":false,"err":"missing sel"}""")
+                val path = q["path"] ?: return """{"ok":false,"err":"missing path"}"""
+                val f = sandboxFile(path) ?: return """{"ok":false,"err":"not found in sandbox: ${path.take(120)}"}"""
+                val text = try { f.readText(Charsets.UTF_8) } catch (e: Exception) { return """{"ok":false,"err":"read failed: ${e.message}"}""" }
+                if (text.length > 200_000) return """{"ok":false,"err":"file too big (>200KB text)"}"""
+                val e1 = sel.replace("\\", "\\\\").replace("'", "\\'").take(500)
+                val lit = JSONObject.quote(text)
+                val raw = evalBlocking("(function(){try{var e=document.querySelector('$e1');if(!e)return 'ERR no-node';var v=$lit;var t=e.tagName;if(t==='INPUT'||t==='TEXTAREA'){e.focus();e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));}else if(e.isContentEditable){e.focus();e.textContent=v;e.dispatchEvent(new Event('input',{bubbles:true}));}else return 'ERR not-fillable';return 'OK '+((''+v).length)+' chars';}catch(x){return 'ERR '+x;}})()", 15)
+                JSONObject().put("ok", raw.contains("OK")).put("result", raw.take(300)).toString()
+            }
+            "/js-file" -> {
+                val path = q["path"] ?: return """{"ok":false,"err":"missing path"}"""
+                val f = sandboxFile(path) ?: return """{"ok":false,"err":"not found in sandbox: ${path.take(120)}"}"""
+                val js = try { f.readText(Charsets.UTF_8) } catch (e: Exception) { return """{"ok":false,"err":"read failed: ${e.message}"}""" }
+                if (js.isBlank()) return """{"ok":false,"err":"empty file"}"""
+                if (js.length > 100_000) return """{"ok":false,"err":"file too big (>100KB)"}"""
+                val raw = evalBlocking(js, 15).take(60_000)
+                JSONObject().put("ok", !raw.startsWith("ERR")).put("result", raw).toString()
             }
             "/console" -> {
                 val n = q["n"]?.toIntOrNull() ?: 30
@@ -1921,7 +2032,7 @@ object BrowserAgent {
                 val raw = evalBlockingJs("(function(){try{var e=document.querySelector('$esc');if(!e)return 'ERR no-node';try{e.scrollIntoView({block:'center'});}catch(x){}var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round((r.left+r.right)/2),y:Math.round((r.top+r.bottom)/2)});}catch(e){return 'ERR '+e;}})()", 10)
                 JSONObject().put("ok", !raw.startsWith("ERR")).put("pos", raw.take(500)).toString()
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /submit /key /hover /select /store /stores /unstore /pos /box /tap /swipe /scroll /scrollto /back /forward /reload /reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias /block(list-only)"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /upload /fill-file /js-file /submit /key /hover /select /store /stores /unstore /pos /box /tap /swipe /scroll /scrollto /back /forward /reload /reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias /block(list-only)"}"""
         }
     }
 }

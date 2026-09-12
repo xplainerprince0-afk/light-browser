@@ -8,6 +8,13 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <!-- Android 13+ granular media permission (sandbox-first, but needed if user picks audio outside sandbox) -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- File upload (<input type=file>): SAF picker grants URIs directly, so no
+         runtime media permission is needed to pick. Declared for MediaStore-scoped
+         flows + future direct camera capture from the chooser. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />

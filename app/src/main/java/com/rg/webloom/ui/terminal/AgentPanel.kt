@@ -186,6 +186,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             "b tab <n> — switch tab" to "b tab ",
             "b read — article text" to "b read ",
             "b fill <ref> <val> — type it" to "b fill ",
+            "b upload <ref> <file> — attach sandbox file" to "b upload ",
             "b find <text> | b find-clear | b scroll-top | b scroll-bottom" to "b find ",
             "b js <expr> — run JS" to "b js ",
             "b netlog — page resources" to "b netlog",
