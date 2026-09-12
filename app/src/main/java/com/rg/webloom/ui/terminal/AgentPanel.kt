@@ -189,6 +189,7 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             "b find <text> | b find-clear | b scroll-top | b scroll-bottom" to "b find ",
             "b js <expr> — run JS" to "b js ",
             "b netlog — page resources" to "b netlog",
+            "b cookies save|load|profiles — per-site logins" to "b cookies ",
             "b clear-data [all] — cookies/cache/storage" to "b clear-data ",
             "b shot — save screenshot | b shot-el <ref>" to "b shot",
             "b console — JS logs" to "b console",

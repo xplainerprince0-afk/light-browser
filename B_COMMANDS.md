@@ -27,7 +27,7 @@ take them. Every touch prints `delivered=true` — on `false`, retry, don't repe
 | `b shot [--full]` / `b shot-el <ref\|css>` / `b save <name.html\|txt>` | `b shot` |
 | `b find <text>` / `b find-clear` / `b next` / `b prev` | — |
 | `b scroll [px]` / `b scroll-to <x> <y>` / `b scroll-top` / `b scroll-bottom` | — |
-| `b cookies [get [url] \| set "k=v" [url] \| clear]` / `b clear-data [all]` | — |
+| `b cookies [get [url] \| set "k=v" [url] \| save <profile> [host] \| load <profile> [host] \| profiles [host] \| del <profile> [host] \| clear-host [host] \| clear]` / `b clear-data [all]` | `b cookies save main` |
 | `b history [n]` / `b downloads` / `b metrics [--json]` | — |
 
 ## Acting (deterministic first)

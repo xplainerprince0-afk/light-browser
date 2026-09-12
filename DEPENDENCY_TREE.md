@@ -29,6 +29,14 @@ User explicitly approved ExoPlayer.
 Kept as literals (pre-existing, scoped-storage/SAF needs):
 └─ androidx.documentfile:documentfile:1.0.1
 
+Adblock decision (2026-09-12): NO new blocking library added.
+Edsuns/AdblockAndroid (Brave-based, JitPack ad-filter) was evaluated and
+deferred — stale upstream (~2022, AGP 7 era, JitPack 1.0 unresolved, native
+.so + filter-download maintenance, no compileSdk 37 / AGP 9.3.2 guarantee).
+Homegrown Adblock.kt deleted instead; system AdAway/DNS is the blocker.
+Seam kept in WebViewSetup.shouldInterceptRequest for a future maintained
+engine (fail-open). Re-evaluate only with pinned coordinates + SDK/AGP proof.
+
 Vendored (Apache-2.0, verbatim from termux/termux-app tag v0.119.0):
 termux-app is GPLv3-only, BUT its LICENSE.md explicitly excepts these two
 dirs (jackpal Android-Terminal-Emulator lineage). Verified: zero imports of

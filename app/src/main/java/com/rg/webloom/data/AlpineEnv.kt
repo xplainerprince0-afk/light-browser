@@ -84,7 +84,7 @@ object AlpineEnv {
             "    store) _b_sub=\"\$1\"; case \"\$_b_sub\" in list|'') _b_get '/store';; remove|unstore) _b_get '/store' --data-urlencode \"op=remove\" --data-urlencode \"name=\$2\";; *) _b_get '/store' --data-urlencode \"op=set\" --data-urlencode \"name=\$1\" --data-urlencode \"sel=\$2\";; esac;;\n" +
             "    close) _b_get '/close' --data-urlencode \"i=\${1:--1}\";;\n" +
             "    tab) _b_get '/switch' --data-urlencode \"i=\$1\";;\n" +
-            "    cookies) _b_get '/cookies' --data-urlencode \"op=\${1:-get}\" --data-urlencode \"value=\$2\" --data-urlencode \"url=\$3\";;\n" +
+            "    cookies) _b_cop=\"\${1:-get}\"; case \"\$_b_cop\" in save|load|switch|profiles|list|del|delete|remove|clear-host) _b_get '/cookies' --data-urlencode \"op=\$_b_cop\" --data-urlencode \"name=\$2\" --data-urlencode \"host=\${3:-}\" --data-urlencode \"url=\${3:-}\";; *) _b_get '/cookies' --data-urlencode \"op=\$_b_cop\" --data-urlencode \"value=\$2\" --data-urlencode \"url=\$3\";; esac;;\n" +
             "    history) _b_get '/history' --data-urlencode \"n=\${1:-20}\";;\n" +
             "    submit) _b_get '/submit' --data-urlencode \"sel=\$1\";;\n" +
             "    key) _b_get '/key' --data-urlencode \"sel=\$1\";;\n" +

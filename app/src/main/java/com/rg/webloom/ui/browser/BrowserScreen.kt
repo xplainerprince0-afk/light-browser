@@ -1233,10 +1233,11 @@ fun BrowserScreen(
                             if (host.isNotBlank()) com.rg.webloom.data.SitePrefs.set(ctx, host, cur.js, v, cur.adblock)
                             showSite = false; try { webView?.reload() } catch (_: Exception) {}
                         }
-                        tri("Ad blocker", cur.adblock, try { Prefs.adBlock } catch (_: Exception) { true }) { v ->
-                            if (host.isNotBlank()) com.rg.webloom.data.SitePrefs.set(ctx, host, cur.js, cur.desktop, v)
-                            showSite = false; try { webView?.reload() } catch (_: Exception) {}
-                        }
+                        Text(
+                            "In-app adblock removed — use system AdAway/DNS. Per-site adblock setting kept for migration only.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             },

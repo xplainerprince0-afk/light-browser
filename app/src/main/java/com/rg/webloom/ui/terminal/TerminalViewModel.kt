@@ -1622,7 +1622,7 @@ class TerminalViewModel : ViewModel() {
                             "b shot [--full] | shot-el <ref|css> — locate element for shots\n" +
                             "b find <text> | find-clear | next | prev | b scroll-to (scrollto) <x> <y> | b scroll [px]\n" +
                             "b scroll-top | scroll-bottom — page ends without magic numbers\n" +
-                            "b cookies [get [url] | set \"k=v\" [url] | clear] | clear-data [cookies|cache|history|storage|all]\n" +
+                            "b cookies [get [url] | set \"k=v\" [url] | save <profile> [host] | load <profile> [host] | profiles [host] | del <profile> [host] | clear-host [host] | clear] | clear-data [cookies|cache|history|storage|all]\n" +
                             "b netlog [n] — resource URLs/timings | console [n]\n" +
                             "b history [n] | downloads | save <name> | metrics (auto-logged)\n" +
                             "b wait <text|css:sel> [ms] | links [n] | forms | survey — automation senses\n" +
@@ -1830,7 +1830,14 @@ class TerminalViewModel : ViewModel() {
                                     try { it.clearHistory() } catch (_: Exception) {}
                                 }
                             }
+                            val kept = try { com.rg.webloom.data.CookieProfiles.hosts().size } catch (_: Exception) { 0 }
                             out("Cleared $what\n", TermGreen)
+                            if ((what == "cookies" || what == "all" || what == "storage") && kept > 0) {
+                                out("Note: $kept site(s) have saved cookie profiles (b cookies profiles) — reload via b cookies load\n", TermDim)
+                            }
+                            if (what == "storage" || what == "all") {
+                                out("Note: clearing storage logs you out even with cookie profiles (localStorage wiped)\n", TermDim)
+                            }
                         } catch (e: Exception) { out("clear-data failed: ${e.message}\n", TermRed) }
                     }
                     "tabdup", "tab-dup" -> {
@@ -2504,6 +2511,12 @@ class TerminalViewModel : ViewModel() {
                         val rest = (parts.getOrNull(2) ?: "").trim().removeSurrounding("\"")
                         try {
                             val cm = android.webkit.CookieManager.getInstance()
+                            val CP = com.rg.webloom.data.CookieProfiles
+                            fun currentHost(): String {
+                                val url = try { com.rg.webloom.data.BrowserAgent.currentUrl() ?: "" } catch (_: Exception) { "" }
+                                return CP.normalizeHost(url)
+                            }
+                            fun hostUrl(h: String) = "https://$h/"
                             when (sub) {
                                 "get" -> {
                                     val url = rest.ifBlank { com.rg.webloom.data.BrowserAgent.currentUrl() ?: "" }
@@ -2527,12 +2540,83 @@ class TerminalViewModel : ViewModel() {
                                         } catch (e: Exception) { out("set failed: ${e.message}\n", TermRed) }
                                     }
                                 }
+                                "save" -> {
+                                    // b cookies save <profile> [host]
+                                    val toks = rest.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                    val profile = toks.getOrNull(0) ?: ""
+                                    val host = CP.normalizeHost(toks.getOrNull(1) ?: currentHost())
+                                    if (!CP.validProfile(profile)) out("Usage: b cookies save <profile> [host]\n", TermRed)
+                                    else if (host.isBlank()) out("No host — open a page or pass one.\n", TermRed)
+                                    else {
+                                        val url = hostUrl(host)
+                                        val ck = try { cm.getCookie(url) } catch (_: Exception) { null }
+                                        if (ck.isNullOrBlank()) out("No cookies to save for $host\n", TermDim)
+                                        else if (CP.save(host, profile, ck)) {
+                                            try { cm.flush() } catch (_: Exception) {}
+                                            out("Saved $host → $profile (${ck.split(";").size} cookies)\n", TermGreen)
+                                        } else out("Save failed\n", TermRed)
+                                    }
+                                }
+                                "load", "switch" -> {
+                                    // b cookies load <profile> [host]
+                                    val toks = rest.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                    val profile = toks.getOrNull(0) ?: ""
+                                    val host = CP.normalizeHost(toks.getOrNull(1) ?: currentHost())
+                                    if (!CP.validProfile(profile)) out("Usage: b cookies load <profile> [host]\n", TermRed)
+                                    else if (host.isBlank()) out("No host — open a page or pass one.\n", TermRed)
+                                    else {
+                                        val saved = CP.load(host, profile)
+                                        if (saved.isNullOrBlank()) out("No profile '$profile' for $host\n", TermRed)
+                                        else {
+                                            val url = hostUrl(host)
+                                            CP.expireAll(url)
+                                            val n = CP.applyTo(url, saved)
+                                            out("Loaded $host → $profile ($n cookies) — reload the page\n", TermGreen)
+                                        }
+                                    }
+                                }
+                                "profiles", "list" -> {
+                                    val host = CP.normalizeHost(rest.ifBlank { currentHost() })
+                                    if (host.isBlank()) {
+                                        val hosts = CP.hosts()
+                                        if (hosts.isEmpty()) out("(no cookie profiles saved)\n", TermDim)
+                                        else if (jsonMode) out(org.json.JSONObject().put("hosts", org.json.JSONArray(hosts.toList())).toString() + "\n", TermWhite)
+                                        else out(hosts.sorted().joinToString("\n") { "• $it" } + "\n", TermWhite)
+                                    } else {
+                                        val map = CP.list(host)
+                                        if (map.isEmpty()) out("(no profiles for $host)\n", TermDim)
+                                        else if (jsonMode) {
+                                            val o = org.json.JSONObject()
+                                            map.forEach { (k, v) -> o.put(k, v) }
+                                            out(org.json.JSONObject().put("host", host).put("profiles", o).toString() + "\n", TermWhite)
+                                        } else map.toList().sortedBy { it.first }.forEach { (k, v) ->
+                                            val whenS = if (v > 0) java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(v)) else "?"
+                                            out("• $k ($whenS)\n", TermWhite)
+                                        }
+                                    }
+                                }
+                                "del", "delete", "remove" -> {
+                                    val toks = rest.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                                    val profile = toks.getOrNull(0) ?: ""
+                                    val host = CP.normalizeHost(toks.getOrNull(1) ?: currentHost())
+                                    if (!CP.validProfile(profile) || host.isBlank()) out("Usage: b cookies del <profile> [host]\n", TermRed)
+                                    else if (CP.delete(host, profile)) out("Deleted $host → $profile\n", TermGreen)
+                                    else out("No such profile\n", TermRed)
+                                }
+                                "clear-host" -> {
+                                    val host = CP.normalizeHost(rest.ifBlank { currentHost() })
+                                    if (host.isBlank()) out("Usage: b cookies clear-host [host]\n", TermRed)
+                                    else {
+                                        val n = CP.expireAll(hostUrl(host))
+                                        out("Cleared $n cookies for $host\n", TermGreen)
+                                    }
+                                }
                                 "clear" -> {
                                     try { cm.removeAllCookies(null) } catch (_: Exception) {}
                                     try { cm.flush() } catch (_: Exception) {}
-                                    out("Cookies cleared\n", TermGreen)
+                                    out("Cookies cleared (all sites — profiles kept, use clear-host for one site)\n", TermGreen)
                                 }
-                                else -> out("Usage: b cookies [get [url] | set \"k=v\" [url] | clear]\n", TermRed)
+                                else -> out("Usage: b cookies [get [url] | set \"k=v\" [url] | save <profile> [host] | load <profile> [host] | profiles [host] | del <profile> [host] | clear-host [host] | clear]\n", TermRed)
                             }
                         } catch (e: Exception) { out("cookies error: ${e.message}\n", TermRed) }
                     }

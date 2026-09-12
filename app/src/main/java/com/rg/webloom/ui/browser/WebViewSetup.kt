@@ -9,17 +9,20 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
-import com.rg.webloom.data.Adblock
 import com.rg.webloom.data.AppCtx
 import com.rg.webloom.data.BrowserAgent
 import com.rg.webloom.data.BrowserProfile
 import com.rg.webloom.data.DownloadHelper
 import com.rg.webloom.data.Prefs
 import com.rg.webloom.data.SitePrefs
-import java.io.ByteArrayInputStream
 
 const val DESKTOP_UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+/** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
+private object DefaultUa {
+    @Volatile var value: String? = null
+}
 
 class BrowserCallbacks(
     val onStarted: (String) -> Unit,
@@ -54,20 +57,23 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
     val app = AppCtx.ctx
     BrowserProfile.configure(app, wv)
     try {
+        if (DefaultUa.value.isNullOrBlank()) DefaultUa.value = wv.settings.userAgentString
         if (Prefs.desktopMode) wv.settings.userAgentString = DESKTOP_UA
+        else DefaultUa.value?.let { if (it.isNotBlank()) wv.settings.userAgentString = it }
     } catch (_: Exception) {}
 
     try {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
             val sw = android.webkit.ServiceWorkerController.getInstance()
+            // No in-app request blocking: the homegrown Adblock.kt (host+path
+            // substring matching) broke Cloudflare challenges (cdn-cgi/,
+            // cloudflareinsights) and caused white screens. Rely on system-level
+            // AdAway / DNS filtering instead. Seam for a future maintained engine
+            // (e.g. Brave-based + EasyList): plug its shouldIntercept here and in
+            // WebViewClient.shouldInterceptRequest below, fail-open on exception.
             sw.setServiceWorkerClient(object : android.webkit.ServiceWorkerClient() {
                 override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
-                    return try {
-                        val u = request.url?.toString() ?: return null
-                        if (Prefs.adBlock && Adblock.isAdUrl(u)) {
-                            WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
-                        } else null
-                    } catch (_: Exception) { null }
+                    return null
                 }
             })
             sw.serviceWorkerWebSettings.apply {
@@ -100,16 +106,9 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
 
     wv.webViewClient = object : WebViewClient() {
         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-            try {
-                val u = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
-                // NEVER touch view?.url here: this runs off-Main and any WebView
-                // method call is a StrictMode WebViewMethodCalledOnWrongThreadViolation.
-                val host = request.url?.host ?: ""
-                val pageHost = PageHosts.get(view) ?: host
-                if (SitePrefs.effectiveAdblock(app, pageHost) && Adblock.isAdUrl(u)) {
-                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
-                }
-            } catch (_: Exception) {}
+            // Fail-open: no in-app blocking (see ServiceWorker note above).
+            // PageHosts is kept so a future engine can do first-party vs
+            // third-party checks without touching the WebView off-Main.
             return super.shouldInterceptRequest(view, request)
         }
 
@@ -127,7 +126,14 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                     val wantDesk = SitePrefs.effectiveDesktop(app, host)
                     if (v != null) {
                         if (wantDesk && v.settings.userAgentString != DESKTOP_UA) v.settings.userAgentString = DESKTOP_UA
-                        else if (!wantDesk && v.settings.userAgentString == DESKTOP_UA) v.settings.userAgentString = null
+                        else if (!wantDesk) {
+                            val def = DefaultUa.value
+                            if (!def.isNullOrBlank() && v.settings.userAgentString != def) {
+                                v.settings.userAgentString = def
+                            } else if (def.isNullOrBlank() && v.settings.userAgentString == DESKTOP_UA) {
+                                v.settings.userAgentString = null
+                            }
+                        }
                     }
                     // Smooth scrolling over flicker hacks: hardware layers everywhere
                     // (user accepted extra RAM for smoothness).
@@ -176,8 +182,64 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
             }
         }
 
-        override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
-            val raw = req?.url?.toString() ?: return false
+        override fun onReceivedError(
+            v: WebView?, req: WebResourceRequest?, err: android.webkit.WebResourceError?
+        ) {
+            super.onReceivedError(v, req, err)
+            try {
+                if (req == null || req.isForMainFrame) {
+                    val code = try { err?.errorCode ?: -1 } catch (_: Exception) { -1 }
+                    val desc = try { err?.description?.toString() ?: "load error" } catch (_: Exception) { "load error" }
+                    val url = try { req?.url?.toString() ?: "" } catch (_: Exception) { "" }
+                    BrowserAgent.logConsole("[page-error] $code $desc @ $url")
+                    if (v != null) {
+                        Toast.makeText(app, "Load error $code: $desc", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        override fun onReceivedHttpError(
+            v: WebView?, req: WebResourceRequest?, resp: WebResourceResponse?
+        ) {
+            super.onReceivedHttpError(v, req, resp)
+            try {
+                if (req == null || req.isForMainFrame) {
+                    val code = try { resp?.statusCode ?: -1 } catch (_: Exception) { -1 }
+                    val url = try { req?.url?.toString() ?: "" } catch (_: Exception) { "" }
+                    BrowserAgent.logConsole("[http-error] $code @ $url")
+                    // Cloudflare challenge/deny codes surface here instead of a silent white screen.
+                    if (code == 403 || code == 429 || code == 503) {
+                        Toast.makeText(app, "Blocked ($code) — try reload-hard, check b console/netlog", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        override fun onReceivedSslError(
+            v: WebView?, handler: android.webkit.SslErrorHandler?, err: android.net.http.SslError?
+        ) {
+            try {
+                BrowserAgent.logConsole("[ssl-error] ${err?.primaryError ?: -1} @ ${err?.url ?: ""}")
+                Toast.makeText(app, "SSL error — page may not load securely", Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {}
+            try { handler?.cancel() } catch (_: Exception) {}
+        }
+
+        override fun onSafeBrowsingHit(
+            v: WebView?, req: WebResourceRequest?,
+            threat: Int, cb2: android.webkit.SafeBrowsingResponse?
+        ) {
+            try {
+                BrowserAgent.logConsole("[safe-browsing] threat=$threat @ ${req?.url}")
+                Toast.makeText(app, "Safe Browsing warning", Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {}
+            try { cb2?.proceed(false) } catch (_: Exception) {
+                try { super.onSafeBrowsingHit(v, req, threat, cb2) } catch (_: Exception) {}
+            }
+        }
+
+        override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {            val raw = req?.url?.toString() ?: return false
             val scheme = try { req?.url?.scheme?.lowercase() ?: "" } catch (_: Exception) { "" }
             // External schemes → system handler, not WebView.
             if (scheme == "tel" || scheme == "mailto" || scheme == "sms" || scheme == "smsto" ||
@@ -279,7 +341,9 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                     } catch (_: Exception) {}
                     return@let
                 }
-                if (src.contains("challenges.cloudflare.com") || src.contains("turnstile")) return@let
+                // Cloudflare Turnstile / challenge logs are kept now (they were
+                // silently dropped before, which made blocks look like white screens).
+                // Only drop known-noisy painting probes.
                 if (msg.contains("font-size:0;color:transparent") || msg == "NaN") return@let
                 try {
                     BrowserAgent.logConsole("[${it.messageLevel()}] $msg @ $src:${it.lineNumber()}")
@@ -373,11 +437,13 @@ private fun injectVisibilityHack(v: WebView, url: String) {
 }
 
 private fun injectDesktop(v: WebView) {
+    // Keep JS UA consistent with the native override, but do NOT spoof
+    // navigator.platform (Win32 on a touch Android device spikes bot scores
+    // on Cloudflare / bot walls). Touch points + DPR stay truthful.
     v.evaluateJavascript(
         """(function(){
           try{
             Object.defineProperty(navigator,'userAgent',{get:function(){return "$DESKTOP_UA";},configurable:true});
-            Object.defineProperty(navigator,'platform',{get:function(){return 'Win32';},configurable:true});
           }catch(e){}
         })();""".trimIndent(), null
     )

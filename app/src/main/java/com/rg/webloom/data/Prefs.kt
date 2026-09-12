@@ -19,6 +19,11 @@ object Prefs {
         get() = p(AppCtx.ctx).getBoolean("desktop", false)
         set(v) { p(AppCtx.ctx).edit().putBoolean("desktop", v).apply() }
 
+    /**
+     * Legacy in-app adblock flag (homegrown host+path list removed 2026-09:
+     * it broke Cloudflare challenges). Kept for prefs migration only — no
+     * enforcement. Use system AdAway / DNS filtering instead.
+     */
     var adBlock: Boolean
         get() = p(AppCtx.ctx).getBoolean("adblock", false)
         set(v) { p(AppCtx.ctx).edit().putBoolean("adblock", v).apply() }

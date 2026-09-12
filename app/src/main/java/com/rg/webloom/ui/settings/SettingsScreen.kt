@@ -152,6 +152,30 @@ fun SettingsScreen(
             }
         }
     }
+    val exportZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) backupScope.launch(Dispatchers.IO) {
+            try {
+                val stats = ctx.contentResolver.openOutputStream(uri)?.use { Backup.exportZip(ctx, it) }
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "Full backup: ${stats?.files ?: 0} files — restart app after import", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(ctx, "Zip export failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+    val importZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) backupScope.launch(Dispatchers.IO) {
+            try {
+                val res = ctx.contentResolver.openInputStream(uri)?.use { Backup.importZip(ctx, it) } ?: (0 to 0)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "Restored ${res.first} stores + ${res.second} files — restart app", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { Toast.makeText(ctx, "Zip import failed: ${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -209,9 +233,10 @@ fun SettingsScreen(
                         Toast.LENGTH_SHORT
                     ).show()
                 })
-                SwitchRow(label = "Ad block", checked = adblock, onChange = {
+                SwitchRow(label = "Ad block (legacy — use AdAway/DNS, in-app list removed)", checked = adblock, onChange = {
                     adblock = it
                     safeSet { Prefs.adBlock = it }
+                    Toast.makeText(ctx, "In-app blocking removed — use system AdAway/DNS", Toast.LENGTH_SHORT).show()
                 })
                 SwitchRow(label = "Save site data (logins)", checked = saveSiteData, onChange = {
                     saveSiteData = it
@@ -393,11 +418,19 @@ fun SettingsScreen(
                 FilledTonalButton(
                     onClick = { exportLauncher.launch("lightbrowser-backup.json") },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Export backup (JSON)") }
+                ) { Text("Export prefs backup (JSON)") }
                 FilledTonalButton(
                     onClick = { importLauncher.launch(arrayOf("application/json")) },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Import backup") }
+                ) { Text("Import prefs backup") }
+                FilledTonalButton(
+                    onClick = { exportZipLauncher.launch("webloom-full-backup.zip") },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Export full backup (.zip — prefs + sandbox)") }
+                FilledTonalButton(
+                    onClick = { importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Import full backup") }
             }
 
             // ── Step 1: scope pickers ──

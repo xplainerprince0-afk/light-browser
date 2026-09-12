@@ -1332,15 +1332,63 @@ object BrowserAgent {
                 val op = q["op"] ?: "get"
                 val cm = try { android.webkit.CookieManager.getInstance() } catch (_: Exception) { null }
                 if (cm == null) return@awaitMain """{"ok":false,"err":"no CookieManager"}"""
+                val CP = com.rg.webloom.data.CookieProfiles
+                fun reqHost(): String {
+                    val h = CP.normalizeHost(q["host"] ?: q["url"] ?: "")
+                    if (h.isNotBlank()) return h
+                    return CP.normalizeHost(webViewProvider?.invoke()?.url ?: "")
+                }
                 when (op) {
                     "set" -> {
-                        val v = q["value"] ?: return@awaitMain """{"ok":false,"err":"missing value"}"""
+                        val v = (q["value"] ?: q["name"] ?: return@awaitMain """{"ok":false,"err":"missing value"}""")
                         val url = (q["url"] ?: "").ifBlank { webViewProvider?.invoke()?.url ?: "" }
                         try {
                             cm.setCookie(url, v)
                             try { cm.flush() } catch (_: Exception) {}
                             """{"ok":true}"""
                         } catch (e: Exception) { """{"ok":false,"err":"${e.message}"}""" }
+                    }
+                    "save" -> {
+                        val profile = q["name"] ?: q["value"] ?: return@awaitMain """{"ok":false,"err":"missing name"}"""
+                        if (!CP.validProfile(profile)) return@awaitMain """{"ok":false,"err":"bad profile name"}"""
+                        val host = reqHost()
+                        if (host.isBlank()) return@awaitMain """{"ok":false,"err":"no host"}"""
+                        val ck = try { cm.getCookie("https://$host/") } catch (_: Exception) { null }
+                        if (ck.isNullOrBlank()) return@awaitMain """{"ok":false,"err":"no cookies for host"}"""
+                        if (!CP.save(host, profile, ck)) return@awaitMain """{"ok":false,"err":"save failed"}"""
+                        try { cm.flush() } catch (_: Exception) {}
+                        JSONObject().put("ok", true).put("host", host).put("profile", profile).toString()
+                    }
+                    "load", "switch" -> {
+                        val profile = q["name"] ?: q["value"] ?: return@awaitMain """{"ok":false,"err":"missing name"}"""
+                        val host = reqHost()
+                        if (host.isBlank()) return@awaitMain """{"ok":false,"err":"no host"}"""
+                        val saved = CP.load(host, profile) ?: return@awaitMain """{"ok":false,"err":"no such profile"}"""
+                        CP.expireAll("https://$host/")
+                        val n = CP.applyTo("https://$host/", saved)
+                        JSONObject().put("ok", true).put("host", host).put("profile", profile).put("cookies", n).toString()
+                    }
+                    "profiles", "list" -> {
+                        val host = reqHost()
+                        if (host.isBlank()) {
+                            JSONObject().put("ok", true).put("hosts", org.json.JSONArray(CP.hosts().toList())).toString()
+                        } else {
+                            val o = JSONObject()
+                            CP.list(host).forEach { (k, v) -> o.put(k, v) }
+                            JSONObject().put("ok", true).put("host", host).put("profiles", o).toString()
+                        }
+                    }
+                    "del", "delete", "remove" -> {
+                        val profile = q["name"] ?: q["value"] ?: return@awaitMain """{"ok":false,"err":"missing name"}"""
+                        val host = reqHost()
+                        if (host.isBlank()) return@awaitMain """{"ok":false,"err":"no host"}"""
+                        JSONObject().put("ok", CP.delete(host, profile)).toString()
+                    }
+                    "clear-host" -> {
+                        val host = reqHost()
+                        if (host.isBlank()) return@awaitMain """{"ok":false,"err":"no host"}"""
+                        val n = CP.expireAll("https://$host/")
+                        JSONObject().put("ok", true).put("host", host).put("cleared", n).toString()
                     }
                     "clear" -> {
                         try { cm.removeAllCookies(null) } catch (_: Exception) {}

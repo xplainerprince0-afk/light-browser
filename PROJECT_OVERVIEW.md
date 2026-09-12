@@ -7,11 +7,13 @@
 Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux terminal, and an audiobook/music player with background playback. Scoped-storage compliant (SAF), no heavy backend.
 
 ## Feature to-do
-- [x] Browser: TRUE multi-WebView tabs (pool 4, per-tab history), history, bookmarks, userscript engine (GM_* polyfill), adblock (host+path), desktop UA (per-site), blob downloads (escaped bridge), share, reader retry/copy/share, find debounce, agent bridge (token on all endpoints, no Main deadlock)
+- [x] Browser: TRUE multi-WebView tabs (pool 4, per-tab history), history, bookmarks, userscript engine (GM_* polyfill), desktop UA Chrome/131 (per-site, no platform spoof), blob downloads (escaped bridge), share, reader retry/copy/share, find debounce, agent bridge (token on all endpoints, no Main deadlock)
+- [x] Browser: fail-open networking — homegrown Adblock.kt removed (broke Cloudflare cdn-cgi/challenges); system AdAway/DNS is the blocker, seam kept for a future maintained engine; page/http/ssl/safe-browsing errors now toast + log to b console/netlog (no more silent white screens)
 - [x] Files: sandbox browser (canonical guard + name sanitize), search/sort/grid, breadcrumb, import/export (SAF, to current dir, unique names), new folder/rename/delete/details, storage meter, zip-bomb guard, preview selectable+copy
 - [x] Terminal: Alpine bootstrap (HTTP check, arch fix, busybox exec, sh link), sandboxed shell (quote-safe, concurrent stderr drain, busy guard, re-entrancy guard), history, sticky CTRL/ALT (ALT consumed), ESC \u001B, font size, selectable output
 - [x] Terminal: Agent bridge panel (server start/stop, recorder, tappable `b` cmds, alias how-to), `b serve on|off`, bottom tabs pinned below keyboard (IME excluded from outer insets)
-- [x] Terminal: `b` tab/cookies-set-clear/history/downloads/submit/read/shot-full/hover/select/key/store-named/mkext-script (EXEC+PTY HTTP routes, hoisted-IME toolbar lift, opencode size+ELF verified install)
+- [x] Terminal: `b` tab/cookies-profiles/history/downloads/submit/read/shot-full/hover/select/key/store-named/mkext-script (EXEC+PTY HTTP routes, hoisted-IME toolbar lift, opencode size+ELF verified install)
+- [x] Terminal: `b cookies save/load/profiles/del/clear-host` per-site login vault (CookieProfiles store, EXEC+PTY, clear-data warns + keeps profiles; storage-clear caveat surfaced)
 - [x] Terminal: `b` console upgrades — PTY parity (/dom/save/url/title/next/prev/stores/serve/alias/record), `--json`, jailed `> file`, did-you-mean, in-app command studio, toolbox installed-state + space guard, `b metrics` tap-accuracy audit auto-logged to ~/agent_metrics/metrics.log (EXEC+PTY, with WebView on-screen box)
 - [x] Terminal: `b` automation — quoted selectors, `wait/links/forms/survey` senses (+routes), `do/run/replay/queue` macro engine with fail-fast + `!` soft steps, recording v3 replayable (tap/swipe/click/fill, auto-URL hops)
 - [x] Terminal: `b` page tools — `reload-hard`, `ua [mobile|desktop|<string>|get]`, `viewport`, `zoom [in|out|reset]`, `scroll-top|scroll-bottom`, `find-clear`, `shot-el`, `netlog`, `clear-data`, `tabdup` (EXEC + PTY routes + help + Agent panel)
@@ -35,6 +37,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Terminal: opencode exec self-heal (`opencode-fix`), jail hardened (separator-anchored, no sandbox-root delete)
 - [x] Player: ExoPlayer + MediaSession background playback (music attrs, local wakelock, tap-to-open), novels/chapters, shuffle/repeat/speed (0.5..2)/sleep timer, queue, mini-player, error surface, atomic resume
 - [x] Scripts manager (name validation), Downloads (skip active, refresh on partial), Settings (homepage normalize+autosave, theme persist, speed clamp)
+- [x] Settings: full backup (.zip prefs + entire sandbox via SAF, zip-slip guarded, cache skipped, 100MB/entry cap) + prefs-only JSON kept; restores stores + files with restart prompt
 - [x] Shell: singleTask deep-links, adjustPan keyboard, rememberSaveable tabs/theme, status-bar contrast, offscreen a11y/pointer block, allowBackup=false
 - [x] Shell: edge-swipe tab switching replaces all bottom bars (44dp strips both sides, taps/scroll pass through; left-edge long-press opens terminal drawer), order Browser/Terminal/Sandbox/Player
 - [x] Shell: pinned bottom tab bar (Scaffold IME-excluded slot — keyboard slides OVER it, never shoves it up); MiniPlayer removed (Player tab + notification own playback); edge-swipe stays opt-in secondary
