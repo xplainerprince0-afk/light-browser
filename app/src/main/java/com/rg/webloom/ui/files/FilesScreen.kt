@@ -235,13 +235,6 @@ fun FilesScreen(
         }
     }
 
-    // In-app viewer takes the whole tab while open (back closes it first).
-    BackHandler(enabled = active && viewerFor != null) { viewerFor = null }
-    viewerFor?.let { vf ->
-        FileViewerScreen(file = vf, onClose = { viewerFor = null }, onShare = { shareFiles(listOf(it)) })
-        return
-    }
-
     fun shareFiles(files: List<File>) {
         if (files.isEmpty()) return
         try {
@@ -261,6 +254,13 @@ fun FilesScreen(
             }
             ctx.startActivity(Intent.createChooser(intent, "Share"))
         } catch (_: Exception) {}
+    }
+
+    // In-app viewer takes the whole tab while open (back closes it first).
+    BackHandler(enabled = active && viewerFor != null) { viewerFor = null }
+    viewerFor?.let { vf ->
+        FileViewerScreen(file = vf, onClose = { viewerFor = null }, onShare = { shareFiles(listOf(it)) })
+        return
     }
 
     // Cached formatter (was allocated per row per recomposition).

@@ -78,8 +78,8 @@ object GestureGen {
         if (pts.size < 2) return pts to ms
         return try {
             val rnd = java.util.Random(seed)
-            val cx = pts.sumOf { it.first.toDouble() } / pts.size
-            val cy = pts.sumOf { it.second.toDouble() } / pts.size
+            val cx = (pts.sumOf { it.first.toDouble() } / pts.size).toFloat()
+            val cy = (pts.sumOf { it.second.toDouble() } / pts.size).toFloat()
             val dx = (rnd.nextFloat() - 0.5f) * 2 * jitter
             val dy = (rnd.nextFloat() - 0.5f) * 2 * jitter
             val sc = 0.92f + rnd.nextFloat() * 0.16f
