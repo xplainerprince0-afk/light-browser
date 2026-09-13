@@ -236,7 +236,7 @@ object BrowserAgent {
     }
 
     /** Full-page screenshot via capturePicture (viewport-only is captureShot).
-     *  Height-capped (~6MP) so endless pages can't OOM. Main-safe. */
+     *  Height-capped (~4MP RGB) so endless pages can't OOM. Main-safe. */
     fun captureFullShot(): String? {
         if (Looper.myLooper() == Looper.getMainLooper()) return captureFullShotOnMain()
         val f = CompletableFuture<String?>()
@@ -260,7 +260,7 @@ object BrowserAgent {
             if (pw <= 0 || ph <= 0) return null
             var scale = (1280f / pw).coerceAtMost(1f)
             val est = pw.toDouble() * ph * scale * scale
-            if (est > 6_000_000.0) scale = Math.sqrt(6_000_000.0 / (pw.toDouble() * ph)).toFloat()
+            if (est > 4_000_000.0) scale = Math.sqrt(4_000_000.0 / (pw.toDouble() * ph)).toFloat()
             val bw = (pw * scale).toInt().coerceAtLeast(1)
             val bh = (ph * scale).toInt().coerceAtLeast(1)
             val bmp = android.graphics.Bitmap.createBitmap(bw, bh, android.graphics.Bitmap.Config.ARGB_8888)

@@ -229,6 +229,20 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    /** RAM: on pressure drop Coil bitmap pool + WebView caches. Critical level
+     *  also hints the WebView to free its renderer-side buffers. */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        try {
+            if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_MODERATE) {
+                try { coil.Coil.imageLoader(this).memoryCache?.clear() } catch (_: Exception) {}
+            }
+            if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE) {
+                try { android.webkit.WebView(this).apply { clearCache(true); destroy() } } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

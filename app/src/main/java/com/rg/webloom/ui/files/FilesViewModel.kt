@@ -62,9 +62,20 @@ class FilesViewModel : ViewModel() {
     private fun usageBytes(): Long {
         cachedUsage?.let { (v, at) -> if (System.currentTimeMillis() - at < 30_000) return v }
         val sd = sandboxDir ?: return cachedUsage?.first ?: 0L
-        val v = try {
-            sd.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-        } catch (_: Exception) { cachedUsage?.first ?: 0L }
+        // RAM: bounded walk — stop after 20k files (shots/recs can grow deep;
+        // an unbounded sumOf pins the UI thread's IO worker for seconds).
+        var n = 0
+        var total = 0L
+        try {
+            for (f in sd.walkTopDown()) {
+                if (n >= 20_000) break
+                if (f.isFile) {
+                    total += try { f.length() } catch (_: Exception) { 0L }
+                    n++
+                }
+            }
+        } catch (_: Exception) { return cachedUsage?.first ?: 0L }
+        val v = total
         cachedUsage = v to System.currentTimeMillis()
         return v
     }

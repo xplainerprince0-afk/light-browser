@@ -341,7 +341,7 @@ fun BrowserScreen(
     DisposableEffect(Unit) {
         onDispose {
             try {
-                webViews.values.forEach { try { it.stopLoading(); it.destroy() } catch (_: Exception) {} }
+                webViews.values.forEach { try { destroyWebView(it) } catch (_: Exception) {} }
                 webViews.clear()
             } catch (_: Exception) {}
             // Clear every lane (was: only openInNewTab — stale select/close/
@@ -355,21 +355,23 @@ fun BrowserScreen(
             } catch (_: Exception) {}
         }
     }
-    // Evict closed tabs' WebViews + cap pool at 6 alive (smoothness-first RAM budget).
-    // Destroy oldest background tabs first; current tab is never evicted.
+    // Evict closed tabs' WebViews + cap pool at 4 alive (RAM budget: each
+    // WebView holds a full renderer + JS heap; 4 keeps swipes smooth on
+    // 2-3 GB devices. Current tab is never evicted).
+    // Destroy path is full: stop → clear history → remove views → destroy.
     // Thumbnails die with their tabs (recycled, no bitmap leak).
     LaunchedEffect(ui.tabs.map { it.id }, currentTabId) {
         try {
             val alive = ui.tabs.map { it.id }.toSet()
             (webViews.keys - alive).forEach { id ->
-                try { webViews.remove(id)?.destroy() } catch (_: Exception) { try { webViews.remove(id) } catch (_: Exception) {} }
+                try { destroyWebView(webViews.remove(id)) } catch (_: Exception) { try { webViews.remove(id) } catch (_: Exception) {} }
                 try { thumbs.remove(id)?.recycle() } catch (_: Exception) {}
             }
-            if (webViews.size > 6 && currentTabId != null) {
+            if (webViews.size > 4 && currentTabId != null) {
                 val order = ui.tabs.map { it.id }.filter { it != currentTabId }
-                val victims = order.take(webViews.size - 6)
+                val victims = order.take(webViews.size - 4)
                 victims.forEach { id ->
-                    try { webViews.remove(id)?.destroy() } catch (_: Exception) {}
+                    try { destroyWebView(webViews.remove(id)) } catch (_: Exception) {}
                     try { thumbs.remove(id)?.recycle() } catch (_: Exception) {}
                 }
             }
@@ -1517,6 +1519,17 @@ private fun copyText(ctx: Context, text: String) {
         (ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
             .setPrimaryClip(ClipData.newPlainText("url", text))
     } catch (_: Exception) {}
+}
+
+/** Full WebView teardown (RAM): stop → clear history → detach → destroy.
+ *  Plain destroy() leaves the renderer client + parent refs alive. */
+private fun destroyWebView(wv: WebView?) {
+    if (wv == null) return
+    try { wv.stopLoading() } catch (_: Exception) {}
+    try { wv.clearHistory() } catch (_: Exception) {}
+    try { (wv.parent as? android.view.ViewGroup)?.removeView(wv) } catch (_: Exception) {}
+    try { wv.removeAllViews() } catch (_: Exception) {}
+    try { wv.destroy() } catch (_: Exception) {}
 }
 
 /** Normalized URL equality: ignores trailing slashes + fragment so redirect-final

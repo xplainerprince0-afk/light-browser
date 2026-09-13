@@ -29,6 +29,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
@@ -42,8 +46,10 @@ import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
@@ -128,6 +134,8 @@ fun FilesScreen(
     var overflow by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
+    // In-app viewer (text editor / image / media / PDF). Null = browser list.
+    var viewerFor by remember { mutableStateOf<File?>(null) }
     // Hidden dotfiles stay out of sight (shell keeps seeing them — the AI
     // needs .profile/.b-ext). Persisted; refresh() enforces it.
     var showHidden by remember {
@@ -189,7 +197,7 @@ fun FilesScreen(
         }
     }
 
-    fun openFile(f: File) {
+    fun openExternal(f: File) {
         try {
             val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", f)
             val ext = f.extension.lowercase()
@@ -214,6 +222,24 @@ fun FilesScreen(
         } catch (_: Exception) {
             scope.launch { snacks.showSnackbar("No app can open this file") }
         }
+    }
+
+    /** Route a tap: folders navigate, supported files open in-app, rest via intent. */
+    fun openFile(f: File) {
+        try {
+            if (f.isDirectory) { vm.openDir(f); return }
+            if (viewerKindFor(f) != ViewerKind.Other) { viewerFor = f; return }
+            openExternal(f)
+        } catch (_: Exception) {
+            try { openExternal(f) } catch (_: Exception) {}
+        }
+    }
+
+    // In-app viewer takes the whole tab while open (back closes it first).
+    BackHandler(enabled = active && viewerFor != null) { viewerFor = null }
+    viewerFor?.let { vf ->
+        FileViewerScreen(file = vf, onClose = { viewerFor = null }, onShare = { shareFiles(listOf(it)) })
+        return
     }
 
     fun shareFiles(files: List<File>) {
@@ -430,7 +456,12 @@ fun FilesScreen(
                     Icon(Icons.Filled.Storage, null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Sandbox ${FilesViewModel.formatSize(ui.usedBytes)}", style = MaterialTheme.typography.labelLarge)
+                        val usedGb = ui.usedBytes / (1024.0 * 1024 * 1024)
+                        val pct = (usedGb * 100).coerceIn(0.0, 100.0)
+                        Text(
+                            "Sandbox ${FilesViewModel.formatSize(ui.usedBytes)} • ${"%.1f".format(pct)}% of 1 GB",
+                            style = MaterialTheme.typography.labelLarge
+                        )
                         Spacer(Modifier.height(6.dp))
                         LinearProgressIndicator(
                             progress = { (ui.usedBytes / (1f * 1024 * 1024 * 1024)).coerceIn(0f, 1f) },
@@ -453,16 +484,21 @@ fun FilesScreen(
             if (ui.files.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                        Icon(Icons.Filled.Folder, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+                        val emptyIcon = if (ui.query.isNotBlank()) Icons.Filled.Search else Icons.Filled.Folder
+                        Icon(emptyIcon, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.surfaceVariant)
                         Spacer(Modifier.height(12.dp))
                         Text(
                             if (ui.query.isNotBlank()) "No matches for \"${ui.query}\"" else if (ui.currentPath.isBlank()) "Loading…" else "Empty folder",
                             style = MaterialTheme.typography.titleMedium
                         )
                         Text(
-                            if (ui.query.isNotBlank()) "Try a different search" else "Import files or tap + to create",
+                            if (ui.query.isNotBlank()) "Try a different search" else "Import files, or tap + to create — tap any file to view/edit in-app",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (ui.query.isBlank() && ui.currentPath.isNotBlank()) {
+                            Spacer(Modifier.height(12.dp))
+                            TextButton(onClick = { showCreate = true }) { Text("+ New file / folder") }
+                        }
                     }
                 }
             } else if (ui.grid) {
@@ -495,13 +531,26 @@ fun FilesScreen(
                             ) {
                                 Box(
                                     modifier = Modifier.size(48.dp).clip(MaterialTheme.shapes.large)
-                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                        .background(
+                                            if (sel) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.primaryContainer
+                                        ),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(fileIcon(f), null, modifier = Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Icon(
+                                        if (sel) Icons.Filled.Check else fileIcon(f), null,
+                                        modifier = Modifier.size(26.dp),
+                                        tint = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+                                    )
                                 }
                                 Spacer(Modifier.height(6.dp))
                                 Text(f.name, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+                                Text(
+                                    if (f.isDirectory) "Folder" else f.extension.uppercase().ifEmpty { "File" },
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
@@ -529,7 +578,7 @@ fun FilesScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        fileIcon(f), null,
+                                        if (sel) Icons.Filled.Check else fileIcon(f), null,
                                         modifier = Modifier.size(24.dp),
                                         tint = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
                                     )
@@ -571,8 +620,22 @@ fun FilesScreen(
                         ) { Icon(fileIcon(f), null, tint = MaterialTheme.colorScheme.primary) }
                     }
                 )
-                SheetRow(Icons.Filled.FileOpen, "Open") { menuFor = null; openFile(f) }
-                if (!f.isDirectory && f.extension.lowercase() in setOf("txt", "md", "log", "json", "xml", "csv", "kt", "java", "py", "js", "ts", "html", "css", "sh", "prop", "ini")) {
+                SheetRow(Icons.Filled.FileOpen, "Open with another app") { menuFor = null; openExternal(f) }
+                if (!f.isDirectory && viewerKindFor(f) != ViewerKind.Other) {
+                    val label = when (viewerKindFor(f)) {
+                        ViewerKind.Text -> if (f.extension.lowercase() == "md") "Edit / preview" else "Edit text"
+                        ViewerKind.Image -> "View image"
+                        ViewerKind.Video -> "Play video"
+                        ViewerKind.Audio -> "Play audio"
+                        ViewerKind.Pdf -> "View PDF"
+                        ViewerKind.Other -> "Preview"
+                    }
+                    SheetRow(Icons.Filled.Description, label) {
+                        menuFor = null
+                        viewerFor = f
+                    }
+                }
+                if (!f.isDirectory && f.extension.lowercase() in setOf("txt", "md", "log", "json", "xml", "csv", "kt", "java", "py", "js", "ts", "html", "css", "sh", "prop", "ini") && viewerKindFor(f) == ViewerKind.Other) {
                     SheetRow(Icons.Filled.Description, "Preview text") {
                         menuFor = null
                         vm.readTextPreview(f) { previewFor = f.name to it }
@@ -734,13 +797,14 @@ private fun SheetRow(icon: ImageVector, label: String, onClick: () -> Unit) {
 private fun fileIcon(f: File): ImageVector {
     if (f.isDirectory) return Icons.Filled.Folder
     return when (f.extension.lowercase()) {
-        in setOf("mp3", "m4a", "aac", "ogg", "wav", "flac", "opus") -> Icons.Filled.MusicNote
-        in setOf("mp4", "mkv", "avi", "mov", "webm") -> Icons.Filled.VideoFile
-        in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp") -> Icons.Filled.Image
-        in setOf("pdf") -> Icons.Filled.Description
-        in setOf("zip", "rar", "7z", "tar", "gz") -> Icons.Filled.Description
-        in setOf("apk") -> Icons.Filled.Description
-        else -> Icons.Filled.Description
+        in setOf("mp3", "m4a", "aac", "ogg", "wav", "flac", "opus") -> Icons.Filled.AudioFile
+        in setOf("mp4", "mkv", "avi", "mov", "webm", "3gp") -> Icons.Filled.VideoFile
+        in setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg") -> Icons.Filled.Image
+        in setOf("pdf") -> Icons.Filled.PictureAsPdf
+        in setOf("zip", "rar", "7z", "tar", "gz") -> Icons.Filled.Archive
+        in setOf("apk") -> Icons.Filled.Android
+        in setOf("txt", "md", "log", "json", "xml", "csv", "kt", "java", "py", "js", "ts", "html", "css", "sh", "prop", "ini", "yaml", "yml") -> Icons.Filled.Description
+        else -> Icons.Filled.InsertDriveFile
     }
 }
 
