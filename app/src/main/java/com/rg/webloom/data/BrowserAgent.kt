@@ -352,8 +352,8 @@ object BrowserAgent {
 
     private data class TouchOp(
         val wv: WebView,
-        val kind: String, // "tap" | "swipe"
-        val css: List<Pair<Float, Float>>, // tap: 1 pt; swipe: start→end
+        val kind: String, // "tap" | "swipe" | "stroke" (polyline gesture)
+        val css: List<Pair<Float, Float>>, // tap: 1 pt; swipe: start→end; stroke: full trail
         val ms: Long,
         val jsZoom: Float,
         val jsDpr: Float,
@@ -381,7 +381,10 @@ object BrowserAgent {
         try {
             val res = deliverTouch(op)
             try { op.future?.complete(res) } catch (_: Exception) {}
-            val settle = if (op.kind == "swipe") op.ms + 180L else 150L
+            val settle = when (op.kind) {
+                "swipe", "stroke" -> op.ms + 180L
+                else -> 150L
+            }
             mainHandler.postDelayed({ touchBusy = false; pumpTouch() }, settle)
         } catch (_: Exception) {
             try { op.future?.complete(TouchResult(false, "pump-error")) } catch (_: Exception) {}
@@ -450,6 +453,61 @@ object BrowserAgent {
                     } catch (_: Exception) {}
                 }, dur)
                 logTouch(op, x, y, x, y, s, dDown, if (dDown) "ok" else "rejected", t0, dur, parked)
+                return TouchResult(dDown, if (dDown) "ok" else "rejected")
+            } else if (op.kind == "stroke") {
+                // Freeform gesture: DOWN at p0, eased MOVEs along the polyline
+                // by arc length (even finger speed — bot checks flag teleporting
+                // cursors), UP at the end. Per-point ±1px jitter via jx/jy.
+                val trail = op.css.map { jx(it.first) to jy(it.second) }
+                val x1 = trail.first().first; val y1 = trail.first().second
+                val x2 = trail.last().first; val y2 = trail.last().second
+                val down = evAt(t0, t0, android.view.MotionEvent.ACTION_DOWN, x1, y1)
+                val dDown = try { wv.dispatchTouchEvent(down) } catch (_: Exception) { false } finally {
+                    try { down.recycle() } catch (_: Exception) {}
+                }
+                if (dDown) {
+                    // Arc-length table so speed is uniform across segments.
+                    val cum = mutableListOf(0f)
+                    for (i in 1 until trail.size) {
+                        val dx = trail[i].first - trail[i - 1].first
+                        val dy = trail[i].second - trail[i - 1].second
+                        cum.add(cum.last() + kotlin.math.sqrt(dx * dx + dy * dy))
+                    }
+                    val total = cum.last().coerceAtLeast(1f)
+                    val steps = ((op.ms / 16).toLong()).coerceIn(8, 64).toInt()
+                    var seg = 1
+                    for (i in 1..steps) {
+                        val target = total * i / steps
+                        while (seg < cum.size - 1 && cum[seg] < target) seg++
+                        val c0 = cum[seg - 1]; val span = (cum[seg] - c0).coerceAtLeast(0.001f)
+                        val f = ((target - c0) / span).coerceIn(0f, 1f)
+                        val mx = trail[seg - 1].first + (trail[seg].first - trail[seg - 1].first) * f
+                        val my = trail[seg - 1].second + (trail[seg].second - trail[seg - 1].second) * f
+                        // Ease in/out on top of uniform speed (human attack/decay).
+                        val te = i.toFloat() / steps
+                        val e = if (te < 0.5f) 2 * te * te else 1 - ((-2 * te + 2) * (-2 * te + 2)) / 2
+                        val et = t0 + (op.ms * e).toLong()
+                        val at = (op.ms * e).toLong()
+                        mainHandler.postDelayed({
+                            try {
+                                val mv = evAt(t0, et, android.view.MotionEvent.ACTION_MOVE, mx, my)
+                                try { wv.dispatchTouchEvent(mv) } catch (_: Exception) {} finally {
+                                    try { mv.recycle() } catch (_: Exception) {}
+                                }
+                            } catch (_: Exception) {}
+                        }, at)
+                    }
+                    val upEt = t0 + op.ms + 20
+                    mainHandler.postDelayed({
+                        try {
+                            val up = evAt(t0, upEt, android.view.MotionEvent.ACTION_UP, x2, y2)
+                            try { wv.dispatchTouchEvent(up) } catch (_: Exception) {} finally {
+                                try { up.recycle() } catch (_: Exception) {}
+                            }
+                        } catch (_: Exception) {}
+                    }, op.ms + 20)
+                }
+                logTouch(op, x1, y1, x2, y2, s, dDown, if (dDown) "ok" else "rejected", t0, op.ms, parked)
                 return TouchResult(dDown, if (dDown) "ok" else "rejected")
             } else {
                 // Swipe: discrete eased MOVEs (Chromium ignores addBatch history
@@ -521,6 +579,9 @@ object BrowserAgent {
             if (op.kind == "swipe" && op.css.size > 1) {
                 o.put("cssX2", op.css[1].first).put("cssY2", op.css[1].second)
                     .put("viewX2", vx2).put("viewY2", vy2).put("ms", op.ms)
+            }
+            if (op.kind == "stroke") {
+                o.put("n", op.css.size).put("ms", op.ms)
             }
             lastTap = o.toString()
         } catch (_: Exception) {}
@@ -599,6 +660,44 @@ object BrowserAgent {
             ?: return TouchResult(false, "no-webview")
         val f = CompletableFuture<TouchResult>()
         enqueueTouch(TouchOp(wv, "swipe", listOf(x1Css to y1Css, x2Css to y2Css), ms.coerceIn(50, 2000), jsZoom, jsDpr, f))
+        return try {
+            f.get(timeoutMs, TimeUnit.MILLISECONDS) ?: TouchResult(false, "timeout")
+        } catch (_: Exception) {
+            TouchResult(false, "timeout")
+        } finally {
+            try { if (!f.isDone) f.cancel(true) } catch (_: Exception) {}
+        }
+    }
+
+    /** Freeform human stroke: DOWN at p0, eased MOVEs along the polyline,
+     *  UP at the end (circles, doodles, recorded human trails). Async. */
+    fun stroke(pts: List<Pair<Float, Float>>, ms: Long = 600, jsZoom: Float = 1f, jsDpr: Float = -1f) {
+        val trail = try { pts.take(GestureGen.MAX_PTS) } catch (_: Exception) { pts }
+        if (trail.size < 2) return
+        val wv = try { webViewProvider?.invoke() } catch (_: Exception) { null }
+        if (wv == null) {
+            try {
+                lastTap = JSONObject().put("kind", "stroke").put("cssX", trail[0].first).put("cssY", trail[0].second)
+                    .put("delivered", false).put("reason", "no-webview")
+                    .put("ts", System.currentTimeMillis()).toString()
+            } catch (_: Exception) {}
+            return
+        }
+        enqueueTouch(TouchOp(wv, "stroke", trail, ms.coerceIn(100, 5000), jsZoom, jsDpr, null))
+    }
+
+    /** Worker-safe blocking stroke (CSS px polyline): returns delivery. Never call on Main. */
+    fun strokeSync(pts: List<Pair<Float, Float>>, ms: Long = 600, jsZoom: Float = 1f, jsDpr: Float = -1f, timeoutMs: Long = 15_000): TouchResult {
+        val trail = try { pts.take(GestureGen.MAX_PTS) } catch (_: Exception) { pts }
+        if (trail.size < 2) return TouchResult(false, "need-2-pts")
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            stroke(trail, ms, jsZoom, jsDpr)
+            return TouchResult(false, "main-thread-async")
+        }
+        val wv = try { webViewProvider?.invoke() } catch (_: Exception) { null }
+            ?: return TouchResult(false, "no-webview")
+        val f = CompletableFuture<TouchResult>()
+        enqueueTouch(TouchOp(wv, "stroke", trail, ms.coerceIn(100, 5000), jsZoom, jsDpr, f))
         return try {
             f.get(timeoutMs, TimeUnit.MILLISECONDS) ?: TouchResult(false, "timeout")
         } catch (_: Exception) {
@@ -868,6 +967,7 @@ object BrowserAgent {
                   window.__lb_recTarget.removeEventListener('click',window.__lb_recHandler,true);
                   window.__lb_recTarget.removeEventListener('input',window.__lb_recHandler,true);
                   window.__lb_recTarget.removeEventListener('touchstart',window.__lb_recTouch,true);
+                  try{if(window.__lb_recTouchMove)window.__lb_recTarget.removeEventListener('touchmove',window.__lb_recTouchMove,true);}catch(x){}
                   window.__lb_recTarget.removeEventListener('touchend',window.__lb_recTouchEnd,true);
                   window.__lb_recHandler=null;
                 }
@@ -887,8 +987,21 @@ object BrowserAgent {
                   }catch(err){}
                 };
                 var tsx=0,tsy=0,tst=0;
+                var trail=[];
                 var ts=function(ev){
-                  try{var t=ev.changedTouches[0];tsx=t.clientX;tsy=t.clientY;tst=Date.now();}catch(x){}
+                  try{var t=ev.changedTouches[0];tsx=t.clientX;tsy=t.clientY;tst=Date.now();trail=[Math.round(t.clientX)+','+Math.round(t.clientY)];}catch(x){}
+                };
+                var tm=function(ev){
+                  try{
+                    if(!trail||trail.length===0)return;
+                    var t=ev.changedTouches[0];
+                    var lx=0,ly=0;
+                    try{var lp=trail[trail.length-1].split(',');lx=parseFloat(lp[0]);ly=parseFloat(lp[1]);}catch(x){}
+                    var dx=t.clientX-lx,dy=t.clientY-ly;
+                    if(dx*dx+dy*dy<36)return;
+                    trail.push(Math.round(t.clientX)+','+Math.round(t.clientY));
+                    if(trail.length>64)trail.shift();
+                  }catch(x){}
                 };
                 var te=function(ev){
                   try{
@@ -902,20 +1015,37 @@ object BrowserAgent {
                     d.x=Math.round(t.clientX);d.y=Math.round(t.clientY);
                     d.sx=Math.round(window.scrollX);d.sy=Math.round(window.scrollY);
                     d.vw=window.innerWidth;d.vh=window.innerHeight;
+                    // Freeform trail (circle/doodle/human path): ≥3 tracked
+                    // points + real travel ⇒ op=gesture with the full path so
+                    // the agent can humanize + replay it as random data.
+                    try{
+                      if(trail&&trail.length>=3&&dist>=24){
+                        d.op='gesture';
+                        d.path=trail.join(' ');
+                        d.n=trail.length;
+                        d.ms=Math.min(Math.max(dt,100),5000);
+                        console.log('__LB_REC__:'+JSON.stringify(d));
+                        trail=[];
+                        return;
+                      }
+                    }catch(x){}
+                    trail=[];
                     if(dist<12){d.op='tap';}
                     else{d.op='swipe';d.x1=Math.round(tsx);d.y1=Math.round(tsy);
                       d.x2=Math.round(t.clientX);d.y2=Math.round(t.clientY);
                       d.ms=Math.min(Math.max(dt,50),3000);}
                     console.log('__LB_REC__:'+JSON.stringify(d));
-                  }catch(x){}
+                  }catch(x){try{trail=[];}catch(y){}}
                 };
                 window.__lb_recHandler=h;
                 window.__lb_recTouch=ts;
+                window.__lb_recTouchMove=tm;
                 window.__lb_recTouchEnd=te;
                 window.__lb_recTarget=document;
                 document.addEventListener('click',h,true);
                 document.addEventListener('input',h,true);
                 document.addEventListener('touchstart',ts,true);
+                document.addEventListener('touchmove',tm,{passive:true,capture:true});
                 document.addEventListener('touchend',te,true);
                 return 'OK';
               }catch(err){return 'ERR '+err;}
@@ -1015,11 +1145,22 @@ object BrowserAgent {
         if (json.length > 4_000) return
         try {
             val o = JSONObject(json)
-            // click/fill (mouse+keyboard) + tap/swipe (touch) — the replay set.
+            // click/fill (mouse+keyboard) + tap/swipe (touch) + gesture
+            // (freeform touch trail: circle/doodle/human path) — the replay set.
             val op = o.optString("op", "")
-            if (op != "click" && op != "fill" && op != "tap" && op != "swipe") return
+            if (op != "click" && op != "fill" && op != "tap" && op != "swipe" && op != "gesture") return
             val sel = o.optString("selector", "")
             if (sel.isBlank() || sel.length > 500) return
+            if (op == "gesture") {
+                // Validate the recorded trail now so replay never chokes on
+                // forged console lines: needs a parseable path of 2..64 pts.
+                val path = o.optString("path", "")
+                val pts = try { GestureGen.parsePath(path) } catch (_: Exception) { null }
+                if (pts == null || pts.size < 2) return
+                o.put("path", GestureGen.formatPath(pts))
+                o.put("n", pts.size)
+                if (o.optInt("ms", 0) <= 0) o.put("ms", 600)
+            }
             o.put("t", System.currentTimeMillis() - recStartMs)
             // Per-action URL so SPA replay works (was only startUrl before).
             try { o.put("url", try { currentUrl() } catch (_: Exception) { null } ?: recStartUrl) } catch (_: Exception) { o.put("url", recStartUrl) }
@@ -1341,6 +1482,39 @@ object BrowserAgent {
                 if (x1 == null || y1 == null || x2 == null || y2 == null) return """{"ok":false,"err":"missing x1/y1/x2/y2"}"""
                 val r = swipeSync(x1, y1, x2, y2, q["ms"]?.toLongOrNull()?.coerceIn(50, 2000) ?: 300)
                 JSONObject().put("ok", r.delivered).put("reason", r.reason).toString()
+            }
+            "/stroke" -> {
+                // Freeform polyline: path="x1,y1 x2,y2 …" (CSS px, ≤64 pts).
+                val raw = q["path"] ?: return """{"ok":false,"err":"missing path"}"""
+                val pts = try { GestureGen.parsePath(raw) } catch (_: Exception) { null }
+                if (pts == null) return """{"ok":false,"err":"bad path (need 'x1,y1 x2,y2 …')"}"""
+                val r = strokeSync(pts, q["ms"]?.toLongOrNull()?.coerceIn(100, 5000) ?: 600)
+                JSONObject().put("ok", r.delivered).put("reason", r.reason).put("n", pts.size).toString()
+            }
+            "/circle" -> {
+                val cx = q["cx"]?.toFloatOrNull()
+                val cy = q["cy"]?.toFloatOrNull()
+                val r0 = q["r"]?.toFloatOrNull()
+                if (cx == null || cy == null || r0 == null) return """{"ok":false,"err":"missing cx/cy/r"}"""
+                val pts = try { GestureGen.circle(cx, cy, r0, q["n"]?.toIntOrNull()?.coerceIn(8, 64) ?: 28) } catch (_: Exception) { null }
+                if (pts == null) return """{"ok":false,"err":"bad circle"}"""
+                val r = strokeSync(pts, q["ms"]?.toLongOrNull()?.coerceIn(100, 5000) ?: 900)
+                JSONObject().put("ok", r.delivered).put("reason", r.reason).put("n", pts.size).toString()
+            }
+            "/gesture" -> {
+                // Alias of /stroke (recorded human trails replay as-is; add
+                // seed=… to humanize: translate/scale/rotate/tempo jitter).
+                val raw = q["path"] ?: return """{"ok":false,"err":"missing path"}"""
+                val pts0 = try { GestureGen.parsePath(raw) } catch (_: Exception) { null }
+                if (pts0 == null) return """{"ok":false,"err":"bad path (need 'x1,y1 x2,y2 …')"}"""
+                val seedQ = q["seed"]?.toLongOrNull()
+                val (pts, ms) = if (seedQ != null) {
+                    try { GestureGen.humanize(pts0, q["ms"]?.toLongOrNull()?.coerceIn(100, 5000) ?: 600, seedQ) } catch (_: Exception) { pts0 to 600L }
+                } else pts0 to (q["ms"]?.toLongOrNull()?.coerceIn(100, 5000) ?: 600)
+                val r = strokeSync(pts, ms)
+                val o = JSONObject().put("ok", r.delivered).put("reason", r.reason).put("n", pts.size)
+                if (seedQ != null) o.put("seed", seedQ)
+                o.toString()
             }
             "/scrollto" -> {
                 val x = q["x"]?.toIntOrNull() ?: 0
@@ -2032,7 +2206,7 @@ object BrowserAgent {
                 val raw = evalBlockingJs("(function(){try{var e=document.querySelector('$esc');if(!e)return 'ERR no-node';try{e.scrollIntoView({block:'center'});}catch(x){}var r=e.getBoundingClientRect();return JSON.stringify({x:Math.round((r.left+r.right)/2),y:Math.round((r.top+r.bottom)/2)});}catch(e){return 'ERR '+e;}})()", 10)
                 JSONObject().put("ok", !raw.startsWith("ERR")).put("pos", raw.take(500)).toString()
             }
-            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /upload /fill-file /js-file /submit /key /hover /select /store /stores /unstore /pos /box /tap /swipe /scroll /scrollto /back /forward /reload /reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias /block(list-only)"}"""
+            else -> """{"ok":false,"err":"unknown path. try /status /open /new /tabs /switch /close /home /url /title /text /read /dom /snap /js /links /forms /wait /survey /click /fill /upload /fill-file /js-file /submit /key /hover /select /store /stores /unstore /pos /box /tap /swipe /stroke /circle /gesture /scroll /scrollto /back /forward /reload /reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /stop /find /next /prev /console /cookies /shot /history /downloads /save /metrics /serve /record /alias /block(list-only)"}"""
         }
     }
 }

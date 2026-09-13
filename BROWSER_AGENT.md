@@ -59,9 +59,13 @@ b text [max] | b read [max] | b dom [css] | b snap
 b key [sel|name]      # nearest visible button to the field (typed/focused) + tap it
 b hover <ref|css|name> | b select <sel|name> <value-or-text>
 b store <name> <css> | stores | unstore <name>   # named selectors
-b pos <ref|css> | b box <ref|css> | b tap <x> <y> [--click] | b swipe <x1> <y1> <x2> <y2> [ms] | b shot-el <ref|css>
+ b pos <ref|css> | b box <ref|css> | b tap <x> <y> [--click] | b swipe <x1> <y1> <x2> <y2> [ms] | b shot-el <ref|css>
 # contract: pos/box return CSS px, tap/swipe take CSS px; tap/swipe report
 # delivered (queued FIFO, humanized); --click adds elementFromPoint fallback
+ b circle <cx> <cy> <r> [n] | b scribble <x1> <y1> <x2> <y2> [steps] [--seed N]  # human doodle
+ b gesture <"x1,y1 x2,y2 …"> [ms] [--seed N] | b gesture replay <rec> [--seed N]  # freeform/recorded→random
+# recorder captures touchmove trails as op=gesture (path + ms + n); replay humanizes
+# (translate ±36px, scale 0.92–1.08, rotate ±7°, tempo 0.9–1.15×) so runs never repeat pixels
 b scroll [px] | b scroll-to <x> <y> | b scroll-top | b scroll-bottom | b find <text> | find-clear | next | prev
 b shot [--full] | b console [n] | b netlog [n] | b cookies [get [url] | set "k=v" [url] | clear]
  b clear-data [cookies|cache|history|storage|all] | b history [n] | downloads | save <name.html|txt>
@@ -76,7 +80,8 @@ b ext | mkext <name>    # your own SCRIPT commands (~/.b-ext/*.sh, both modes)
 ```
 PTY `b()` covers the same via HTTP routes (`/switch /submit /read /hover
 /select /store /stores /history /downloads /dom /save /serve /alias /record
-/reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /box`
+/reload-hard /ua /viewport /zoom /netlog /clear-data /tabdup /shot-el /box
+/stroke /circle /gesture`
 added); `b unalias` and mutating `b block/unblock` stay EXEC-only
 (PTY `b blocks` lists; use `b alias remove <name>`).
 `b mkext` scaffolds `~/.b-ext/<name>.sh` with

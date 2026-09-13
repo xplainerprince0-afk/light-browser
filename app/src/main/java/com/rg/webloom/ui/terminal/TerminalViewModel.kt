@@ -1620,6 +1620,8 @@ class TerminalViewModel : ViewModel() {
                             "b store <name> <css> | stores | unstore <name> — named selectors\n" +
                             "b pos <ref|css> → coords | b box <ref|css> → coords+bounds+safe points\n" +
                             "b tap <x> <y> [--click] | b swipe <x1> <y1> <x2> <y2> [ms]  (CSS px from pos/box)\n" +
+                            "b circle <cx> <cy> <r> [n] | b scribble <x1> <y1> <x2> <y2> [--seed N] — human doodle\n" +
+                            "b gesture <\"x1,y1 x2,y2 …\"> [ms] [--seed N] | b gesture replay <rec> [--seed N] — random human replay\n" +
                             "b shot [--full] | shot-el <ref|css> — locate element for shots\n" +
                             "b find <text> | find-clear | next | prev | b scroll-to (scrollto) <x> <y> | b scroll [px]\n" +
                             "b scroll-top | scroll-bottom — page ends without magic numbers\n" +
@@ -1958,6 +1960,113 @@ class TerminalViewModel : ViewModel() {
                             val r = com.rg.webloom.data.BrowserAgent.swipeSync(nums[0], nums[1], nums[2], nums[3], nums.getOrNull(4)?.toLong()?.coerceIn(50, 2000) ?: 300)
                             if (r.delivered) out("ok swipe ${nums[0]},${nums[1]}→${nums[2]},${nums[3]} delivered=true\n", TermGreen)
                             else out("err swipe delivered=false reason=${r.reason}\n", TermRed)
+                        }
+                    }
+                    "circle" -> {
+                        // b circle <cx> <cy> <r> [n] — human finger circle (bot-wall friendly).
+                        val nums = cmd.removePrefix("circle").trim().split(Regex("\\s+")).mapNotNull { it.toFloatOrNull() }
+                        if (nums.size < 3) out("Usage: b circle <cx> <cy> <r> [segments 8-64]  (CSS px)\n", TermRed)
+                        else {
+                            val pts = try {
+                                com.rg.webloom.data.GestureGen.circle(nums[0], nums[1], nums[2], nums.getOrNull(3)?.toInt()?.coerceIn(8, 64) ?: 28)
+                            } catch (_: Exception) { null }
+                            if (pts == null) out("Bad circle\n", TermRed)
+                            else {
+                                val r = com.rg.webloom.data.BrowserAgent.strokeSync(pts, 900)
+                                if (r.delivered) out("ok circle ${nums[0]},${nums[1]} r=${nums[2]} n=${pts.size} delivered=true\n", TermGreen)
+                                else out("err circle delivered=false reason=${r.reason}\n", TermRed)
+                            }
+                        }
+                    }
+                    "scribble", "doodle" -> {
+                        // b scribble <x1> <y1> <x2> <y2> [steps] [--seed N] — seeded human doodle.
+                        val rawArgs = cmd.removePrefix(parts[0]).trim()
+                        val seedM = Regex("""--seed\s+(-?\d+)""").find(rawArgs)
+                        val seed = seedM?.groupValues?.get(1)?.toLongOrNull()
+                        val clean = rawArgs.replace(Regex("""--seed\s+-?\d+"""), " ").trim()
+                        val nums = clean.split(Regex("\\s+")).mapNotNull { it.toFloatOrNull() }
+                        if (nums.size < 4) out("Usage: b scribble <x1> <y1> <x2> <y2> [steps 4-63] [--seed N]  (CSS px)\n", TermRed)
+                        else {
+                            val pts = try {
+                                com.rg.webloom.data.GestureGen.scribble(nums[0], nums[1], nums[2], nums[3], nums.getOrNull(4)?.toInt()?.coerceIn(4, 63) ?: 24, seed ?: System.nanoTime())
+                            } catch (_: Exception) { null }
+                            if (pts == null) out("Bad scribble box\n", TermRed)
+                            else {
+                                val r = com.rg.webloom.data.BrowserAgent.strokeSync(pts, 800)
+                                if (r.delivered) out("ok scribble n=${pts.size} delivered=true" + (if (seed != null) " seed=$seed" else " seed=random") + "\n", TermGreen)
+                                else out("err scribble delivered=false reason=${r.reason}\n", TermRed)
+                            }
+                        }
+                    }
+                    "gesture", "stroke" -> {
+                        // b gesture <"x1,y1 x2,y2 …"> [ms] [--seed N] — freeform human path.
+                        // b gesture replay <rec|file> [--seed N] — replay a recorded trail with random human transform.
+                        val rawArgs = cmd.removePrefix(parts[0]).trim()
+                        if (rawArgs.startsWith("replay")) {
+                            val after = rawArgs.removePrefix("replay").trim()
+                            val seedM2 = Regex("""--seed\s+(-?\d+)""").find(after)
+                            val seed2 = seedM2?.groupValues?.get(1)?.toLongOrNull() ?: System.currentTimeMillis()
+                            val name = after.replace(Regex("""--seed\s+-?\d+"""), " ").trim().removeSurrounding("\"").removeSurrounding("'")
+                            if (name.isBlank()) out("Usage: b gesture replay <name|file> [--seed N]\n", TermRed)
+                            else {
+                                val f = if ("/" in name) resolve(name)
+                                else {
+                                    val sd = sandboxDir ?: AppCtx.ctx.let { java.io.File(it.filesDir, "sandbox") }
+                                    val dir = java.io.File(sd, "agent_recs")
+                                    val withExt = if (name.endsWith(".json")) name else "$name.json"
+                                    java.io.File(dir, withExt).takeIf { it.isFile }
+                                        ?: dir.listFiles { x -> x.isFile && x.name.startsWith(name) }
+                                            ?.maxByOrNull { it.lastModified() }
+                                }
+                                if (f == null || !f.isFile) out("Recording not found: $name\n", TermRed)
+                                else {
+                                    try {
+                                        val root = org.json.JSONObject(f.readText(Charsets.UTF_8))
+                                        val arr = root.optJSONArray("actions")
+                                        val trails = mutableListOf<org.json.JSONObject>()
+                                        if (arr != null) for (i in 0 until arr.length()) {
+                                            val o = arr.optJSONObject(i) ?: continue
+                                            if (o.optString("op", "") == "gesture" && o.optString("path", "").isNotBlank()) trails.add(o)
+                                        }
+                                        if (trails.isEmpty()) out("No gesture trails in ${f.name} (record a circle/doodle first)\n", TermRed)
+                                        else {
+                                            var okN = 0; var fail = ""
+                                            trails.forEach { o ->
+                                                val pts0 = try { com.rg.webloom.data.GestureGen.parsePath(o.optString("path", "")) } catch (_: Exception) { null }
+                                                if (pts0 == null) return@forEach
+                                                val (pts, ms) = try {
+                                                    com.rg.webloom.data.GestureGen.humanize(pts0, o.optInt("ms", 600).toLong().coerceIn(100, 5000), seed2 + okN)
+                                                } catch (_: Exception) { pts0 to 600L }
+                                                val r = com.rg.webloom.data.BrowserAgent.strokeSync(pts, ms)
+                                                if (r.delivered) okN++ else fail = r.reason
+                                            }
+                                            if (okN > 0) out("ok gesture replay ${f.name} trails=${trails.size} delivered=$okN seed=$seed2\n", TermGreen)
+                                            else out("err gesture replay delivered=false reason=$fail\n", TermRed)
+                                        }
+                                    } catch (e: Exception) { out("replay failed: ${e.message}\n", TermRed) }
+                                }
+                            }
+                        } else {
+                            val seedM3 = Regex("""--seed\s+(-?\d+)""").find(rawArgs)
+                            val seed3 = seedM3?.groupValues?.get(1)?.toLongOrNull()
+                            var clean3 = rawArgs.replace(Regex("""--seed\s+-?\d+"""), " ").trim()
+                            // Trailing bare number = ms (only when ≥2 path pts present).
+                            var ms3 = 600L
+                            val toks3 = clean3.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                            if (toks3.size >= 3 && toks3.last().toLongOrNull() != null && "," !in toks3.last()) {
+                                ms3 = toks3.last().toLong().coerceIn(100, 5000)
+                                clean3 = toks3.dropLast(1).joinToString(" ")
+                            }
+                            val pts0 = try { com.rg.webloom.data.GestureGen.parsePath(clean3.removeSurrounding("\"").removeSurrounding("'")) } catch (_: Exception) { null }
+                            if (pts0 == null) out("Usage: b gesture <\"x1,y1 x2,y2 …\"> [ms] [--seed N] | b gesture replay <rec> [--seed N]\n", TermRed)
+                            else {
+                                val (pts, ms) = if (seed3 != null) {
+                                    try { com.rg.webloom.data.GestureGen.humanize(pts0, ms3, seed3) } catch (_: Exception) { pts0 to ms3 }
+                                } else pts0 to ms3
+                                val r = com.rg.webloom.data.BrowserAgent.strokeSync(pts, ms)
+                                if (r.delivered) out("ok gesture n=${pts.size} ms=$ms delivered=true" + (if (seed3 != null) " seed=$seed3" else "") + "\n", TermGreen)
+                                else out("err gesture delivered=false reason=${r.reason}\n", TermRed)
+                            }
                         }
                     }
                     "scroll-to" -> {
@@ -2518,6 +2627,12 @@ class TerminalViewModel : ViewModel() {
                                                 "tap" -> steps.add(
                                                     BStep("b tap ${o.optDouble("x", -1.0)} ${o.optDouble("y", -1.0)}", false)
                                                 )
+                                                "gesture" -> {
+                                                    val p = o.optString("path", "")
+                                                    if (p.isNotBlank()) steps.add(
+                                                        BStep("b gesture \"${p.take(800)}\" ${o.optInt("ms", 600)}", false)
+                                                    )
+                                                }
                                                 "swipe" -> steps.add(
                                                     BStep(
                                                         "b swipe ${o.optDouble("x1", 0.0)} ${o.optDouble("y1", 0.0)} " +
@@ -3016,7 +3131,8 @@ private val BuiltinB = setOf(
     "find-clear", "netlog", "clear-data", "tabdup", "tab-dup", "shot-el",
     "stop", "url", "title", "js", "text", "read", "dom", "snap", "click",
     "fill", "submit", "key", "hover", "select", "store", "stores", "unstore",
-    "pos", "box", "tap", "swipe", "scroll", "scroll-to", "scrollto", "find", "next",
+    "pos", "box", "tap", "swipe", "circle", "scribble", "doodle", "gesture", "stroke",
+    "scroll", "scroll-to", "scrollto", "find", "next",
     "prev", "shot", "console", "cookies", "history", "downloads", "save", "serve", "record",
     "alias", "unalias", "ext", "mkext", "metrics",
     "wait", "links", "forms", "survey", "do", "run", "replay", "queue",

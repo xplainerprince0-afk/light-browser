@@ -195,6 +195,9 @@ fun AgentPanel(onClose: () -> Unit, onInsert: (String) -> Unit) {
             "b shot — save screenshot | b shot-el <ref>" to "b shot",
             "b console — JS logs" to "b console",
             "b record start|stop|pause|save <name>|list — capture taps+swipes" to "b record ",
+            "b circle <cx> <cy> <r> — human finger circle" to "b circle ",
+            "b scribble <x1> <y1> <x2> <y2> [--seed N] — human doodle" to "b scribble ",
+            "b gesture <\"x1,y1 …\"> | b gesture replay <rec> [--seed N]" to "b gesture ",
             "b box <ref> — coords + bounds + safe points" to "b box ",
             "b block — AI no-go sites (EXEC-only)" to "b block "
         ).forEach { (label, insert) ->
