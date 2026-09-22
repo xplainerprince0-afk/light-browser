@@ -50,6 +50,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Browser: custom-ROM black-page fix — private/local hosts always SOFTWARE layer, global Software rendering toggle in Settings (default hardware); per-navigation applyLayer
 - [x] Browser: quiet errors — SSL/load/http/safe-browsing no longer toast (custom-ROM CA spam); all details stay in b console/netlog, pages still cancel securely
 - [x] Browser: look like real Chrome — strip `; wv` from all UAs, inject webdriver=false + window.chrome/plugins/userAgentData/languages stubs every page (platform/touch/DPR stay truthful)
+- [x] Browser: stale-viewport black pages — defer first tab load until laid out + onResume/invalidate on switch (100vh/100dvh cached as 0 on some ROMs collapsed localhost webUIs)
 - [ ] Screenshot/preview pass on foldable/tablet
 
 ## Tech stack
