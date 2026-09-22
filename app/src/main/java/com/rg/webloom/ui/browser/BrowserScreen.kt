@@ -738,7 +738,17 @@ fun BrowserScreen(
                                 }
                                 wv.setFindListener { ordinal, total, _ -> vm.setFind(ordinal + 1, total) }
                                 if (!tab.url.startsWith("lb://")) {
-                                    try { wv.loadUrl(tab.url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+                                    // Defer first load until laid out: loading at 0-size
+                                    // leaves viewport units (100vh/100dvh) cached as 0
+                                    // on some ROMs, collapsing page roots to 0 height
+                                    // (black localhost webUIs with DOM intact).
+                                    try {
+                                        wv.post {
+                                            try {
+                                                if (wv.url == null) wv.loadUrl(tab.url, mapOf("X-Requested-With" to ""))
+                                            } catch (_: Exception) {}
+                                        }
+                                    } catch (_: Exception) {}
                                 }
                                 wv
                             }
@@ -755,6 +765,11 @@ fun BrowserScreen(
                             try { webViews[tab.id] = wv } catch (_: Exception) {}
                             if (isCurrent) {
                                 currentWebView = wv
+                                // Coming back to full size from GONE/size(0) can leave
+                                // a stale viewport behind (0-height 100vh pages).
+                                // Resume + re-layout forces a fresh paint.
+                                try { com.rg.webloom.data.BrowserProfile.onWebViewResume(wv) } catch (_: Exception) {}
+                                try { wv.requestLayout(); wv.invalidate() } catch (_: Exception) {}
                                 // Global switches apply independently per setting (was: skip both if either override set).
                                 try {
                                     val host = com.rg.webloom.data.SitePrefs.hostOf(tab.url.ifBlank { ui.currentUrl })
