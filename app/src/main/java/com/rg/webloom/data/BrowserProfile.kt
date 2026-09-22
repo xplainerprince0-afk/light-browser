@@ -45,7 +45,12 @@ object BrowserProfile {
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
         settings.useWideViewPort = true
-        settings.loadWithOverviewMode = true
+        // Overview OFF: zoomed-out overview + empty-shell SPAs (JS-rendered
+        // body) left the layout viewport at 0 height on some ROMs — every
+        // vh/dvh/% height resolved to 0 (black localhost webUIs, collapsed
+        // drawers). Pages without a viewport meta still get our injected
+        // device-width meta (WebViewSetup), so nothing needs the overview.
+        settings.loadWithOverviewMode = false
         settings.setSupportMultipleWindows(true)
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.mediaPlaybackRequiresUserGesture = true

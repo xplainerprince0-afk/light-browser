@@ -120,7 +120,9 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
     try {
         settings.loadsImagesAutomatically = true
         settings.blockNetworkImage = false
-        settings.loadWithOverviewMode = true
+        // Keep false (see BrowserProfile): overview + empty-shell SPAs gave
+        // 0-height layout viewports (vh=0) on some ROMs.
+        settings.loadWithOverviewMode = false
         @Suppress("DEPRECATION")
         settings.setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH)
     } catch (_: Exception) {}
