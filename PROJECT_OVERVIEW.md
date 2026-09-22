@@ -51,6 +51,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Browser: quiet errors — SSL/load/http/safe-browsing no longer toast (custom-ROM CA spam); all details stay in b console/netlog, pages still cancel securely
 - [x] Browser: look like real Chrome — strip `; wv` from all UAs, inject webdriver=false + window.chrome/plugins/userAgentData/languages stubs every page (platform/touch/DPR stay truthful)
 - [x] Browser: stale-viewport black pages — defer first tab load until laid out + onResume/invalidate on switch (100vh/100dvh cached as 0 on some ROMs collapsed localhost webUIs)
+- [x] Browser: loadWithOverviewMode=false — overview + empty-shell SPAs left a 0-height layout viewport (every vh/dvh/% height = 0); device-width meta injection already covers no-meta pages
 - [ ] Screenshot/preview pass on foldable/tablet
 
 ## Tech stack
