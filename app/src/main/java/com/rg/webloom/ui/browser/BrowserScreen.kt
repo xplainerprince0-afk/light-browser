@@ -767,7 +767,15 @@ fun BrowserScreen(
                                         if (wv.settings.javaScriptEnabled != js) wv.settings.javaScriptEnabled = js
                                         if (desk && wv.settings.userAgentString != DESKTOP_UA) wv.settings.userAgentString = DESKTOP_UA
                                         else if (!desk && wv.settings.userAgentString == DESKTOP_UA) {
-                                            wv.settings.userAgentString = null
+                                            // Restore stripped (no "; wv") default so we keep
+                                            // looking like real Chrome, not an embedded WebView.
+                                            try {
+                                                val def = try { strippedDefaultUa() } catch (_: Exception) { null }
+                                                if (!def.isNullOrBlank()) wv.settings.userAgentString = def
+                                                else wv.settings.userAgentString = null
+                                            } catch (_: Exception) {
+                                                try { wv.settings.userAgentString = null } catch (_: Exception) {}
+                                            }
                                         }
                                     } catch (_: Exception) {}
                                 } catch (_: Exception) {}

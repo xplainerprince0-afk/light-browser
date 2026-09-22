@@ -27,6 +27,22 @@ private object DefaultUa {
 }
 
 /**
+ * Anti-bot realism: the stock WebView UA contains "; wv" which screams
+ * "embedded WebView" to Reddit/Cloudflare/bot walls (degraded pages, hidden
+ * login buttons). Strip it so we look like real Chrome. Everything else
+ * (platform, touch, DPR) stays truthful — spoofing those spikes scores.
+ */
+fun stripWv(ua: String?): String? {
+    if (ua.isNullOrBlank()) return ua
+    return try {
+        ua.replace("; wv", "").replace(";wv", "").trim()
+    } catch (_: Exception) { ua }
+}
+
+/** Stripped (no "; wv") system UA captured at first setup, or null if unknown. */
+fun strippedDefaultUa(): String? = try { stripWv(DefaultUa.value) } catch (_: Exception) { null }
+
+/**
  * Human file-upload bridge: a WebView `<input type=file>` has NO chooser by
  * default — taps silently die (the "can't choose anything" bug). BrowserScreen
  * installs [openChooser] (SAF picker); the WebChromeClient below routes
@@ -71,9 +87,10 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
     val app = AppCtx.ctx
     BrowserProfile.configure(app, wv)
     try {
-        if (DefaultUa.value.isNullOrBlank()) DefaultUa.value = wv.settings.userAgentString
+        if (DefaultUa.value.isNullOrBlank()) DefaultUa.value = stripWv(wv.settings.userAgentString)
+        val stripped = stripWv(DefaultUa.value ?: wv.settings.userAgentString)
         if (Prefs.desktopMode) wv.settings.userAgentString = DESKTOP_UA
-        else DefaultUa.value?.let { if (it.isNotBlank()) wv.settings.userAgentString = it }
+        else stripped?.let { if (it.isNotBlank() && wv.settings.userAgentString != it) wv.settings.userAgentString = it }
     } catch (_: Exception) {}
 
     try {
@@ -142,7 +159,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                     if (v != null) {
                         if (wantDesk && v.settings.userAgentString != DESKTOP_UA) v.settings.userAgentString = DESKTOP_UA
                         else if (!wantDesk) {
-                            val def = DefaultUa.value
+                            val def = stripWv(DefaultUa.value)
                             if (!def.isNullOrBlank() && v.settings.userAgentString != def) {
                                 v.settings.userAgentString = def
                             } else if (def.isNullOrBlank() && v.settings.userAgentString == DESKTOP_UA) {
@@ -180,6 +197,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                 try { PageHosts.set(v, url) } catch (_: Exception) {}
                 cb.onFinished(url, v.title ?: url)
                 try { BrowserAgent.ensureShim(v) } catch (_: Exception) {}
+                try { injectRealism(v) } catch (_: Exception) {}
                 try { BrowserAgent.rearmRecorder(v) } catch (_: Exception) {}
                 try {
                     val host = SitePrefs.hostOf(url)
@@ -441,6 +459,42 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         false
     }
     return wv
+}
+
+private fun injectRealism(v: WebView) {
+    // Look like real Chrome to bot walls (Reddit hidden login, CF challenges).
+    // Truthful where it matters (platform/touch/DPR untouched — spoofing those
+    // spikes scores). Only fills gaps WebView leaves empty vs desktop Chrome:
+    // webdriver=false, window.chrome stub, plugins non-empty, userAgentData
+    // brands matching Chrome/131. Fail-open single eval, no navigation impact.
+    v.evaluateJavascript(
+        """(function(){
+          try{
+            try{Object.defineProperty(navigator,'webdriver',{get:function(){return false;},configurable:true});}catch(e){}
+            try{
+              if(!window.chrome) window.chrome={};
+              if(!window.chrome.runtime) window.chrome.runtime={};
+              if(!window.chrome.loadTimes) window.chrome.loadTimes=function(){};
+              if(!window.chrome.csi) window.chrome.csi=function(){};
+            }catch(e){}
+            try{
+              if(!navigator.plugins||navigator.plugins.length===0){
+                Object.defineProperty(navigator,'plugins',{get:function(){return [{name:'PDF Viewer',filename:'internal-pdf-viewer'},{name:'Chrome PDF Viewer',filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai'}];},configurable:true});
+              }
+            }catch(e){}
+            try{
+              if(!navigator.userAgentData){
+                Object.defineProperty(navigator,'userAgentData',{get:function(){return {brands:[{brand:'Chromium',version:'131'},{brand:'Google Chrome',version:'131'},{brand:'Not-A.Brand',version:'99'}],mobile:false,platform:'Windows'};},configurable:true});
+              }
+            }catch(e){}
+            try{
+              if(!navigator.languages||navigator.languages.length===0){
+                Object.defineProperty(navigator,'languages',{get:function(){return ['en-US','en'];},configurable:true});
+              }
+            }catch(e){}
+          }catch(e){}
+        })();""".trimIndent(), null
+    )
 }
 
 private fun injectMobileViewport(v: WebView) {
