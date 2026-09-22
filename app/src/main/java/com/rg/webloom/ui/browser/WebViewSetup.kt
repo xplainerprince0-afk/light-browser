@@ -109,6 +109,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
     } catch (_: Exception) {}
     try {
         wv.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+        try { BrowserProfile.applyLayer(wv, null) } catch (_: Exception) {}
         wv.isVerticalScrollBarEnabled = true
     } catch (_: Exception) {}
 
@@ -149,10 +150,13 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                             }
                         }
                     }
-                    // Smooth scrolling over flicker hacks: hardware layers everywhere
-                    // (user accepted extra RAM for smoothness).
+                    // Rendering layer per navigation: private/local hosts always
+                    // software (never black), global toggle forces software
+                    // everywhere (custom-ROM GPU fix), else hardware.
                     if (v != null) {
-                        v.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+                        try { BrowserProfile.applyLayer(v, url) } catch (_: Exception) {
+                            try { v.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null) } catch (_: Exception) {}
+                        }
                     }
                 } catch (_: Exception) {}
                 cb.onStarted(url)

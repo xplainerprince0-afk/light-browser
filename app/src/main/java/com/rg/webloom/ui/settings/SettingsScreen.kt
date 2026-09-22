@@ -106,6 +106,7 @@ fun SettingsScreen(
     var adblock by remember { mutableStateOf(safeGet { Prefs.adBlock } ?: false) }
     var saveSiteData by remember { mutableStateOf(safeGet { Prefs.saveSiteData } ?: true) }
     var cache by remember { mutableStateOf(safeGet { Prefs.cacheEnabled } ?: true) }
+    var swRender by remember { mutableStateOf(safeGet { Prefs.softwareRender } ?: false) }
     var engine by remember { mutableStateOf(safeGet { Prefs.searchEngine } ?: "google") }
     var themeMode by remember { mutableStateOf(safeGet { Prefs.themeMode } ?: "system") }
     var trueBlack by remember { mutableStateOf(safeGet { Prefs.trueBlack } ?: false) }
@@ -245,6 +246,15 @@ fun SettingsScreen(
                 SwitchRow(label = "HTTP cache", checked = cache, onChange = {
                     cache = it
                     safeSet { Prefs.cacheEnabled = it }
+                })
+                SwitchRow(label = "Software rendering (fix black pages on custom ROMs)", checked = swRender, onChange = {
+                    swRender = it
+                    safeSet { Prefs.softwareRender = it }
+                    Toast.makeText(
+                        ctx,
+                        if (it) "Software rendering ON (reload tab)" else "Hardware rendering (reload tab)",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 })
                 Text("Search engine", style = MaterialTheme.typography.labelLarge)
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -559,6 +569,7 @@ fun SettingsScreen(
                                             Prefs.adBlock = false
                                             Prefs.saveSiteData = true
                                             Prefs.cacheEnabled = true
+                                            Prefs.softwareRender = false
                                             Prefs.searchEngine = "google"
                                             Prefs.themeMode = "system"
                                             Prefs.trueBlack = false
@@ -576,6 +587,7 @@ fun SettingsScreen(
                                         adblock = false
                                         saveSiteData = true
                                         cache = true
+                                        swRender = false
                                         engine = "google"
                                         themeMode = "system"
                                         trueBlack = false

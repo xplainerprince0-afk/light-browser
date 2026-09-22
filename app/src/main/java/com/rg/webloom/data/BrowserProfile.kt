@@ -56,9 +56,12 @@ object BrowserProfile {
             settings.safeBrowsingEnabled = true
         }
 
-        // Default HARDWARE for smooth scrolling; WebViewSetup switches to SOFTWARE
-        // per navigation for flicker-prone hosts (WTR fixed panels).
-        webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+        // Rendering layer: hardware default, software when the global toggle is
+        // ON (custom-ROM fix). Per-navigation private-host fallback happens in
+        // WebViewSetup.onPageStarted via applyLayer().
+        try { applyLayer(webView, null) } catch (_: Exception) {
+            try { webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null) } catch (_: Exception) {}
+        }
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -69,6 +72,39 @@ object BrowserProfile {
         }
 
         Log.d(TAG, "Profile configured – data=${dataDir.absolutePath}, cache=${cacheDir.absolutePath}")
+    }
+
+    /**
+     * Rendering layer policy (custom-ROM black-page fix).
+     * Hardware is smooth but some GPU drivers render heavy pages black.
+     * Private/local hosts (dev webUIs) always use software — they are simple
+     * and must never go black. Global [Prefs.softwareRender] forces software
+     * everywhere when ON.
+     */
+    fun isPrivateHost(host: String): Boolean {
+        val h = host.lowercase().trim()
+        if (h.isEmpty()) return false
+        if (h == "localhost" || h == "[::1]" || h == "::1") return true
+        if (h == "127.0.0.1" || h.startsWith("127.")) return true
+        if (h.startsWith("10.")) return true
+        if (h.startsWith("192.168.")) return true
+        if (h.endsWith(".local")) return true
+        // 172.16.0.0 – 172.31.255.255
+        if (h.startsWith("172.")) {
+            val second = h.split(".").getOrNull(1)?.toIntOrNull()
+            if (second != null && second in 16..31) return true
+        }
+        return false
+    }
+
+    fun applyLayer(webView: WebView, url: String?) {
+        try {
+            val host = try { url?.let { android.net.Uri.parse(it).host?.lowercase() } ?: "" } catch (_: Exception) { "" }
+            val sw = try { Prefs.softwareRender } catch (_: Exception) { false }
+            val layer = if (sw || isPrivateHost(host)) android.view.View.LAYER_TYPE_SOFTWARE
+            else android.view.View.LAYER_TYPE_HARDWARE
+            webView.setLayerType(layer, null)
+        } catch (_: Exception) {}
     }
 
     fun persistCookies() {
