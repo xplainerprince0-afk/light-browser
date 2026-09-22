@@ -210,9 +210,8 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                     val desc = try { err?.description?.toString() ?: "load error" } catch (_: Exception) { "load error" }
                     val url = try { req?.url?.toString() ?: "" } catch (_: Exception) { "" }
                     BrowserAgent.logConsole("[page-error] $code $desc @ $url")
-                    if (v != null) {
-                        Toast.makeText(app, "Load error $code: $desc", Toast.LENGTH_SHORT).show()
-                    }
+                    // No toast: custom-ROM CA/clock spam made bottom popups
+                    // irritating. Details stay in b console/netlog.
                 }
             } catch (_: Exception) {}
         }
@@ -226,10 +225,8 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                     val code = try { resp?.statusCode ?: -1 } catch (_: Exception) { -1 }
                     val url = try { req?.url?.toString() ?: "" } catch (_: Exception) { "" }
                     BrowserAgent.logConsole("[http-error] $code @ $url")
-                    // Cloudflare challenge/deny codes surface here instead of a silent white screen.
-                    if (code == 403 || code == 429 || code == 503) {
-                        Toast.makeText(app, "Blocked ($code) — try reload-hard, check b console/netlog", Toast.LENGTH_LONG).show()
-                    }
+                    // No toast for 403/429/503 (was: "Blocked — try reload-hard").
+                    // Cloudflare/bot denies now surface only in b console/netlog.
                 }
             } catch (_: Exception) {}
         }
@@ -239,7 +236,8 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         ) {
             try {
                 BrowserAgent.logConsole("[ssl-error] ${err?.primaryError ?: -1} @ ${err?.url ?: ""}")
-                Toast.makeText(app, "SSL error — page may not load securely", Toast.LENGTH_LONG).show()
+                // No toast: custom-ROM CA/clock issues spammed "SSL error" on
+                // every site. Page is still cancelled (secure); see b console.
             } catch (_: Exception) {}
             try { handler?.cancel() } catch (_: Exception) {}
         }
@@ -250,7 +248,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         ) {
             try {
                 BrowserAgent.logConsole("[safe-browsing] threat=$threat @ ${req?.url}")
-                Toast.makeText(app, "Safe Browsing warning", Toast.LENGTH_LONG).show()
+                // No toast — logged to b console/netlog only.
             } catch (_: Exception) {}
             try { cb2?.proceed(false) } catch (_: Exception) {
                 try { super.onSafeBrowsingHit(v, req, threat, cb2) } catch (_: Exception) {}
