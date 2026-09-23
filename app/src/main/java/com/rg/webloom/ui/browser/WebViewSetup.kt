@@ -21,6 +21,9 @@ import com.rg.webloom.data.SitePrefs
 const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+/** Build tag for remote diagnosis (`b js window.__lb_build`). Bump per release. */
+private const val BUILD_TAG = "ovOff-vhRepair-01"
+
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
     @Volatile var value: String? = null
@@ -200,6 +203,7 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                 cb.onFinished(url, v.title ?: url)
                 try { BrowserAgent.ensureShim(v) } catch (_: Exception) {}
                 try { injectRealism(v) } catch (_: Exception) {}
+                try { injectViewportRepair(v) } catch (_: Exception) {}
                 try { BrowserAgent.rearmRecorder(v) } catch (_: Exception) {}
                 try {
                     val host = SitePrefs.hostOf(url)
@@ -472,6 +476,7 @@ private fun injectRealism(v: WebView) {
     v.evaluateJavascript(
         """(function(){
           try{
+            try{window.__lb_build="$BUILD_TAG";}catch(e){}
             try{Object.defineProperty(navigator,'webdriver',{get:function(){return false;},configurable:true});}catch(e){}
             try{
               if(!window.chrome) window.chrome={};
@@ -496,6 +501,41 @@ private fun injectRealism(v: WebView) {
             }catch(e){}
           }catch(e){}
         })();""".trimIndent(), null
+    )
+}
+
+private fun injectViewportRepair(v: WebView) {
+    // Some ROM WebViews resolve every vh-family unit to 0px while innerHeight
+    // is correct — full-height app roots collapse to black (localhost webUIs)
+    // and vh-sized sheets open as slivers. Guarded: probe first, touch nothing
+    // when healthy. Same-origin stylesheets only (cross-origin throws, skipped).
+    // v1: one-shot at page finish (no resize re-run yet).
+    v.evaluateJavascript(
+        """(function(){
+          try{
+            function vhPx(){try{var d=document.createElement('div');d.style.cssText='position:fixed;top:0;left:0;height:100vh;visibility:hidden';document.documentElement.appendChild(d);var h=d.getBoundingClientRect().height;d.remove();return h;}catch(x){return -1;}}
+            var W=window.innerWidth||0,H=window.innerHeight||0;
+            if(vhPx()>1||H<100||W<100) return 'vh-ok';
+            function toPx(num,u){var n=parseFloat(num);if(isNaN(n))return num;var base=H;
+              if(/(svw|lvw|dvw|vw|svi|lvi|dvi|vi)$/.test(u)) base=W;
+              else if(/min/.test(u)) base=Math.min(W,H);
+              else if(/max/.test(u)) base=Math.max(W,H);
+              return (n/100*base)+'px';}
+            var RE=/(\d*\.?\d+)(svh|lvh|dvh|vh|svw|lvw|dvw|vw|svmin|lvmin|dvmin|vmin|svmax|lvmax|dvmax|vmax|svi|lvi|dvi|vi|svb|lvb|dvb|vb)\b/g;
+            var patched=0;
+            function fixList(list){for(var j=0;j<list.length;j++){try{var r=list[j];if(!r)continue;
+              if(r.cssRules){fixList(r.cssRules);continue;}
+              if(!r.style)continue;
+              for(var k=0;k<r.style.length;k++){try{var p=r.style[k];var val=r.style.getPropertyValue(p);
+                if(!val||(val.indexOf('v')<0&&val.indexOf('m')<0))continue;
+                var nv=val.replace(RE,function(mt,num,u){patched++;return toPx(num,u);});
+                if(nv!==val)r.style.setProperty(p,nv,r.style.getPropertyPriority(p));}catch(x){}}
+              }catch(x){}}}
+            try{for(var i=0;i<document.styleSheets.length;i++){var sh=null;try{sh=document.styleSheets[i];}catch(x){continue;}
+              var rules=null;try{rules=sh.cssRules;}catch(x){continue;}if(!rules)continue;fixList(rules);}}catch(x){}
+            try{console.log('__LB_VH_REPAIR__:patched='+patched);}catch(x){}
+            return 'repaired='+patched;
+          }catch(e){return 'ERR '+e;}})();""".trimIndent(), null
     )
 }
 
