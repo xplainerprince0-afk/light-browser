@@ -22,7 +22,7 @@ const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 /** Build tag for remote diagnosis (`b js window.__lb_build`). Bump per release. */
-private const val BUILD_TAG = "ovOff-vhRepair-01"
+private const val BUILD_TAG = "ovOff-vhRepair-02"
 
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
