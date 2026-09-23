@@ -205,6 +205,12 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
                 try { injectRealism(v) } catch (_: Exception) {}
                 try { injectViewportRepair(v) } catch (_: Exception) {}
                 try { BrowserAgent.rearmRecorder(v) } catch (_: Exception) {}
+                // Second repair pass: the first can race stylesheet parsing on
+                // slow/empty-shell pages (probe saw values the early pass missed).
+                // Probe-gated inside, so healthy pages pay one cheap probe.
+                try {
+                    v.postDelayed({ try { injectViewportRepair(v) } catch (_: Exception) {} }, 1200)
+                } catch (_: Exception) {}
                 try {
                     val host = SitePrefs.hostOf(url)
                     if (!SitePrefs.effectiveDesktop(app, host)) injectMobileViewport(v)
