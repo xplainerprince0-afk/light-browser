@@ -37,7 +37,7 @@ private fun sslName(code: Int): String = when (code) {
 }
 
 /** Build tag for remote diagnosis (`b js window.__lb_build`). Bump per release. */
-private const val BUILD_TAG = "vhFloor-06"
+private const val BUILD_TAG = "overviewOn-07"
 
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
@@ -138,9 +138,9 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
     try {
         settings.loadsImagesAutomatically = true
         settings.blockNetworkImage = false
-        // Keep false (see BrowserProfile): overview + empty-shell SPAs gave
-        // 0-height layout viewports (vh=0) on some ROMs.
-        settings.loadWithOverviewMode = false
+        // Keep true (see BrowserProfile): overview OFF poisoned viewport
+        // units app-wide (100vh -> 0px in every WebView, even about:blank).
+        settings.loadWithOverviewMode = true
         @Suppress("DEPRECATION")
         settings.setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH)
     } catch (_: Exception) {}

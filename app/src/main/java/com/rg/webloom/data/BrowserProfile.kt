@@ -45,12 +45,14 @@ object BrowserProfile {
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
         settings.useWideViewPort = true
-        // Overview OFF: zoomed-out overview + empty-shell SPAs (JS-rendered
-        // body) left the layout viewport at 0 height on some ROMs — every
-        // vh/dvh/% height resolved to 0 (black localhost webUIs, collapsed
-        // drawers). Pages without a viewport meta still get our injected
-        // device-width meta (WebViewSetup), so nothing needs the overview.
-        settings.loadWithOverviewMode = false
+        // Overview ON (browser parity): overview OFF poisoned the top
+        // document's viewport-unit state — 100vh computed to 0px in EVERY
+        // WebView (measured live: vh=0 with correct innerHeight, even on
+        // about:blank; subframes fine) while innerHeight stayed correct,
+        // collapsing every dvh-shelled SPA and drawer to height 0. The old
+        // "overview causes 0-height viewports" theory was this same poison
+        // misattributed. Chromium docs want overview for browser-like layout.
+        settings.loadWithOverviewMode = true
         settings.setSupportMultipleWindows(true)
         settings.javaScriptCanOpenWindowsAutomatically = true
         settings.mediaPlaybackRequiresUserGesture = true

@@ -57,6 +57,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Browser: SSL-black-pages fix — net_error -202 CERT_AUTHORITY_INVALID on custom ROMs (self-signed localhost / MITM adblock CAs) silently cancelled pages; now per-site Site settings > Ignore SSL errors (opt-in bypass via handler.proceed + `[ssl-bypass]` log), otherwise cancel + one debounced toast instead of silent black (`__lb_build=sslBypass-04`)
 - [x] Browser: vh-collapse black pages FIXED — ROM WebView resolves 100vh to 0px (measured live: vh=0, innerHeight=373) so h-dvh/h-screen app shells collapse to height 0 with full DOM; v2 persistent polyfill (probe-gated, stylesheets + adoptedStyleSheets + inline styles, originals remembered for resize/keyboard recompute, MutationObserver + resize re-arm, heals background-loaded tabs on foreground) (`__lb_build=vhFix2-05`)
 - [x] Browser: vh-collapse cure SHIPPED — min-height floor (innerHeight px) on html/body/root breaks the percent-height chains that survived vh patching; verified live (root 0→693px, MiniClaw visible); originals remembered, resize-recomputed, removed on heal (`__lb_build=vhFloor-06`)
+- [x] Browser: overview mode back ON — loadWithOverviewMode=false poisoned viewport units app-wide (100vh->0px in every WebView incl. about:blank, subframes fine); old empty-shell theory was the same poison misread (`__lb_build=overviewOn-07`)
 - [ ] Screenshot/preview pass on foldable/tablet
 
 ## Tech stack
