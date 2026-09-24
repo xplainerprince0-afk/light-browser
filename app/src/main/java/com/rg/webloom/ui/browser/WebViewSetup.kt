@@ -22,7 +22,7 @@ const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
 /** Build tag for remote diagnosis (`b js window.__lb_build`). Bump per release. */
-private const val BUILD_TAG = "ovOff-vhRepair-02"
+private const val BUILD_TAG = "renderFix-03"
 
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
@@ -134,6 +134,10 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         try { BrowserProfile.applyLayer(wv, null) } catch (_: Exception) {}
         wv.isVerticalScrollBarEnabled = true
     } catch (_: Exception) {}
+    // Match BrowserProfile.configure(): opaque white base (no transparent-black
+    // flash on empty-shell SPAs) + no system auto-darkening of web content.
+    try { wv.setBackgroundColor(android.graphics.Color.WHITE) } catch (_: Exception) {}
+    try { BrowserProfile.disableAutoDark(wv.settings) } catch (_: Exception) {}
 
     val bridge = DownloadHelper.BlobBridge(app)
     try {

@@ -53,6 +53,7 @@ Lightweight everyday browser with a sandboxed file workspace, an Alpine Linux te
 - [x] Browser: stale-viewport black pages — defer first tab load until laid out + onResume/invalidate on switch (100vh/100dvh cached as 0 on some ROMs collapsed localhost webUIs)
 - [x] Browser: loadWithOverviewMode=false — overview + empty-shell SPAs left a 0-height layout viewport (every vh/dvh/% height = 0); device-width meta injection already covers no-meta pages
 - [x] Browser: guarded vh-unit repair — ROMs resolving all vh-family units to 0 get same-origin styles rewritten to px (probe-gated, one-shot) + `window.__lb_build` tag for remote diagnosis
+- [x] Browser: black-page render fix — hardware layers everywhere (software only via Settings toggle; forced-software on localhost/LAN dropped canvases), force-dark/algorithmic-darkening OFF (DayNight auto-dark made Reddit/logins black), opaque white WebView base (no transparent-black flash on empty-shell SPAs), bogus empty `X-Requested-With` header removed from all loads (broke localhost CSRF + login endpoints), `hardwareAccelerated=true` in manifest (`__lb_build=renderFix-03`)
 - [ ] Screenshot/preview pass on foldable/tablet
 
 ## Tech stack

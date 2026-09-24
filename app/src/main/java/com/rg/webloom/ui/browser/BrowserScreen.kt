@@ -283,7 +283,7 @@ fun BrowserScreen(
         if (targetId != null && targetId != currentTabId) return@LaunchedEffect
         val wv = currentTabId?.let { webViews[it] } ?: return@LaunchedEffect
         try {
-            if (!sameUrl(wv.url, url)) wv.loadUrl(url, mapOf("X-Requested-With" to ""))
+            if (!sameUrl(wv.url, url)) wv.loadUrl(url)
             pendingLoad = null
         } catch (_: Exception) {}
     }
@@ -407,7 +407,7 @@ fun BrowserScreen(
         } catch (_: Exception) {}
         vm.onPageStarted(url)
         if (url.startsWith("lb://")) return // native screen, nothing to load
-        try { webView?.loadUrl(url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+        try { webView?.loadUrl(url) } catch (_: Exception) {}
     }
 
     // FIXED search: pill or editor lives at the top of a plain Column, the WebView
@@ -745,7 +745,7 @@ fun BrowserScreen(
                                     try {
                                         wv.post {
                                             try {
-                                                if (wv.url == null) wv.loadUrl(tab.url, mapOf("X-Requested-With" to ""))
+                                                if (wv.url == null) wv.loadUrl(tab.url)
                                             } catch (_: Exception) {}
                                         }
                                     } catch (_: Exception) {}
@@ -858,7 +858,7 @@ fun BrowserScreen(
                     // Pending load retry now that target WebView exists.
                     pendingLoad?.let { (url, _, targetId) ->
                         if (targetId == null || targetId == currentTabId) {
-                            try { if (wv != null && !sameUrl(wv.url, url) && !url.startsWith("lb://")) { wv.loadUrl(url, mapOf("X-Requested-With" to "")); pendingLoad = null } } catch (_: Exception) {}
+                            try { if (wv != null && !sameUrl(wv.url, url) && !url.startsWith("lb://")) { wv.loadUrl(url); pendingLoad = null } } catch (_: Exception) {}
                         }
                     }
                 } catch (_: Exception) {}
@@ -875,7 +875,7 @@ fun BrowserScreen(
                         ?: return@LaunchedEffect
                     val cur = try { wv.url } catch (_: Exception) { null }
                     if (cur.isNullOrBlank()) {
-                        try { wv.loadUrl(t.url, mapOf("X-Requested-With" to "")) } catch (_: Exception) {}
+                        try { wv.loadUrl(t.url) } catch (_: Exception) {}
                     }
                 } catch (_: Exception) {}
             }

@@ -288,7 +288,7 @@ object BrowserAgent {
         if (com.rg.webloom.ui.terminal.BBlock.blocksUrl(safe)) return
         mainHandler.post {
             try {
-                webViewProvider?.invoke()?.loadUrl(safe, mapOf("X-Requested-With" to ""))
+                webViewProvider?.invoke()?.loadUrl(safe)
             } catch (e: Exception) { Log.w(TAG, "navigate", e) }
         }
     }

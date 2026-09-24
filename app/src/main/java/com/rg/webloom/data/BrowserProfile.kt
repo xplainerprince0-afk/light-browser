@@ -61,12 +61,22 @@ object BrowserProfile {
             settings.safeBrowsingEnabled = true
         }
 
-        // Rendering layer: hardware default, software when the global toggle is
-        // ON (custom-ROM fix). Per-navigation private-host fallback happens in
-        // WebViewSetup.onPageStarted via applyLayer().
+        // Rendering layer: hardware default (software WebView can't composite
+        // accelerated canvas/WebGL/video — it black-screens modern pages like
+        // Vite/Next dev UIs and Reddit). Software only when the user toggles
+        // it in Settings (old custom-ROM GPUs). See applyLayer().
         try { applyLayer(webView, null) } catch (_: Exception) {
             try { webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null) } catch (_: Exception) {}
         }
+        // Opaque white base: empty-shell SPAs are transparent before JS paints —
+        // with a dark window behind that reads as "black screen". Chrome paints
+        // white; match it. Pages with their own background paint over this.
+        try { webView.setBackgroundColor(android.graphics.Color.WHITE) } catch (_: Exception) {}
+        // DayNight activity + system dark mode auto-darkens WebView content
+        // (force-dark / algorithmic darkening) → black-on-black pages on
+        // Reddit, logins and dark localhost UIs. Pages own their theme via
+        // prefers-color-scheme; never auto-darken.
+        try { disableAutoDark(settings) } catch (_: Exception) {}
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -80,11 +90,12 @@ object BrowserProfile {
     }
 
     /**
-     * Rendering layer policy (custom-ROM black-page fix).
-     * Hardware is smooth but some GPU drivers render heavy pages black.
-     * Private/local hosts (dev webUIs) always use software — they are simple
-     * and must never go black. Global [Prefs.softwareRender] forces software
-     * everywhere when ON.
+     * Rendering layer policy.
+     * Hardware always, unless the user enables the Settings toggle
+     * ([Prefs.softwareRender], kept for old custom-ROM GPUs). Forcing software
+     * on localhost/LAN was backwards: software compositing drops accelerated
+     * canvas/WebGL/video layers → black dev UIs and login sheets — exactly
+     * what other (hardware) WebView browsers render fine.
      */
     fun isPrivateHost(host: String): Boolean {
         val h = host.lowercase().trim()
@@ -104,11 +115,27 @@ object BrowserProfile {
 
     fun applyLayer(webView: WebView, url: String?) {
         try {
-            val host = try { url?.let { android.net.Uri.parse(it).host?.lowercase() } ?: "" } catch (_: Exception) { "" }
             val sw = try { Prefs.softwareRender } catch (_: Exception) { false }
-            val layer = if (sw || isPrivateHost(host)) android.view.View.LAYER_TYPE_SOFTWARE
-            else android.view.View.LAYER_TYPE_HARDWARE
-            webView.setLayerType(layer, null)
+            webView.setLayerType(
+                if (sw) android.view.View.LAYER_TYPE_SOFTWARE
+                else android.view.View.LAYER_TYPE_HARDWARE,
+                null
+            )
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Never let the system auto-darken web content. API 29-32: FORCE_DARK_OFF.
+     * API 33+: isAlgorithmicDarkeningAllowed=false. No AndroidX dep needed.
+     */
+    fun disableAutoDark(s: WebSettings) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                try { s.isAlgorithmicDarkeningAllowed = false } catch (_: Exception) {}
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                @Suppress("DEPRECATION")
+                try { s.forceDark = WebSettings.FORCE_DARK_OFF } catch (_: Exception) {}
+            }
         } catch (_: Exception) {}
     }
 
