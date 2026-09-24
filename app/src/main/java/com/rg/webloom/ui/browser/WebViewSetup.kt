@@ -37,7 +37,7 @@ private fun sslName(code: Int): String = when (code) {
 }
 
 /** Build tag for remote diagnosis (`b js window.__lb_build`). Bump per release. */
-private const val BUILD_TAG = "vhFix2-05"
+private const val BUILD_TAG = "vhFloor-06"
 
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
@@ -590,6 +590,8 @@ private fun injectViewportRepair(v: WebView) {
             function fixDecl(st,W,H){var c=0;try{for(var k=st.length-1;k>=0;k--){try{var p=st[k];var val=st.getPropertyValue(p);if(!val||val.indexOf('v')<0)continue;var nv=patchVal(val,W,H);if(nv!==null&&nv!==val){rememberOrig(st,p,val);st.setProperty(p,nv,st.getPropertyPriority(p));c++;}}catch(x){}}}catch(x){}return c;}
             function fixList(list,W,H){var c=0;try{for(var j=0;j<list.length;j++){try{var r=list[j];if(!r)continue;if(r.cssRules){c+=fixList(r.cssRules,W,H);continue;}if(r.style)c+=fixDecl(r.style,W,H);}catch(x){}}}catch(x){}return c;}
             function restoreAll(){try{for(var q=0;q<REG.length;q++){try{REG[q].st.setProperty(REG[q].p,REG[q].v);}catch(x){}}}catch(x){}}
+            function floorEl(el,H){try{if(!el||!el.style)return 0;var st=el.style;var want=H+'px';if(st.getPropertyValue('min-height')===want)return 0;rememberOrig(st,'min-height',st.getPropertyValue('min-height')||'');st.setProperty('min-height',want);return 1;}catch(x){return 0;}}
+            function floorAll(H){var f=0;try{f+=floorEl(document.documentElement,H);}catch(x){}try{f+=floorEl(document.body,H);}catch(x){}try{f+=floorEl(document.body.firstElementChild,H);}catch(x){}return f;}
             function pass(){
               var W=window.innerWidth||0,H=window.innerHeight||0;
               if(!(W>50&&H>50))return -1;
@@ -599,7 +601,8 @@ private fun injectViewportRepair(v: WebView) {
               try{for(var i=0;i<document.styleSheets.length;i++){var rules=null;try{rules=(document.styleSheets[i]||{}).cssRules;}catch(x){continue;}if(!rules)continue;c+=fixList(rules,W,H);}}catch(x){}
               try{var ads=document.adoptedStyleSheets||[];for(var a=0;a<ads.length;a++){try{var ar=ads[a].cssRules;if(ar)c+=fixList(ar,W,H);}catch(x){}}}catch(x){}
               try{var keys=['vh','dvh','svh','lvh','vw','dvw','vmin','vmax','vi','vb'];for(var s=0;s<keys.length;s++){try{var nodes=document.querySelectorAll('[style*="'+keys[s]+'"]');for(var n=0;n<nodes.length;n++){try{var st=nodes[n].style;if(st)c+=fixDecl(st,W,H);}catch(x){}}}catch(x){}}}catch(x){}
-              try{console.log('__LB_VH_REPAIR2__:patched='+c+' w='+W+' h='+H);}catch(x){}
+              try{var fl=floorAll(H);c+=fl;}catch(flx){var fl=0;}
+              try{console.log('__LB_VH_REPAIR3__:patched='+c+' floor='+fl+' w='+W+' h='+H);}catch(x){}
               return c;
             }
             window.__lb_vh2=pass;
