@@ -37,7 +37,7 @@ private fun sslName(code: Int): String = when (code) {
 }
 
 /** Build tag for remote diagnosis (`b js window.__lb_build`). Bump per release. */
-private const val BUILD_TAG = "sslBypass-04"
+private const val BUILD_TAG = "vhFix2-05"
 
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
@@ -557,36 +557,57 @@ private fun injectRealism(v: WebView) {
 }
 
 private fun injectViewportRepair(v: WebView) {
-    // Some ROM WebViews resolve every vh-family unit to 0px while innerHeight
-    // is correct — full-height app roots collapse to black (localhost webUIs)
-    // and vh-sized sheets open as slivers. Guarded: probe first, touch nothing
-    // when healthy. Same-origin stylesheets only (cross-origin throws, skipped).
-    // v1: one-shot at page finish (no resize re-run yet).
+    // v2 persistent polyfill for ROMs resolving every vh-family unit to 0px
+    // while innerHeight is correct (measured live: 100vh -> 0px, innerHeight
+    // 373). Symptom: app-shell SPAs (h-dvh/h-screen roots) collapse to height
+    // 0 — full DOM, correct title, but an empty dark viewport ("black screen"
+    // with everything loaded). Chrome bundles its own fixed Chromium, which
+    // is why only the system WebView shows it.
+    // v1 failed because it was one-shot (finish + one delayed pass), gave up
+    // forever on background tabs (H<100), and only saw same-origin
+    // stylesheets present at that instant. v2 installs a self-maintaining
+    // guard: stylesheets + adoptedStyleSheets + inline styles, originals
+    // remembered for correct resize/keyboard recompute, MutationObserver +
+    // resize re-arm for late/HMR-injected styles and foreground healing.
+    // Probe-gated: healthy renderers (vhPx>1) are never touched.
     v.evaluateJavascript(
         """(function(){
           try{
-            function vhPx(){try{var d=document.createElement('div');d.style.cssText='position:fixed;top:0;left:0;height:100vh;visibility:hidden';document.documentElement.appendChild(d);var h=d.getBoundingClientRect().height;d.remove();return h;}catch(x){return -1;}}
-            var W=window.innerWidth||0,H=window.innerHeight||0;
-            if(vhPx()>1||H<100||W<100) return 'vh-ok';
-            function toPx(num,u){var n=parseFloat(num);if(isNaN(n))return num;var base=H;
-              if(/(svw|lvw|dvw|vw|svi|lvi|dvi|vi)$/.test(u)) base=W;
-              else if(/min/.test(u)) base=Math.min(W,H);
-              else if(/max/.test(u)) base=Math.max(W,H);
-              return (n/100*base)+'px';}
+            function vhPx(){try{var d=document.createElement('div');d.style.cssText='position:fixed;top:0;left:0;height:100vh;visibility:hidden';document.documentElement.appendChild(d);var h=d.getBoundingClientRect().height;d.remove();return h;}catch(x){return 99;}}
+            var NOW_HEALTHY=vhPx()>1;
+            if(window.__lb_vh2){try{window.__lb_vh2();}catch(x){}return NOW_HEALTHY?'vh-ok-repeat':'re-armed';}
+            if(NOW_HEALTHY)return 'vh-ok';
             var RE=/(\d*\.?\d+)(svh|lvh|dvh|vh|svw|lvw|dvw|vw|svmin|lvmin|dvmin|vmin|svmax|lvmax|dvmax|vmax|svi|lvi|dvi|vi|svb|lvb|dvb|vb)\b/g;
-            var patched=0;
-            function fixList(list){for(var j=0;j<list.length;j++){try{var r=list[j];if(!r)continue;
-              if(r.cssRules){fixList(r.cssRules);continue;}
-              if(!r.style)continue;
-              for(var k=0;k<r.style.length;k++){try{var p=r.style[k];var val=r.style.getPropertyValue(p);
-                if(!val||(val.indexOf('v')<0&&val.indexOf('m')<0))continue;
-                var nv=val.replace(RE,function(mt,num,u){patched++;return toPx(num,u);});
-                if(nv!==val)r.style.setProperty(p,nv,r.style.getPropertyPriority(p));}catch(x){}}
-              }catch(x){}}}
-            try{for(var i=0;i<document.styleSheets.length;i++){var sh=null;try{sh=document.styleSheets[i];}catch(x){continue;}
-              var rules=null;try{rules=sh.cssRules;}catch(x){continue;}if(!rules)continue;fixList(rules);}}catch(x){}
-            try{console.log('__LB_VH_REPAIR__:patched='+patched);}catch(x){}
-            return 'repaired='+patched;
+            var REG=[];
+            function rememberOrig(st,p,val){try{for(var q=0;q<REG.length;q++){if(REG[q].st===st&&REG[q].p===p){REG[q].v=val;return;}}REG.push({st:st,p:p,v:val});if(REG.length>3000)REG.shift();}catch(x){}}
+            function toPx(num,u,W,H){var n=parseFloat(num);if(isNaN(n))return null;var base=H;
+              if(/(svw|lvw|dvw|vw|svi|lvi|dvi|vi)$/.test(u))base=W;
+              else if(/min/.test(u))base=Math.min(W,H);
+              else if(/max/.test(u))base=Math.max(W,H);
+              if(!(base>50))return null;
+              return (n/100*base)+'px';}
+            function patchVal(val,W,H){var hit=false;var nv=val.replace(RE,function(mt,num,u){var p=toPx(num,u,W,H);if(p===null)return mt;hit=true;return p;});return hit?nv:null;}
+            function fixDecl(st,W,H){var c=0;try{for(var k=st.length-1;k>=0;k--){try{var p=st[k];var val=st.getPropertyValue(p);if(!val||val.indexOf('v')<0)continue;var nv=patchVal(val,W,H);if(nv!==null&&nv!==val){rememberOrig(st,p,val);st.setProperty(p,nv,st.getPropertyPriority(p));c++;}}catch(x){}}}catch(x){}return c;}
+            function fixList(list,W,H){var c=0;try{for(var j=0;j<list.length;j++){try{var r=list[j];if(!r)continue;if(r.cssRules){c+=fixList(r.cssRules,W,H);continue;}if(r.style)c+=fixDecl(r.style,W,H);}catch(x){}}}catch(x){}return c;}
+            function restoreAll(){try{for(var q=0;q<REG.length;q++){try{REG[q].st.setProperty(REG[q].p,REG[q].v);}catch(x){}}}catch(x){}}
+            function pass(){
+              var W=window.innerWidth||0,H=window.innerHeight||0;
+              if(!(W>50&&H>50))return -1;
+              if(vhPx()>1){restoreAll();return -2;}
+              restoreAll();
+              var c=0;
+              try{for(var i=0;i<document.styleSheets.length;i++){var rules=null;try{rules=(document.styleSheets[i]||{}).cssRules;}catch(x){continue;}if(!rules)continue;c+=fixList(rules,W,H);}}catch(x){}
+              try{var ads=document.adoptedStyleSheets||[];for(var a=0;a<ads.length;a++){try{var ar=ads[a].cssRules;if(ar)c+=fixList(ar,W,H);}catch(x){}}}catch(x){}
+              try{var keys=['vh','dvh','svh','lvh','vw','dvw','vmin','vmax','vi','vb'];for(var s=0;s<keys.length;s++){try{var nodes=document.querySelectorAll('[style*="'+keys[s]+'"]');for(var n=0;n<nodes.length;n++){try{var st=nodes[n].style;if(st)c+=fixDecl(st,W,H);}catch(x){}}}catch(x){}}}catch(x){}
+              try{console.log('__LB_VH_REPAIR2__:patched='+c+' w='+W+' h='+H);}catch(x){}
+              return c;
+            }
+            window.__lb_vh2=pass;
+            var t=null;function sched(){try{if(t)clearTimeout(t);}catch(x){}try{t=setTimeout(function(){t=null;try{pass();}catch(x){}},400);}catch(x){}}
+            try{window.addEventListener('resize',sched);}catch(x){}
+            try{if(window.ResizeObserver){new ResizeObserver(function(){sched();}).observe(document.documentElement);}}catch(x){}
+            try{new MutationObserver(function(){sched();}).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['style','class']});}catch(x){}
+            var r=pass();return 'installed='+r;
           }catch(e){return 'ERR '+e;}})();""".trimIndent(), null
     )
 }
