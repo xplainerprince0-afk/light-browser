@@ -1303,14 +1303,23 @@ fun BrowserScreen(
                     } else {
                         Text("Auto follows the global switch.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         tri("JavaScript", cur.js, try { Prefs.jsEnabled } catch (_: Exception) { true }) { v ->
-                            if (host.isNotBlank()) com.rg.webloom.data.SitePrefs.set(ctx, host, v, cur.desktop, cur.adblock)
+                            if (host.isNotBlank()) com.rg.webloom.data.SitePrefs.set(ctx, host, v, cur.desktop, cur.adblock, cur.ssl)
                             // Only reload if effective value actually changed.
                             showSite = false; try { webView?.reload() } catch (_: Exception) {}
                         }
                         tri("Desktop site", cur.desktop, try { Prefs.desktopMode } catch (_: Exception) { false }) { v ->
-                            if (host.isNotBlank()) com.rg.webloom.data.SitePrefs.set(ctx, host, cur.js, v, cur.adblock)
+                            if (host.isNotBlank()) com.rg.webloom.data.SitePrefs.set(ctx, host, cur.js, v, cur.adblock, cur.ssl)
                             showSite = false; try { webView?.reload() } catch (_: Exception) {}
                         }
+                        tri("Ignore SSL errors", cur.ssl, false) { v ->
+                            if (host.isNotBlank()) com.rg.webloom.data.SitePrefs.set(ctx, host, cur.js, cur.desktop, cur.adblock, v)
+                            showSite = false; try { webView?.reload() } catch (_: Exception) {}
+                        }
+                        Text(
+                            "Ignore SSL only on hosts you trust (self-signed localhost, custom-ROM CA). Bypass weakens security.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Text(
                             "In-app adblock removed — use system AdAway/DNS. Per-site adblock setting kept for migration only.",
                             style = MaterialTheme.typography.bodySmall,

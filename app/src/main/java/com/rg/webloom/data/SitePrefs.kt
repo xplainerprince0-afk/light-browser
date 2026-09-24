@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONObject
 
 /** Per-host overrides. null = follow the global switch. */
-data class SiteSetting(val js: Boolean?, val desktop: Boolean?, val adblock: Boolean?)
+data class SiteSetting(val js: Boolean?, val desktop: Boolean?, val adblock: Boolean?, val ssl: Boolean? = null)
 
 object SitePrefs {
     private const val PREF = "site_prefs_v1"
@@ -38,18 +38,19 @@ object SitePrefs {
     }
 
     fun get(ctx: Context, host: String): SiteSetting {
-        if (host.isBlank()) return SiteSetting(null, null, null)
+        if (host.isBlank()) return SiteSetting(null, null, null, null)
         return try {
-            val o = all(ctx).optJSONObject(host) ?: return SiteSetting(null, null, null)
+            val o = all(ctx).optJSONObject(host) ?: return SiteSetting(null, null, null, null)
             SiteSetting(
                 js = if (o.has("js")) o.optBoolean("js") else null,
                 desktop = if (o.has("desk")) o.optBoolean("desk") else null,
-                adblock = if (o.has("ad")) o.optBoolean("ad") else null
+                adblock = if (o.has("ad")) o.optBoolean("ad") else null,
+                ssl = if (o.has("ssl")) o.optBoolean("ssl") else null
             )
-        } catch (_: Exception) { SiteSetting(null, null, null) }
+        } catch (_: Exception) { SiteSetting(null, null, null, null) }
     }
 
-    fun set(ctx: Context, host: String, js: Boolean?, desktop: Boolean?, adblock: Boolean?) {
+    fun set(ctx: Context, host: String, js: Boolean?, desktop: Boolean?, adblock: Boolean?, ssl: Boolean? = null) {
         if (host.isBlank()) return
         try {
             val all = all(ctx)
@@ -57,6 +58,7 @@ object SitePrefs {
             if (js == null) o.remove("js") else o.put("js", js)
             if (desktop == null) o.remove("desk") else o.put("desk", desktop)
             if (adblock == null) o.remove("ad") else o.put("ad", adblock)
+            if (ssl == null) o.remove("ssl") else o.put("ssl", ssl)
             if (o.length() == 0) all.remove(host) else all.put(host, o)
             save(ctx, all)
         } catch (_: Exception) {}
@@ -65,4 +67,12 @@ object SitePrefs {
     fun effectiveJs(ctx: Context, host: String): Boolean = get(ctx, host).js ?: Prefs.jsEnabled
     fun effectiveDesktop(ctx: Context, host: String): Boolean = get(ctx, host).desktop ?: Prefs.desktopMode
     fun effectiveAdblock(ctx: Context, host: String): Boolean = get(ctx, host).adblock ?: Prefs.adBlock
+
+    /**
+     * Per-site SSL-error bypass (custom-ROM / self-signed localhost / MITM
+     * adblock CAs). Default OFF — bypassing cert validation is insecure, so
+     * it is opt-in per host, never global. When ON, onReceivedSslError calls
+     * proceed() for that host instead of cancelling the page.
+     */
+    fun effectiveIgnoreSsl(ctx: Context, host: String): Boolean = get(ctx, host).ssl ?: false
 }

@@ -21,8 +21,23 @@ import com.rg.webloom.data.SitePrefs
 const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
+// Debounce for the SSL-blocked toast (custom-ROM CA spam would otherwise
+// popup on every subresource). Single writer: WebView main thread.
+@Volatile private var lastSslToast = 0L
+
+/** Human name for SslError primary-error codes (see android.net.http.SslError). */
+private fun sslName(code: Int): String = when (code) {
+    0 -> "NOT_YET_VALID"
+    1 -> "EXPIRED"
+    2 -> "ID_MISMATCH"
+    3 -> "UNTRUSTED"
+    4 -> "DATE_INVALID"
+    5 -> "INVALID"
+    else -> "CERT_AUTHORITY_INVALID"
+}
+
 /** Build tag for remote diagnosis (`b js window.__lb_build`). Bump per release. */
-private const val BUILD_TAG = "renderFix-03"
+private const val BUILD_TAG = "sslBypass-04"
 
 /** System WebView UA captured on first setup — restoring this beats `null` (some OEMs keep stale overrides). */
 private object DefaultUa {
@@ -268,12 +283,39 @@ fun setupLightWebView(wv: WebView, cb: BrowserCallbacks): WebView {
         override fun onReceivedSslError(
             v: WebView?, handler: android.webkit.SslErrorHandler?, err: android.net.http.SslError?
         ) {
+            // Custom-ROM / self-signed-localhost / MITM-adblock CAs fail here
+            // with -202 CERT_AUTHORITY_INVALID and the page dies BLACK with no
+            // UI (that was the "reddit login + localhost" mystery). Per-site
+            // opt-in bypass below; otherwise cancel + ONE debounced toast so
+            // the failure is visible instead of a silent black page.
+            val url = try { err?.url ?: "" } catch (_: Exception) { "" }
+            val code = try { err?.primaryError ?: -1 } catch (_: Exception) { -1 }
+            var proceeded = false
             try {
-                BrowserAgent.logConsole("[ssl-error] ${err?.primaryError ?: -1} @ ${err?.url ?: ""}")
-                // No toast: custom-ROM CA/clock issues spammed "SSL error" on
-                // every site. Page is still cancelled (secure); see b console.
+                val host = try { SitePrefs.hostOf(url) } catch (_: Exception) { "" }
+                if (host.isNotBlank() && SitePrefs.effectiveIgnoreSsl(app, host)) {
+                    try { handler?.proceed() } catch (_: Exception) {}
+                    proceeded = true
+                    BrowserAgent.logConsole("[ssl-bypass] ${sslName(code)} ($code) allowed for $host @ $url")
+                }
             } catch (_: Exception) {}
-            try { handler?.cancel() } catch (_: Exception) {}
+            if (!proceeded) {
+                try {
+                    BrowserAgent.logConsole("[ssl-error] ${sslName(code)} ($code) @ $url — allow per-site via Site settings > Ignore SSL errors")
+                    val now = System.currentTimeMillis()
+                    if (now - lastSslToast > 8_000) {
+                        lastSslToast = now
+                        try {
+                            android.widget.Toast.makeText(
+                                app,
+                                "SSL error (${sslName(code)}): page blocked — Site settings > Ignore SSL to allow",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {}
+                try { handler?.cancel() } catch (_: Exception) {}
+            }
         }
 
         override fun onSafeBrowsingHit(
